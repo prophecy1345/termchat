@@ -489,6 +489,13 @@ impl Main {
 
     /// Decrypts and stores one delivery. Always saved before the caller acks it.
     fn receive(&mut self, sender: Ed25519Key, envelope: &proto::Envelope) {
+        // Blocked: not even decrypted. The caller still acks so the relay forgets it.
+        if self
+            .index(&sender)
+            .is_some_and(|i| self.data.contacts[i].blocked)
+        {
+            return;
+        }
         let had_session = self.core().has_session(&sender);
         let result = self.core().decrypt(&sender, envelope);
         let got = match result {
@@ -611,6 +618,18 @@ impl Main {
                     self.persist();
                 }
             }
+            (true, KeyCode::Char('b')) => {
+                if let Some(c) = self.data.contacts.get_mut(self.selected) {
+                    c.blocked = !c.blocked;
+                    let what = if c.blocked {
+                        "blocked: their messages are dropped unread"
+                    } else {
+                        "unblocked"
+                    };
+                    self.status = what.into();
+                    self.persist();
+                }
+            }
             (true, KeyCode::Char('e')) => {
                 if let Some(c) = self.data.contacts.get_mut(self.selected) {
                     c.no_history = !c.no_history;
@@ -640,6 +659,10 @@ impl Main {
         if text.len() > proto::MAX_TEXT_BYTES {
             self.input = text;
             return self.status = "message too long".into();
+        }
+        if c.blocked {
+            self.input = text;
+            return self.status = "contact is blocked (Ctrl+B to unblock)".into();
         }
         let (key, expires_in, i) = (c.key, c.expires_in, self.selected);
         let at = now();

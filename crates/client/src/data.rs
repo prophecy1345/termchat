@@ -34,6 +34,8 @@ pub struct Contact {
     pub expires_in: Option<u32>,
     /// Keep this chat in memory only, never on disk.
     pub no_history: bool,
+    /// Their messages are dropped unread; we cannot write to them.
+    pub blocked: bool,
     pub messages: Vec<Msg>,
     #[serde(skip)]
     pub unread: usize,

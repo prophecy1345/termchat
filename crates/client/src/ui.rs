@@ -19,6 +19,7 @@ Ctrl+O       show your invite
 Ctrl+F       safety number: verify the contact
 Ctrl+Y       accept contact request
 Ctrl+D       delete contact
+Ctrl+B       block / unblock contact
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
@@ -27,7 +28,14 @@ Ctrl+K       lock now (also after 5 min idle)
 Ctrl+Q       quit
 ? / F1       this help
 
-Marks:  ? request   ! not verified   … sending   ✓ on relay   ✗ failed";
+Marks:  ? request   ! not verified   × blocked
+        … sending   ✓ on relay   ✗ failed
+
+Need help now? You are not alone.
+  Helplines in every country: https://findahelpline.com
+  Emergency: 112 (EU), 911 (US)   Suicide & Crisis Lifeline (US): 988
+  Samaritans (UK, IE): 116 123
+  Human trafficking hotline (US): 1-888-373-7888";
 
 /// Drops control and bidi-override characters: a peer must not be able to
 /// move the cursor, clear the screen or reorder text in our terminal.
@@ -163,6 +171,7 @@ fn main(f: &mut Frame, m: &Main) {
         .map(|c| {
             let request = m.core().is_request(&c.key) == Some(true);
             let mark = match (request, c.verified) {
+                _ if c.blocked => "× ",
                 (true, _) => "? ",
                 (false, false) => "! ",
                 (false, true) => "  ",
@@ -301,7 +310,7 @@ fn popup_pane(f: &mut Frame, m: &Main, popup: &Popup) {
             48,
             8,
         ),
-        Popup::Help => (" help ", HELP.to_string(), 64, 21),
+        Popup::Help => (" help ", HELP.to_string(), 70, 30),
         Popup::Add(s) => (
             " add contact ",
             format!("Paste their invite and press Enter (Esc cancels):\n\n{s}▏"),
