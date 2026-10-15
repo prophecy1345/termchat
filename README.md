@@ -45,7 +45,8 @@ Full details: [docs/threat-model.md](docs/threat-model.md).
 
 Download the archive for your system from the
 [releases](https://github.com/prophecy1345/termchat/releases). Each holds `termchat`
-(the client) and `termchat-relay` (the server).
+(the client) and `termchat-relay` (the server). Step-by-step instructions for each
+system are in the [user guide](#1-install).
 
 ### Verify a release
 
@@ -69,28 +70,231 @@ Dependencies are checked with `cargo deny` (licences, known vulnerabilities) and
 `cargo vet` (imported audits from Mozilla, Google and others; the rest is listed as
 not yet reviewed in `supply-chain/`).
 
-## Use
+## User guide
 
+termchat runs in a terminal window. Everything is done with the keyboard; press
+**?** (or **F1**) at any time for the list of keys.
+
+### 1. Install
+
+Download the archive for your computer from the
+[releases](https://github.com/prophecy1345/termchat/releases):
+
+| Your computer | Archive |
+|---|---|
+| Mac with Apple Silicon (M1 and later) | `termchat-<version>-aarch64-apple-darwin.tar.gz` |
+| Mac with Intel | `termchat-<version>-x86_64-apple-darwin.tar.gz` |
+| Linux, 64-bit PC | `termchat-<version>-x86_64-unknown-linux-musl.tar.gz` |
+| Linux on ARM (Raspberry Pi 4/5, ARM servers) | `termchat-<version>-aarch64-unknown-linux-musl.tar.gz` |
+| Windows 10/11 | `termchat-<version>-x86_64-pc-windows-msvc.tar.gz` |
+
+Unpack it and start `termchat` from a terminal:
+
+**macOS**
 ```sh
-termchat
+tar -xzf termchat-*-apple-darwin.tar.gz
+cd termchat-*-apple-darwin
+xattr -d com.apple.quarantine termchat   # the binary is not signed by Apple
+./termchat
+```
+Without the `xattr` line macOS says the app "cannot be opened because the developer
+cannot be verified". If `xattr` answers "No such xattr", the file was not quarantined
+and that is fine. To run it from anywhere: `sudo cp termchat /usr/local/bin/`.
+
+**Linux**
+```sh
+tar -xzf termchat-*-linux-musl.tar.gz
+cd termchat-*-linux-musl
+./termchat
+```
+The binary is static: no libraries to install. To run it from anywhere:
+`sudo cp termchat /usr/local/bin/`.
+
+**Windows** (use Windows Terminal; the old console works but looks worse)
+```powershell
+tar -xzf termchat-<version>-x86_64-pc-windows-msvc.tar.gz
+cd termchat-<version>-x86_64-pc-windows-msvc
+.\termchat.exe
+```
+SmartScreen may warn about an unknown publisher: "More info" → "Run anyway".
+
+Before the first run you can check that the download is genuine; see
+[Verify a release](#verify-a-release).
+
+### 2. First run
+
+The setup screen has six fields. **Tab** or **Enter** moves to the next one,
+**Shift+Tab** back.
+
+| Field | What to enter |
+|---|---|
+| Relay URL | Already filled in with the [public relay](#public-relay). Leave it, or type the address of another relay. |
+| Relay onion URL | Already filled in. Needed only for Tor. |
+| Use Tor? | `y` hides your IP address from the relay and your internet provider; the first connection takes 10–30 seconds. `n` connects directly and is faster. |
+| Nickname | What your contacts will see. The only thing anyone learns about you; no real name needed. Up to 64 bytes. |
+| Password | Encrypts everything on your disk. Must be strong; **Ctrl+G** generates six random words. Write it down: it cannot be recovered. |
+| Repeat password | The same again. |
+
+After setup termchat suggests making a backup right away (see
+[Backup](#8-backup-and-restore)). Until you do, the status bar shows
+`! no backup: Ctrl+P`.
+
+### 3. The screen
+
+```
+┌ contacts ─────────┐┌ alice·36335 ! not verified (Ctrl+F) ──────────────┐
+│! alice·36335      ││  2m alice·36335: hi!                              │
+│? bob·58121 (1)    ││ now you: hello ✓                                  │
+└───────────────────┘└───────────────────────────────────────────────────┘
+┌ message ────────────────────────────────────────────────────────────────┐
+│type here, Enter sends                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+● online  you  ? help
 ```
 
-First run comes with the project's public relay filled in (below); just pick a
-nickname and a password (Ctrl+G suggests a six-word passphrase) and answer whether
-to use Tor. Then:
+- **Left:** contacts. **Up/Down** chooses one. `(1)` is the number of unread messages.
+- **Right:** the chat with the chosen contact. The age of each message (`now`, `2m`,
+  `3h`, `4d`) is shown on the left.
+- **Bottom:** where you type. **Enter** sends.
+- **Status bar:** `● online`, `● online via Tor`, or `○ connecting…`; your nickname;
+  warnings in red.
 
-- **Ctrl+O** shows your invite. Send it to a friend any way you like: it holds only
-  public keys.
-- **Ctrl+A** adds a friend from their invite.
-- **Ctrl+F** shows the safety number. Compare it in person or by phone.
-- **Ctrl+P** for backup, password change, duress password, Tor, wipe. **?** lists every key.
-- Names come from the people themselves, so unverified contacts show the start of
-  their fingerprint (`alice·36335`). Messages from someone you have not accepted
-  stay hidden until you press Ctrl+Y.
-- Paste with your terminal's paste command: pasted text is taken literally and
-  never triggers hotkeys (bracketed paste).
+Marks next to contacts:
 
-Data lives in `~/.termchat` (override with `TERMCHAT_HOME`).
+| Mark | Meaning |
+|---|---|
+| `?` | A contact request you have not accepted yet |
+| `!` | Safety number not verified yet |
+| `×` | Blocked |
+| `alice·36335` | Name plus the start of the fingerprint: shown for unverified contacts and whenever two names look the same. Names are chosen by the people themselves, so the digits are what tells two "alice"s apart. |
+
+Marks next to your messages: `…` sending, `✓` accepted by the relay, `✗` failed
+(the reason is shown next to it).
+
+### 4. Adding a contact
+
+There is no search and no directory: you add people by exchanging **invites**.
+
+1. **Ctrl+O** shows your invite: a long line starting with `termchat:`. Press **c**
+   to copy it (iTerm2, kitty, WezTerm, Windows Terminal and others with OSC 52; not
+   macOS Terminal), or select it with the mouse. It
+   contains only public keys, so it is safe to send by email, another messenger or a
+   QR code.
+2. Your friend presses **Ctrl+A**, pastes the invite and presses **Enter**.
+3. You now appear in each other's lists. On your side the friend arrives as a
+   **request** (`?`). Press **Ctrl+Y** to accept, or **Ctrl+D** then **y** to reject.
+4. Until you accept, their messages stay hidden (the chat title shows how many are
+   waiting; up to 5 are kept and shown when you accept). This keeps strangers from
+   filling your screen.
+
+Both sides can add each other's invites; then neither is a request.
+
+### 5. Verify the safety number (once per contact)
+
+The relay cannot read messages, but someone who controls the network could try to
+hand you their keys instead of your friend's when you first add them. Rule this out
+once:
+
+1. **Ctrl+F** shows a 60-digit safety number. Your friend opens the same screen.
+2. Compare the numbers in person, on a video call or by phone (not over termchat).
+3. If they match, press **v**. The `!` and the digits after the name disappear.
+
+If the numbers differ, do not trust the contact: delete it (**Ctrl+D**) and exchange
+invites again by another way.
+
+### 6. Messages
+
+- Type and press **Enter**. Text only, up to 16 000 bytes per message (about 8 000
+  Cyrillic or 16 000 Latin characters). Pasting is safe: pasted text never acts as
+  key presses.
+- **Offline delivery:** if your friend is offline, the relay keeps the encrypted
+  message for up to 14 days and delivers it when they come back.
+- **"⚠ N message(s) missing"** means something sent to you did not arrive (lost, or
+  dropped by the relay). It disappears if the message turns up later.
+- **"⚠ they restarted the conversation"** means your friend restored from a backup or
+  reinstalled. Messages sent around that moment may be lost; nothing else to do.
+
+### 7. Chat options
+
+All of these act on the chosen contact:
+
+| Key | What it does |
+|---|---|
+| **Ctrl+T** | Disappearing messages: off → 5 min → 1 h → 1 day → 1 week. Applies to what you send from now on; the message disappears on both sides when the time is up. The chat title shows `⏱`. |
+| **Ctrl+E** | No history: this chat is never written to disk. It is gone when you lock or quit. |
+| **Ctrl+R** | Rename the contact. Only on your device; empty name resets it. |
+| **Ctrl+B** | Block / unblock. Their messages are thrown away unread; you cannot write to them. |
+| **Ctrl+D** | Delete the contact and the chat (asks for **y**). Deleting a request rejects it for good; adding that person's invite later takes the rejection back. |
+| **Ctrl+X** | Report to the relay operator. Shows exactly which messages (their last 5) the operator will read; **y** sends the report and blocks the contact. A key reported by several different people it really wrote to is banned on that relay. |
+
+### 8. Backup and restore
+
+Your identity (keys) exists only on your device. **Without a backup, a lost or broken
+device means a lost identity** and your contacts must add you again.
+
+- **Make a backup:** **Ctrl+P**, then **b**. Choose where to save (default
+  `~/termchat-backup`) and a backup password. The backup holds your identity and
+  contact list, not your messages. **Move it off this device** (USB stick, another
+  computer).
+- **Restore:** on the first-run screen of a new device press **Ctrl+B**, enter the path
+  to the backup, then unlock with the backup's password. Chats start fresh; contacts
+  see "they restarted the conversation".
+- Use **one device at a time**. After restoring on a new device, wipe the old one
+  (Ctrl+P, w).
+
+### 9. Locking, passwords and wiping
+
+- termchat **locks itself after 5 minutes** without a key press; **Ctrl+K** locks at
+  once. Locking removes keys and messages from memory; unlock with your password.
+- **Change password:** Ctrl+P, then **p** (current password, new one twice).
+- **Duress password** (Ctrl+P, then **d**): a second password. Typing it at the unlock
+  screen silently erases everything and shows the first-run screen, as if termchat
+  had never been used. Read the warning on that screen first: it does not help if
+  someone copied your disk beforehand, and destroying data after a seizure can be a
+  crime in some countries. Leave the new field empty to turn it off.
+- **Wipe everything:** Ctrl+P, then **w**, type `WIPE`. Keys, contacts and history are
+  erased from this device. There is no undo.
+- **Tor on/off later:** Ctrl+P, then **t**.
+
+### 10. Where data lives
+
+Everything is in one encrypted file, `~/.termchat/state` (Windows:
+`C:\Users\<you>\.termchat\state`), plus Tor's cache in `~/.termchat/arti`. Set
+`TERMCHAT_HOME` to keep a separate profile elsewhere, for example to try termchat with
+two identities on one computer:
+
+```sh
+TERMCHAT_HOME=~/termchat-test ./termchat
+```
+
+### 11. If something goes wrong
+
+| Problem | What to do |
+|---|---|
+| Stuck on `○ connecting…` | Check your internet. With Tor, the first connection can take up to a minute. If it never connects, try Ctrl+P, t to go without Tor and see whether the relay is reachable. |
+| `SAVE FAILED` in the status bar | The disk is full or not writable. Messages are not acknowledged until they are saved, so nothing is lost; free some space. |
+| `wrong password` | Passwords are case-sensitive and depend on the keyboard layout. There is no recovery; restore from a backup if you have one. |
+| `they use another relay` when adding a contact | Your friend's invite is for a different relay. Both of you must use the same one (for now). |
+| **c** does not copy the invite | Your terminal does not support clipboard access (OSC 52). Select the text with the mouse instead. |
+| The layout looks broken | Make the window larger (at least 80×24) and use a font with Unicode box characters. |
+
+### Keys at a glance
+
+| Key | Action |
+|---|---|
+| Enter | send |
+| Up / Down | choose contact |
+| Ctrl+A | add contact from an invite |
+| Ctrl+O | show your invite (**c** copies) |
+| Ctrl+Y | accept request |
+| Ctrl+F | safety number (**v** marks verified) |
+| Ctrl+T / Ctrl+E | disappearing messages / no history |
+| Ctrl+R / Ctrl+B / Ctrl+D / Ctrl+X | rename / block / delete or reject / report |
+| Ctrl+P | settings: **b** backup, **p** password, **d** duress, **t** Tor, **w** wipe |
+| Ctrl+K | lock |
+| Ctrl+Q or Ctrl+C | quit |
+| ? or F1 | help |
+| Esc | close a window |
 
 ## Public relay
 
