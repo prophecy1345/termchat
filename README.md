@@ -36,6 +36,8 @@ The goal is not "impossible to break" but "breaking the server is pointless".
 - Malware on your device, a keylogger, a compromised terminal or OS.
 - A global observer correlating traffic timing (Tor does not stop that).
 - Keys in swap or a hibernation file: use your OS's disk encryption.
+- On Windows: no core-dump protection and no `0600` file permissions (Unix only);
+  the state file is still encrypted with your password.
 
 Full details: [docs/threat-model.md](docs/threat-model.md).
 
@@ -81,6 +83,8 @@ password (Ctrl+G suggests a six-word passphrase). Then:
 - **Ctrl+A** adds a friend from their invite.
 - **Ctrl+F** shows the safety number. Compare it in person or by phone.
 - **Ctrl+P** for backup, duress password, Tor, wipe. **?** lists every key.
+- Paste with your terminal's paste command: pasted text is taken literally and
+  never triggers hotkeys (bracketed paste).
 
 Data lives in `~/.termchat` (override with `TERMCHAT_HOME`).
 
@@ -110,7 +114,8 @@ Not message contents, not nicknames, not IP history.
 - [Threat model](docs/threat-model.md) · [Protocol](docs/protocol.md) · [Self-hosting](docs/self-host.md)
 - Decisions: [ADR-001 stack](docs/adr/001-stack.md), [002 vodozemac](docs/adr/002-vodozemac-integration.md),
   [003 duress](docs/adr/003-duress-password.md), [004 Tor](docs/adr/004-tor.md),
-  [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md)
+  [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
+  [007 abuse resistance (proposed)](docs/adr/007-abuse-resistance.md)
 - [PLAN.md](PLAN.md)
 
 ## Licence
