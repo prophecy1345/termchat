@@ -106,8 +106,10 @@ jobs:
           TERMCHAT_VERSION: ${{ github.ref_name }}
           TERMCHAT_BASE_URL: http://127.0.0.1:18765
         run: |
-          Start-Process python -ArgumentList '-m', 'http.server', '18765', '--bind', '127.0.0.1' -WorkingDirectory dist -WindowStyle Hidden
-          Start-Sleep -Seconds 3
+          Start-Process python -ArgumentList '-m', 'http.server', '18765', '--bind', '127.0.0.1' -WorkingDirectory (Resolve-Path dist) -WindowStyle Hidden
+          foreach ($i in 1..30) {
+            try { Invoke-WebRequest http://127.0.0.1:18765/SHA256SUMS -UseBasicParsing | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+          }
           ./scripts/install.ps1
           & "$env:LOCALAPPDATA\Programs\termchat\termchat.exe" --version
 
