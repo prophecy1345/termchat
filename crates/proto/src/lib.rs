@@ -97,6 +97,11 @@ pub enum ClientFrame {
     Ack {
         relay_id: u64,
     },
+    /// The recipient chose to disclose `text` from `sender` to the relay operator (ADR-006).
+    Report {
+        sender: Ed25519Key,
+        text: String,
+    },
 }
 
 /// Relay to client.
@@ -118,6 +123,8 @@ pub enum ServerFrame {
     Accepted {
         client_id: u64,
     },
+    /// Same answer whatever the relay did, so reports cannot probe bans.
+    Reported,
     Deliver {
         relay_id: u64,
         sender: Ed25519Key,
@@ -142,6 +149,8 @@ pub enum ErrorCode {
     NoKeys,
     UnknownRecipient,
     QueueFull,
+    /// Banned on this relay after reports (ADR-006).
+    Banned,
     Internal,
 }
 
@@ -168,6 +177,9 @@ impl ClientFrame {
         match &frame {
             Self::Send { envelope, .. } => envelope.check()?,
             Self::PublishKeys { one_time, .. } if one_time.len() > MAX_KEYS_PER_PUBLISH => {
+                return Err(Error::TooLarge);
+            }
+            Self::Report { text, .. } if text.len() > MAX_TEXT_BYTES => {
                 return Err(Error::TooLarge);
             }
             _ => {}

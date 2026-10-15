@@ -74,6 +74,8 @@ C -> R  Send { client_id: u64, envelope: Envelope }
 R -> C  Accepted { client_id } | Error { client_id, code }
 R -> C  Deliver { relay_id: u64, sender: ed25519, envelope: Envelope }
 C -> R  Ack { relay_id }
+C -> R  Report { sender: ed25519, text: String }   // ADR-006, text до 16000 байт
+R -> C  Reported                                  // одинаковый ответ на любом пути
 ```
 
 - Relay держит конверт в очереди получателя, пока тот не пришлёт `Ack`. Неподтверждённые конверты приходят снова при каждом подключении. В M2 очередь в памяти и теряется при перезапуске relay; в M5 она переезжает в SQLite и получает TTL.
@@ -184,7 +186,7 @@ Fallback key в приглашение не кладётся: он ротиру�
 
 ## 12. Коды ошибок
 
-`UnsupportedVersion`, `Malformed`, `TooLarge`, `NotAuthenticated`, `BadSignature`, `ChallengeExpired`, `RateLimited`, `NoKeys`, `UnknownRecipient`, `QueueFull`, `Internal`.
+`UnsupportedVersion`, `Malformed`, `TooLarge`, `NotAuthenticated`, `BadSignature`, `ChallengeExpired`, `RateLimited`, `NoKeys`, `UnknownRecipient`, `QueueFull`, `Banned`, `Internal`.
 
 Ошибка с конкретным `client_id` не рвёт соединение. `Malformed`, `BadSignature`, `NotAuthenticated` закрывают соединение.
 

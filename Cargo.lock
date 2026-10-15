@@ -2353,6 +2353,7 @@ dependencies = [
  "anyhow",
  "axum",
  "getrandom 0.4.3",
+ "serde_json",
  "termchat-core",
  "termchat-proto",
  "tokio",

@@ -21,6 +21,7 @@ async fn start_relay(limits: Limits) -> String {
     let config = Config {
         host: "127.0.0.1".into(),
         trust_proxy: false,
+        reports: None,
         limits,
     };
     tokio::spawn(termchat_relay::serve(listener, config));
@@ -223,6 +224,7 @@ async fn reconnects_when_relay_comes_up_later() {
     let config = Config {
         host: "127.0.0.1".into(),
         trust_proxy: false,
+        reports: None,
         limits: Limits::default(),
     };
     tokio::spawn(termchat_relay::serve(listener, config));
@@ -407,4 +409,80 @@ async fn per_target_claim_limit_hands_out_fallback() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn three_real_recipients_reporting_ban_the_sender() {
+    let url = start_relay(Limits::default()).await;
+    let mallory_core = Arc::new(Mutex::new(Client::default()));
+    let mut mallory = Peer::new(&url, Arc::clone(&mallory_core));
+    mallory.connected().await;
+    let mut victims = Vec::new();
+    for _ in 0..3 {
+        let core = Arc::new(Mutex::new(Client::default()));
+        let mut v = Peer::new(&url, core);
+        v.connected().await;
+        v.publish_keys().await;
+        let id = v.core.lock().unwrap().identity();
+        mallory.core.lock().unwrap().add_contact(&id).unwrap();
+        mallory.start_session(id.ed25519).await;
+        victims.push(v);
+    }
+    for (i, v) in victims.iter().enumerate() {
+        mallory
+            .send_text(v.key(), i as u64, "buy something illegal")
+            .await;
+    }
+    let report = |sender| ClientFrame::Report {
+        sender,
+        text: "buy something illegal".into(),
+    };
+    let m = mallory.key();
+
+    // People Mallory never wrote to cannot count, however many there are.
+    for _ in 0..5 {
+        let mut stranger = Peer::new(&url, Arc::new(Mutex::new(Client::default())));
+        stranger.connected().await;
+        stranger.relay.send(report(m)).unwrap();
+        assert_eq!(stranger.frame().await, ServerFrame::Reported);
+    }
+    for v in &mut victims[..2] {
+        v.relay.send(report(m)).unwrap();
+        while !matches!(v.frame().await, ServerFrame::Reported) {}
+    }
+    let mut ws = raw(&url).await;
+    assert!(auth(&mut ws, &mallory_core).await == ServerFrame::AuthOk);
+
+    // The third real recipient tips it over.
+    victims[2].relay.send(report(m)).unwrap();
+    while !matches!(victims[2].frame().await, ServerFrame::Reported) {}
+    let mut ws = raw(&url).await;
+    let refused = auth(&mut ws, &mallory_core).await;
+    assert_eq!(
+        refused,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::Banned
+        }
+    );
+}
+
+async fn auth(ws: &mut Raw, client: &Mutex<Client>) -> ServerFrame {
+    raw_send(ws, ClientFrame::Hello { version: VERSION }).await;
+    let ServerFrame::Challenge { nonce } = raw_recv(ws).await else {
+        panic!()
+    };
+    let (identity, signature) = {
+        let c = client.lock().unwrap();
+        (c.identity(), c.auth_signature("127.0.0.1", &nonce))
+    };
+    raw_send(
+        ws,
+        ClientFrame::Auth {
+            identity,
+            signature,
+        },
+    )
+    .await;
+    raw_recv(ws).await
 }

@@ -56,6 +56,8 @@ pub enum Popup {
     Verify,
     Rename(String),
     Delete,
+    /// The exact text that would be disclosed to the relay operator.
+    Report(String),
 }
 
 pub struct Main {
@@ -468,6 +470,9 @@ impl Main {
                 client_id: None,
                 code,
             } => self.status = format!("relay: {code:?}"),
+            ServerFrame::Reported => {
+                self.status = "reported to the relay operator, and blocked".into()
+            }
             ServerFrame::Challenge { .. } | ServerFrame::AuthOk => {}
         }
     }
@@ -618,6 +623,11 @@ impl Main {
                     self.persist();
                 }
             }
+            (true, KeyCode::Char('x')) => {
+                if let Some(text) = self.report_text() {
+                    self.popup = Some(Popup::Report(text));
+                }
+            }
             (true, KeyCode::Char('b')) => {
                 if let Some(c) = self.data.contacts.get_mut(self.selected) {
                     c.blocked = !c.blocked;
@@ -719,6 +729,16 @@ impl Main {
                 }
                 None
             }
+            Popup::Report(text) => {
+                if k.code == KeyCode::Char('y') && self.selected < self.data.contacts.len() {
+                    let i = self.selected;
+                    let sender = self.data.contacts[i].key;
+                    let _ = self.relay.send(ClientFrame::Report { sender, text });
+                    self.data.contacts[i].blocked = true;
+                    self.persist();
+                }
+                None
+            }
             Popup::Delete => {
                 if k.code == KeyCode::Char('y') && self.selected < self.data.contacts.len() {
                     let c = self.data.contacts.remove(self.selected);
@@ -751,6 +771,30 @@ impl Main {
             Popup::Add(_) | Popup::Rename(_) => None,
         };
         self.popup = keep;
+    }
+
+    /// Their last few messages, joined, within the protocol limit (ADR-006).
+    fn report_text(&self) -> Option<String> {
+        const LAST: usize = 5;
+        let c = self.current()?;
+        let mut theirs: Vec<&str> = c
+            .messages
+            .iter()
+            .rev()
+            .filter(|m| m.status == Status::Received)
+            .take(LAST)
+            .map(|m| m.text.as_str())
+            .collect();
+        theirs.reverse();
+        let mut text = theirs.join("\n---\n");
+        if text.len() > proto::MAX_TEXT_BYTES {
+            let mut end = proto::MAX_TEXT_BYTES;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+        }
+        Some(text).filter(|t| !t.is_empty())
     }
 
     /// Settings forms. `Ok` carries what to tell the user.

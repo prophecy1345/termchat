@@ -26,6 +26,8 @@ pub struct Config {
     pub host: String,
     /// Take the client IP from the last `X-Forwarded-For` entry. Only behind a proxy that sets it.
     pub trust_proxy: bool,
+    /// Operator's report journal (ADR-006); `None` keeps no journal.
+    pub reports: Option<std::path::PathBuf>,
     pub limits: Limits,
 }
 
@@ -44,6 +46,9 @@ pub struct Limits {
     pub stored_one_time_keys: usize,
     pub queue_envelopes: usize,
     pub queue_bytes: usize,
+    pub reports_per_key: Rate,
+    /// Distinct people who were really written to before a key is banned (ADR-006).
+    pub report_threshold: usize,
 }
 
 /// Token bucket: `burst` at once, then `per_sec` on average.
@@ -83,6 +88,8 @@ impl Default for Limits {
             stored_one_time_keys: 100,
             queue_envelopes: 1000,
             queue_bytes: 10 * 1024 * 1024,
+            reports_per_key: Rate::per(10.0, DAY),
+            report_threshold: 3,
         }
     }
 }
@@ -135,6 +142,10 @@ struct Account {
     new_recipients: Bucket,
     claims: Bucket,
     claimed: Bucket,
+    reports: Bucket,
+    /// People this key wrote to who reported it.
+    reporters: HashSet<Ed25519Key>,
+    banned: bool,
 }
 
 impl Account {
@@ -150,6 +161,9 @@ impl Account {
             new_recipients: Bucket::full(l.new_recipients_per_key, now),
             claims: Bucket::full(l.claims_per_key, now),
             claimed: Bucket::full(l.claims_per_target, now),
+            reports: Bucket::full(l.reports_per_key, now),
+            reporters: HashSet::new(),
+            banned: false,
         }
     }
 
@@ -312,6 +326,9 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: IpAddr) -> Result<Se
         let mut relay = shared.lock();
         let now = Instant::now();
         let limits = &shared.config.limits;
+        if relay.accounts.get(&key).is_some_and(|a| a.banned) {
+            return Err(ErrorCode::Banned);
+        }
         if !relay.accounts.contains_key(&key) {
             let ok = relay
                 .registrations
@@ -484,6 +501,33 @@ fn handle(
             vec![ServerFrame::Accepted { client_id }]
         }
 
+        ClientFrame::Report { sender, text } => {
+            // Same answer on every path: a report must not reveal whether it counted.
+            let reported = vec![ServerFrame::Reported];
+            if !account.reports.take(limits.reports_per_key, now) {
+                return Ok(reported);
+            }
+            // Only someone the sender actually wrote to can report it.
+            let Some(s) = relay.accounts.get_mut(&sender) else {
+                return Ok(reported);
+            };
+            if !s.recipients.contains(&me) {
+                return Ok(reported);
+            }
+            s.reporters.insert(me);
+            if s.reporters.len() >= limits.report_threshold && !s.banned {
+                s.banned = true;
+                // Dropping its sender ends the banned key's connection loop.
+                relay.online.remove(&sender);
+            }
+            if let Some(path) = &shared.config.reports
+                && let Err(e) = journal(path, &sender, &text, s.banned)
+            {
+                tracing::warn!("cannot write report journal: {e}");
+            }
+            reported
+        }
+
         ClientFrame::Ack { relay_id } => {
             if let Some(i) = account.queue.iter().position(|(id, _, _)| *id == relay_id)
                 && let Some((_, _, env)) = account.queue.remove(i)
@@ -493,6 +537,29 @@ fn handle(
             vec![]
         }
     })
+}
+
+/// One JSON line per report: time, reported key, whether it is now banned, the
+/// disclosed text. No reporter, no IP (rule 14). The operator deletes entries once reviewed.
+// file IO under the global lock; reports are rare and rate-limited.
+fn journal(
+    path: &std::path::Path,
+    sender: &Ed25519Key,
+    text: &str,
+    banned: bool,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let sender: String = sender.iter().map(|b| format!("{b:02x}")).collect();
+    let line = serde_json::json!({ "at": at, "sender": sender, "banned": banned, "text": text });
+    let mut opts = std::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    writeln!(opts.open(path)?, "{line}")
 }
 
 fn error(client_id: Option<u64>, code: ErrorCode) -> ServerFrame {
@@ -514,5 +581,32 @@ async fn recv(ws: &mut WebSocket) -> Result<ClientFrame, ErrorCode> {
             Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
             _ => return Err(ErrorCode::Malformed),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn journal_holds_only_sender_time_and_text() {
+        let path = std::env::temp_dir().join(format!("termchat-reports-{}", std::process::id()));
+        journal(&path, &[0xab; 32], "line \"one\"\nline two", true).unwrap();
+        let line = std::fs::read_to_string(&path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["sender"], "ab".repeat(32));
+        assert_eq!(v["text"], "line \"one\"\nline two");
+        assert_eq!(v["banned"], true);
+        assert_eq!(v.as_object().unwrap().len(), 4, "no reporter, no IP");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_file(&path).unwrap();
     }
 }

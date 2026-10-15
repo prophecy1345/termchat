@@ -20,6 +20,7 @@ Ctrl+F       safety number: verify the contact
 Ctrl+Y       accept contact request
 Ctrl+D       delete contact
 Ctrl+B       block / unblock contact
+Ctrl+X       report contact to the relay operator (and block)
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
@@ -354,6 +355,15 @@ fn popup_pane(f: &mut Frame, m: &Main, popup: &Popup) {
             format!("New name, Enter to save, empty to reset:\n\n{s}▏"),
             50,
             7,
+        ),
+        Popup::Report(text) => (
+            " report to the relay operator ",
+            format!(
+                "The relay operator will READ the text below. Reports from 3 different people\nthis key wrote to ban it on this relay. The contact gets blocked.\n\n{}\n\ny: report and block   any other key: cancel",
+                clean(text)
+            ),
+            76,
+            20,
         ),
         Popup::Delete => (
             " delete contact ",
