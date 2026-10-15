@@ -22,3 +22,7 @@ path = "fuzz_targets/envelope.rs"
 [[bin]]
 name = "inner"
 path = "fuzz_targets/inner.rs"
+
+[[bin]]
+name = "client_frame"
+path = "fuzz_targets/client_frame.rs"

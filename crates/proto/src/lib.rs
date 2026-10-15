@@ -11,6 +11,10 @@ pub const BUCKETS: [usize; 3] = [512, 4096, 16384];
 pub const MAX_TEXT_BYTES: usize = 16_000;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
+/// One WebSocket frame (protocol.md, section 11).
+pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// One-time keys per `PublishKeys`: vodozemac keeps 50 on the server.
+pub const MAX_KEYS_PER_PUBLISH: usize = 100;
 
 pub type Ed25519Key = [u8; 32];
 pub type Curve25519Key = [u8; 32];
@@ -48,13 +52,140 @@ impl Envelope {
             return Err(Error::TooLarge);
         }
         let env: Self = decode_exact(bytes)?;
-        if env.version != VERSION {
+        env.check()?;
+        Ok(env)
+    }
+
+    fn check(&self) -> Result<(), Error> {
+        if self.version != VERSION {
             return Err(Error::UnsupportedVersion);
         }
-        if env.body.len() > MAX_BODY_BYTES {
+        if self.body.len() > MAX_BODY_BYTES {
             return Err(Error::TooLarge);
         }
-        Ok(env)
+        Ok(())
+    }
+}
+
+/// Client to relay (protocol.md, sections 3-5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClientFrame {
+    Hello {
+        version: u16,
+    },
+    /// `signature` over `"termchat-auth-v1" || relay_host || nonce`.
+    Auth {
+        identity: Identity,
+        #[serde(with = "serde_big_array")]
+        signature: Signature,
+    },
+    PublishKeys {
+        one_time: Vec<SignedKey>,
+        fallback: Option<SignedKey>,
+    },
+    ClaimKey {
+        target: Ed25519Key,
+    },
+    Send {
+        client_id: u64,
+        envelope: Envelope,
+    },
+    Ack {
+        relay_id: u64,
+    },
+}
+
+/// Relay to client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServerFrame {
+    Challenge {
+        nonce: [u8; 32],
+    },
+    AuthOk,
+    ClaimedKey {
+        target: Ed25519Key,
+        key: SignedKey,
+    },
+    /// `fallback_used`: the relay handed out the fallback key; rotate it (ADR-002).
+    KeyCount {
+        one_time_left: u32,
+        fallback_used: bool,
+    },
+    Accepted {
+        client_id: u64,
+    },
+    Deliver {
+        relay_id: u64,
+        sender: Ed25519Key,
+        envelope: Envelope,
+    },
+    Error {
+        client_id: Option<u64>,
+        code: ErrorCode,
+    },
+}
+
+/// protocol.md, section 12.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorCode {
+    UnsupportedVersion,
+    Malformed,
+    TooLarge,
+    NotAuthenticated,
+    BadSignature,
+    ChallengeExpired,
+    RateLimited,
+    NoKeys,
+    UnknownRecipient,
+    QueueFull,
+    Internal,
+}
+
+impl From<Error> for ErrorCode {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Malformed => Self::Malformed,
+            Error::TooLarge => Self::TooLarge,
+            Error::UnsupportedVersion => Self::UnsupportedVersion,
+        }
+    }
+}
+
+impl ClientFrame {
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap_or_default()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > MAX_FRAME_BYTES {
+            return Err(Error::TooLarge);
+        }
+        let frame: Self = decode_exact(bytes)?;
+        match &frame {
+            Self::Send { envelope, .. } => envelope.check()?,
+            Self::PublishKeys { one_time, .. } if one_time.len() > MAX_KEYS_PER_PUBLISH => {
+                return Err(Error::TooLarge);
+            }
+            _ => {}
+        }
+        Ok(frame)
+    }
+}
+
+impl ServerFrame {
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap_or_default()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > MAX_FRAME_BYTES {
+            return Err(Error::TooLarge);
+        }
+        let frame: Self = decode_exact(bytes)?;
+        if let Self::Deliver { envelope, .. } = &frame {
+            envelope.check()?;
+        }
+        Ok(frame)
     }
 }
 
@@ -225,6 +356,49 @@ mod tests {
         let bytes = postcard::to_allocvec(&key).unwrap();
         assert_eq!(bytes.len(), 96);
         assert_eq!(postcard::from_bytes::<SignedKey>(&bytes).unwrap(), key);
+    }
+
+    #[test]
+    fn frames_roundtrip_and_check_limits() {
+        let env = Envelope {
+            version: VERSION,
+            recipient: [3; 32],
+            olm_type: 0,
+            body: vec![1; 10],
+        };
+        let send = ClientFrame::Send {
+            client_id: 7,
+            envelope: env.clone(),
+        };
+        assert_eq!(ClientFrame::decode(&send.encode()).unwrap(), send);
+        let deliver = ServerFrame::Deliver {
+            relay_id: 1,
+            sender: [4; 32],
+            envelope: env.clone(),
+        };
+        assert_eq!(ServerFrame::decode(&deliver.encode()).unwrap(), deliver);
+
+        let old = ClientFrame::Send {
+            client_id: 7,
+            envelope: Envelope { version: 9, ..env },
+        };
+        assert_eq!(
+            ClientFrame::decode(&old.encode()),
+            Err(Error::UnsupportedVersion)
+        );
+        let key = SignedKey {
+            key: [0; 32],
+            signature: [0; 64],
+        };
+        let many = ClientFrame::PublishKeys {
+            one_time: vec![key; MAX_KEYS_PER_PUBLISH + 1],
+            fallback: None,
+        };
+        assert_eq!(ClientFrame::decode(&many.encode()), Err(Error::TooLarge));
+        assert_eq!(
+            ClientFrame::decode(&vec![0; MAX_FRAME_BYTES + 1]),
+            Err(Error::TooLarge)
+        );
     }
 
     #[test]

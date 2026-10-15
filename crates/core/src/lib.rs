@@ -26,6 +26,7 @@ const MAX_SESSIONS: usize = 5;
 const MAX_MISSING: usize = 1000;
 const ID_CONTEXT: &[u8] = b"termchat-id-v1";
 const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
+const AUTH_CONTEXT: &[u8] = b"termchat-auth-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -104,6 +105,13 @@ impl Client {
                 .sign([ID_CONTEXT, &curve25519].concat())
                 .to_bytes(),
         }
+    }
+
+    /// Answer to the relay's `Challenge` (protocol.md, section 3).
+    pub fn auth_signature(&self, relay_host: &str, nonce: &[u8; 32]) -> Signature {
+        self.account
+            .sign(auth_message(relay_host, nonce))
+            .to_bytes()
     }
 
     fn ed25519(&self) -> Ed25519Key {
@@ -423,6 +431,22 @@ fn open_inner(plain: &[u8], sender: &Ed25519Key, me: &Ed25519Key) -> Result<Inne
     Ok(inner)
 }
 
+/// Relay side of the challenge-response: identity binding and nonce signature.
+pub fn verify_auth(
+    identity: &Identity,
+    relay_host: &str,
+    nonce: &[u8; 32],
+    sig: &Signature,
+) -> Result<(), Error> {
+    verify_identity(identity)?;
+    verify_message(&identity.ed25519, &auth_message(relay_host, nonce), sig)
+}
+
+/// `nonce` has a fixed length at the end, so the concatenation is unambiguous.
+fn auth_message(relay_host: &str, nonce: &[u8; 32]) -> Vec<u8> {
+    [AUTH_CONTEXT, relay_host.as_bytes(), nonce].concat()
+}
+
 fn verify_identity(id: &Identity) -> Result<(), Error> {
     verify(&id.ed25519, ID_CONTEXT, &id.curve25519, &id.signature)
 }
@@ -433,10 +457,13 @@ fn verify(
     data: &[u8; 32],
     sig: &Signature,
 ) -> Result<(), Error> {
+    verify_message(signer, &[context, data].concat(), sig)
+}
+
+fn verify_message(signer: &Ed25519Key, msg: &[u8], sig: &Signature) -> Result<(), Error> {
     let key = Ed25519PublicKey::from_slice(signer).map_err(|_| Error::BadSignature)?;
     let sig = Ed25519Signature::from_slice(sig).map_err(|_| Error::BadSignature)?;
-    key.verify(&[context, data].concat(), &sig)
-        .map_err(|_| Error::BadSignature)
+    key.verify(msg, &sig).map_err(|_| Error::BadSignature)
 }
 
 #[cfg(test)]

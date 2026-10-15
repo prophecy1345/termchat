@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [envelope, inner]
+        target: [envelope, inner, client_frame]
     steps:
       - uses: actions/checkout@v5
       - run: rustup toolchain install nightly --profile minimal

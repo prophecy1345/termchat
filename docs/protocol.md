@@ -52,7 +52,15 @@ R -> C  AuthOk | Error { code }
 C -> R  PublishKeys { one_time: Vec<SignedKey>, fallback: Option<SignedKey> }
 C -> R  ClaimKey { target: ed25519 }
 R -> C  ClaimedKey { target, key: SignedKey } | Error { code: NoKeys }
-R -> C  KeyCount { one_time_left: u32 }
+R -> C  KeyCount { one_time_left: u32, fallback_used: bool }
+```
+
+- `KeyCount` приходит сразу после `AuthOk`, в ответ на `PublishKeys` и владельцу ключей, когда кто-то забрал его ключ (если он онлайн).
+- `fallback_used = true`: relay выдал fallback key, клиент ротирует его (ADR-002).
+- Ошибка на `ClaimKey` приходит с `client_id: None`; клиент запрашивает ключи по одному.
+- Сверх лимита `ClaimKey` к одной цели relay выдаёт только fallback key, one-time keys не тратятся.
+
+```
 ```
 
 `SignedKey { key: [u8; 32], signature: [u8; 64] }`. Подпись Ed25519 владельца над `"termchat-otk-v1" || key`. Отдельный id не нужен: vodozemac находит one-time key по публичной части. Клиент, получивший ключ, проверяет подпись ключом `target`, поэтому relay не может подсунуть свой ключ.
@@ -68,6 +76,7 @@ R -> C  Deliver { relay_id: u64, sender: ed25519, envelope: Envelope }
 C -> R  Ack { relay_id }
 ```
 
+- Relay держит конверт в очереди получателя, пока тот не пришлёт `Ack`. Неподтверждённые конверты приходят снова при каждом подключении. В M2 очередь в памяти и теряется при перезапуске relay; в M5 она переезжает в SQLite и получает TTL.
 - `Accepted` означает, что relay принял конверт. В клиенте это «доставлено на сервер». E2E-квитанций о прочтении нет.
 - `sender` в `Deliver` ставит relay по аутентифицированному соединению. Клиент не доверяет этому полю: настоящий отправитель подтверждается расшифровкой и проверкой внутреннего сообщения (раздел 7).
 - `Ack` разрешает relay удалить конверт (важно с M5, когда появляется очередь).

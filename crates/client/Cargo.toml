@@ -9,3 +9,16 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+getrandom = "0.4.3"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+termchat-core = { version = "0.0.0", path = "../core" }
+termchat-proto = { version = "0.0.0", path = "../proto" }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
+
+[dev-dependencies]
+termchat-relay = { path = "../relay" }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
