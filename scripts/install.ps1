@@ -28,7 +28,8 @@ try {
     Invoke-WebRequest "$base/$archive" -OutFile (Join-Path $tmp $archive)
     Invoke-WebRequest "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS')
 
-    $line = Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { ($_ -split '\s+')[1] -eq $archive }
+    # `*name` is how sha256sum marks binary mode on some systems.
+    $line = Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { ($_ -split '\s+')[1].TrimStart('*') -eq $archive }
     if (-not $line) { throw "termchat: $archive is not listed in SHA256SUMS, nothing installed" }
     $expected = ($line -split '\s+')[0]
     $actual = (Get-FileHash (Join-Path $tmp $archive) -Algorithm SHA256).Hash

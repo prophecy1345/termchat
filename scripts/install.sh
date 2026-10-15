@@ -40,7 +40,8 @@ echo "Downloading $archive"
 curl -fsSL "$base/$archive" -o "$tmp/$archive"
 curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 
-expected=$(awk -v f="$archive" '$2 == f { print $1 }' "$tmp/SHA256SUMS")
+# `*name` is how sha256sum marks binary mode on some systems.
+expected=$(awk -v f="$archive" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
 if command -v sha256sum >/dev/null 2>&1; then
     actual=$(sha256sum "$tmp/$archive" | awk '{ print $1 }')
 else
