@@ -13,6 +13,8 @@ pub const BUCKETS: [usize; 3] = [512, 4096, 16384];
 pub const MAX_TEXT_BYTES: usize = 16_000;
 /// Self-chosen display name, only ever sent inside E2EE.
 pub const MAX_NICKNAME_BYTES: usize = 64;
+/// Free text attached to a contact request.
+pub const MAX_NOTE_BYTES: usize = 256;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
@@ -334,6 +336,9 @@ impl Inner {
     fn check_limits(&self) -> Result<(), Error> {
         match &self.body {
             Body::Text { text, .. } if text.len() > MAX_TEXT_BYTES => Err(Error::TooLarge),
+            Body::ContactRequest { note, .. } if note.len() > MAX_NOTE_BYTES => {
+                Err(Error::TooLarge)
+            }
             Body::ContactRequest { nickname, .. } | Body::ContactAccept { nickname } => {
                 check_nickname(nickname)
             }
@@ -446,6 +451,18 @@ mod tests {
             };
             assert_eq!(inner.to_padded(), Err(err));
         }
+        let long_note = Inner {
+            body: Body::ContactRequest {
+                identity: Identity {
+                    signature,
+                    ..identity
+                },
+                nickname: "x".into(),
+                note: "n".repeat(MAX_NOTE_BYTES + 1),
+            },
+            ..text(0)
+        };
+        assert_eq!(long_note.to_padded(), Err(Error::TooLarge));
         let key = SignedKey {
             key: [4; 32],
             signature,
