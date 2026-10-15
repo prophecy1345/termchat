@@ -16,14 +16,14 @@ jobs:
   reproducible:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: a
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: elsewhere/b
-      - uses: mlugg/setup-zig@v2
-      - run: cargo install cargo-zigbuild --locked
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - run: cargo install cargo-zigbuild@0.23.4 --locked
       - run: |
           for d in a elsewhere/b; do
             (cd "$d" && rustup target add x86_64-unknown-linux-musl &&
@@ -47,11 +47,11 @@ jobs:
           - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - if: matrix.zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
       - if: matrix.zig
-        run: cargo install cargo-zigbuild --locked
+        run: cargo install cargo-zigbuild@0.23.4 --locked
       - shell: bash
         run: |
           rustup target add ${{ matrix.target }}
@@ -62,7 +62,7 @@ jobs:
           sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
           (cd "$dir" && sum termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} > BINARIES.sha256)
           tar -czf "$dir.tar.gz" "$dir"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}
           path: termchat-*.tar.gz
@@ -76,13 +76,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
       - run: sha256sum termchat-*.tar.gz > SHA256SUMS
       # Signed (Sigstore) statement: these files came from this repo, this commit,
       # this workflow. Verify with: gh attestation verify <file> --repo <owner>/termchat
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |
             termchat-*.tar.gz
