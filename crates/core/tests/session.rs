@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)] // test-only file; helpers are not #[test] fns
 
 use termchat_core::proto::{Body, Envelope};
-use termchat_core::{Client, Error, KdfParams};
+use termchat_core::{Client, Error, KdfParams, create_file_key};
 
 const FAST: KdfParams = KdfParams {
     m_kib: 64,
@@ -157,7 +157,10 @@ fn stranger_needs_valid_contact_request() {
         )
         .unwrap();
     carol.decrypt(&b, &env).unwrap();
-    let carol = Client::load(b"pw", &carol.save(b"pw", FAST).unwrap()).unwrap();
+    let key = create_file_key(b"pw", FAST).unwrap();
+    let carol = Client::load(b"pw", &carol.save(&key, "").unwrap())
+        .unwrap()
+        .0;
     assert_eq!(carol.nickname(&b), Some("bob"));
 }
 
@@ -195,20 +198,25 @@ fn state_survives_save_and_load() {
     let (a, b) = (ed(&alice), ed(&bob));
     let first = alice.encrypt(&b, text("before restart")).unwrap();
 
-    let file = bob.save(b"bob pw", FAST).unwrap();
+    let file = bob
+        .save(&create_file_key(b"bob pw", FAST).unwrap(), "bob settings")
+        .unwrap();
     assert!(matches!(
         Client::load(b"nope", &file),
         Err(Error::WrongPassword)
     ));
-    let mut bob = Client::load(b"bob pw", &file).unwrap();
+    let (mut bob, _, app) = Client::load(b"bob pw", &file).unwrap();
+    assert_eq!(app.as_str(), "bob settings");
     assert_eq!(ed(&bob), b);
 
     assert_eq!(
         bob.decrypt(&a, &first).unwrap().body,
         text("before restart")
     );
-    let file = alice.save(b"alice pw", FAST).unwrap();
-    let mut alice = Client::load(b"alice pw", &file).unwrap();
+    let file = alice
+        .save(&create_file_key(b"alice pw", FAST).unwrap(), "")
+        .unwrap();
+    let mut alice = Client::load(b"alice pw", &file).unwrap().0;
     let second = alice.encrypt(&b, text("after restart")).unwrap();
     let got = bob.decrypt(&a, &second).unwrap();
     assert_eq!((got.body, got.missed), (text("after restart"), 0));

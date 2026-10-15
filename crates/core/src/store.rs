@@ -38,8 +38,16 @@ impl KdfParams {
     };
 }
 
-pub fn seal(password: &[u8], params: KdfParams, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
-    let dek = Zeroizing::new(random::<32>()?);
+/// An unlocked state file: its header and data key. Kept in memory while the
+/// app is unlocked so saving does not rerun Argon2. No `Debug`: holds the key.
+pub struct FileKey {
+    header: Vec<u8>,
+    dek: Zeroizing<Vec<u8>>,
+}
+
+/// New file key: random DEK wrapped under `password` in one of two slots.
+pub fn create(password: &[u8], params: KdfParams) -> Result<FileKey, Error> {
+    let dek = Zeroizing::new(random::<32>()?.to_vec());
     let mut slots = [random::<SLOT>()?, random::<SLOT>()?];
     let real = usize::from(random::<1>()?[0] & 1);
     {
@@ -52,30 +60,32 @@ pub fn seal(password: &[u8], params: KdfParams, plaintext: &[u8]) -> Result<Vec<
                 .map_err(|_| Error::CorruptState)?,
         );
     }
-
-    let mut out = Vec::with_capacity(HEADER + NONCE + plaintext.len() + 16);
-    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    let mut header = Vec::with_capacity(HEADER);
+    header.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     for v in [params.m_kib, params.t, params.p] {
-        out.extend_from_slice(&v.to_le_bytes());
+        header.extend_from_slice(&v.to_le_bytes());
     }
-    out.extend_from_slice(&slots[0]);
-    out.extend_from_slice(&slots[1]);
+    header.extend_from_slice(&slots[0]);
+    header.extend_from_slice(&slots[1]);
+    Ok(FileKey { header, dek })
+}
+
+/// Whole file bytes: header, fresh nonce, body encrypted with the header as AAD.
+pub fn seal(key: &FileKey, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
     let nonce = random::<NONCE>()?;
-    let body = aead(dek.as_slice())?
+    let body = aead(key.dek.as_slice())?
         .encrypt(
             &XNonce::from(nonce),
             Payload {
                 msg: plaintext,
-                aad: &out,
+                aad: &key.header,
             },
         )
         .map_err(|_| Error::CorruptState)?;
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&body);
-    Ok(out)
+    Ok([key.header.as_slice(), &nonce, &body].concat())
 }
 
-pub fn open(password: &[u8], file: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>), Error> {
     if file.len() < HEADER + NONCE + 16 {
         return Err(Error::CorruptState);
     }
@@ -117,7 +127,11 @@ pub fn open(password: &[u8], file: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
                 aad: header,
             },
         ) {
-            return Ok(Zeroizing::new(plain));
+            let key = FileKey {
+                header: header.to_vec(),
+                dek,
+            };
+            return Ok((key, Zeroizing::new(plain)));
         }
     }
     Err(Error::WrongPassword)
@@ -161,14 +175,22 @@ mod tests {
 
     #[test]
     fn roundtrip_and_wrong_password() {
-        let file = seal(b"correct horse", FAST, b"state").unwrap();
-        assert_eq!(open(b"correct horse", &file).unwrap().as_slice(), b"state");
-        assert_eq!(open(b"wrong", &file), Err(Error::WrongPassword));
+        let key = create(b"correct horse", FAST).unwrap();
+        let file = seal(&key, b"state").unwrap();
+        let (key, plain) = open(b"correct horse", &file).unwrap();
+        assert_eq!(plain.as_slice(), b"state");
+        assert!(matches!(open(b"wrong", &file), Err(Error::WrongPassword)));
+        // Resealing with the kept key needs no password and opens the same way.
+        let file = seal(&key, b"state 2").unwrap();
+        assert_eq!(
+            open(b"correct horse", &file).unwrap().1.as_slice(),
+            b"state 2"
+        );
     }
 
     #[test]
     fn any_bit_flip_is_rejected() {
-        let file = seal(b"pw", FAST, b"state").unwrap();
+        let file = seal(&create(b"pw", FAST).unwrap(), b"state").unwrap();
         // Skip the KDF params: changing them only changes the derived key, also rejected,
         // but huge values would make the test slow.
         for i in (14..file.len()).step_by(7) {

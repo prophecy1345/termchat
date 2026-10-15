@@ -15,7 +15,7 @@ use vodozemac::{Curve25519PublicKey, Ed25519PublicKey, Ed25519Signature};
 use zeroize::Zeroizing;
 
 pub use fingerprint::{fingerprint, safety_number};
-pub use store::KdfParams;
+pub use store::{FileKey, KdfParams, create as create_file_key};
 pub use termchat_proto as proto;
 
 use proto::{Body, Curve25519Key, Ed25519Key, Envelope, Identity, Inner, Signature, SignedKey};
@@ -324,9 +324,11 @@ impl Client {
         })
     }
 
-    /// Encrypted state file bytes. The caller writes them to disk atomically.
-    pub fn save(&self, password: &[u8], params: KdfParams) -> Result<Vec<u8>, Error> {
+    /// Encrypted state file bytes, with the app's own data (settings, history)
+    /// stored alongside. The caller writes them to disk atomically.
+    pub fn save(&self, key: &FileKey, app: &str) -> Result<Vec<u8>, Error> {
         let state = State {
+            app: app.to_owned(),
             account: self.account.pickle(),
             contacts: self
                 .contacts
@@ -348,11 +350,12 @@ impl Client {
                 .collect(),
         };
         let plain = Zeroizing::new(serde_json::to_vec(&state).map_err(|_| Error::CorruptState)?);
-        store::seal(password, params, &plain)
+        store::seal(key, &plain)
     }
 
-    pub fn load(password: &[u8], file: &[u8]) -> Result<Self, Error> {
-        let plain = store::open(password, file)?;
+    /// Returns the client, the key to save it again, and the app data.
+    pub fn load(password: &[u8], file: &[u8]) -> Result<(Self, FileKey, Zeroizing<String>), Error> {
+        let (key, plain) = store::open(password, file)?;
         let state: State = serde_json::from_slice(&plain).map_err(|_| Error::CorruptState)?;
         let contacts = state
             .contacts
@@ -378,10 +381,33 @@ impl Client {
                 )
             })
             .collect();
-        Ok(Self {
+        let client = Self {
             account: Account::from_pickle(state.account),
             contacts,
-        })
+        };
+        Ok((client, key, Zeroizing::new(state.app)))
+    }
+
+    /// Accepts a pending contact request. `false` if there is none.
+    pub fn accept(&mut self, contact: &Ed25519Key) -> bool {
+        match self.contacts.get_mut(contact) {
+            Some(c) if c.is_request => {
+                c.is_request = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Forgets a contact and its sessions.
+    pub fn remove_contact(&mut self, contact: &Ed25519Key) {
+        self.contacts.remove(contact);
+    }
+
+    pub fn has_session(&self, contact: &Ed25519Key) -> bool {
+        self.contacts
+            .get(contact)
+            .is_some_and(|c| !c.sessions.is_empty())
     }
 }
 
@@ -396,6 +422,7 @@ struct ContactState {
 
 #[derive(Serialize, Deserialize)]
 struct State {
+    app: String,
     account: AccountPickle,
     contacts: Vec<ContactState>,
 }

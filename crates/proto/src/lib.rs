@@ -3,6 +3,8 @@
 //! See `docs/protocol.md`. Everything here parses untrusted input, so every
 //! decoder checks sizes and rejects trailing bytes.
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 pub const VERSION: u16 = 1;
@@ -199,6 +201,44 @@ pub struct Identity {
     pub curve25519: Curve25519Key,
     #[serde(with = "serde_big_array")]
     pub signature: Signature,
+}
+
+/// What a user hands out to be added: `termchat:<base64url(postcard)>` (protocol.md, section 9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invite {
+    pub version: u16,
+    pub relay_url: String,
+    pub identity: Identity,
+}
+
+const INVITE_PREFIX: &str = "termchat:";
+const MAX_RELAY_URL: usize = 256;
+
+impl Invite {
+    pub fn encode(&self) -> String {
+        let bytes = postcard::to_allocvec(self).unwrap_or_default();
+        format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    /// Tolerates surrounding whitespace from copy-paste.
+    pub fn decode(s: &str) -> Result<Self, Error> {
+        let b64 = s
+            .trim()
+            .strip_prefix(INVITE_PREFIX)
+            .ok_or(Error::Malformed)?;
+        if b64.len() > 4 * MAX_RELAY_URL {
+            return Err(Error::TooLarge);
+        }
+        let bytes = URL_SAFE_NO_PAD.decode(b64).map_err(|_| Error::Malformed)?;
+        let invite: Self = decode_exact(&bytes)?;
+        if invite.version != VERSION {
+            return Err(Error::UnsupportedVersion);
+        }
+        if invite.relay_url.len() > MAX_RELAY_URL {
+            return Err(Error::TooLarge);
+        }
+        Ok(invite)
+    }
 }
 
 /// One-time or fallback key, signed over `"termchat-otk-v1" || key`.
@@ -434,6 +474,24 @@ mod tests {
             ClientFrame::decode(&vec![0; MAX_FRAME_BYTES + 1]),
             Err(Error::TooLarge)
         );
+    }
+
+    #[test]
+    fn invite_roundtrip() {
+        let invite = Invite {
+            version: VERSION,
+            relay_url: "wss://relay.example.org/".into(),
+            identity: Identity {
+                ed25519: [1; 32],
+                curve25519: [2; 32],
+                signature: [3; 64],
+            },
+        };
+        let s = invite.encode();
+        assert!(s.starts_with("termchat:") && s.len() < 250, "{s}");
+        assert_eq!(Invite::decode(&format!("  {s}\n")).unwrap(), invite);
+        assert_eq!(Invite::decode("termchat:!!!"), Err(Error::Malformed));
+        assert_eq!(Invite::decode(&s[1..]), Err(Error::Malformed));
     }
 
     #[test]

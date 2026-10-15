@@ -9,3 +9,16 @@ Private text-only messenger for the terminal. End-to-end encrypted with [vodozem
 - Plan and milestones: [PLAN.md](PLAN.md)
 
 License: AGPL-3.0-or-later.
+
+## Try it locally
+
+```sh
+cargo build --release
+target/release/termchat-relay --host 127.0.0.1 --listen 127.0.0.1:8080 &
+TERMCHAT_HOME=/tmp/alice target/release/termchat   # relay URL: ws://127.0.0.1:8080/
+TERMCHAT_HOME=/tmp/bob   target/release/termchat   # in another terminal
+```
+
+Ctrl+O shows your invite, Ctrl+A adds a contact from theirs, `?` lists all keys.
+Over the internet run the relay behind a TLS proxy (e.g. Caddy) with `--trust-proxy`
+and use a `wss://` URL.

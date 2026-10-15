@@ -3,6 +3,10 @@
 //! Knows nothing about encryption: frames in, frames out. Unacknowledged
 //! `Send` frames are resent after every reconnect (protocol.md, section 13).
 
+pub mod app;
+pub mod data;
+pub mod ui;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -110,7 +114,12 @@ impl Link {
                     }
                 }
             }
-            tokio::time::sleep(jitter(delay)).await;
+            // Stop waiting as soon as the app is gone (e.g. locked): the signer
+            // holds the keys and must not outlive it.
+            tokio::select! {
+                _ = tokio::time::sleep(jitter(delay)) => {}
+                _ = self.events.closed() => return,
+            }
             delay = (delay * 2).min(MAX_DELAY);
         }
     }
