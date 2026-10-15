@@ -45,8 +45,8 @@ Full details: [docs/threat-model.md](docs/threat-model.md).
 
 Download the archive for your system from the
 [releases](https://github.com/prophecy1345/termchat/releases). Each holds `termchat`
-(the client) and `termchat-relay` (the server). Step-by-step instructions for each
-system are in the [user guide](#1-install).
+(the client) and `termchat-relay` (the server). The quickest ways to install
+(Homebrew, one command) are in the [user guide](#1-install).
 
 ### Verify a release
 
@@ -79,7 +79,29 @@ termchat runs in a terminal window. Everything is done with the keyboard; press
 
 ### 1. Install
 
-Download the archive for your computer from the
+Pick one way.
+
+**Homebrew** (macOS, Linux):
+```sh
+brew install prophecy1345/tap/termchat
+```
+Updates come with `brew upgrade`.
+
+**One command** (macOS, Linux): downloads the right build, checks its checksum and puts
+`termchat` into `~/.local/bin`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | sh
+```
+
+**One command** (Windows, in PowerShell): installs to
+`%LOCALAPPDATA%\Programs\termchat` and adds it to your PATH.
+```powershell
+irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
+```
+
+Then open a new terminal and run `termchat`.
+
+**By hand.** Download the archive for your computer from the
 [releases](https://github.com/prophecy1345/termchat/releases):
 
 | Your computer | Archive |
@@ -88,40 +110,20 @@ Download the archive for your computer from the
 | Mac with Intel | `termchat-<version>-x86_64-apple-darwin.tar.gz` |
 | Linux, 64-bit PC | `termchat-<version>-x86_64-unknown-linux-musl.tar.gz` |
 | Linux on ARM (Raspberry Pi 4/5, ARM servers) | `termchat-<version>-aarch64-unknown-linux-musl.tar.gz` |
-| Windows 10/11 | `termchat-<version>-x86_64-pc-windows-msvc.tar.gz` |
+| Windows 10/11 | `termchat-<version>-x86_64-pc-windows-msvc.zip` |
 
-Unpack it and start `termchat` from a terminal:
+- **Windows:** open the `.zip`, extract it, double-click `termchat.exe` (Windows
+  Terminal looks best). SmartScreen may warn about an unknown publisher: "More info" →
+  "Run anyway".
+- **macOS:** `tar -xzf termchat-*-apple-darwin.tar.gz`, then in that folder
+  `xattr -d com.apple.quarantine termchat` (the binary is not signed by Apple; without
+  this macOS says it "cannot be opened because the developer cannot be verified") and
+  `./termchat`. The two ways above do not need this step.
+- **Linux:** `tar -xzf termchat-*-linux-musl.tar.gz`, then `./termchat` in that folder.
+  The binary is static: no libraries to install.
 
-**macOS**
-```sh
-tar -xzf termchat-*-apple-darwin.tar.gz
-cd termchat-*-apple-darwin
-xattr -d com.apple.quarantine termchat   # the binary is not signed by Apple
-./termchat
-```
-Without the `xattr` line macOS says the app "cannot be opened because the developer
-cannot be verified". If `xattr` answers "No such xattr", the file was not quarantined
-and that is fine. To run it from anywhere: `sudo cp termchat /usr/local/bin/`.
-
-**Linux**
-```sh
-tar -xzf termchat-*-linux-musl.tar.gz
-cd termchat-*-linux-musl
-./termchat
-```
-The binary is static: no libraries to install. To run it from anywhere:
-`sudo cp termchat /usr/local/bin/`.
-
-**Windows** (use Windows Terminal; the old console works but looks worse)
-```powershell
-tar -xzf termchat-<version>-x86_64-pc-windows-msvc.tar.gz
-cd termchat-<version>-x86_64-pc-windows-msvc
-.\termchat.exe
-```
-SmartScreen may warn about an unknown publisher: "More info" → "Run anyway".
-
-Before the first run you can check that the download is genuine; see
-[Verify a release](#verify-a-release).
+`termchat --version` prints the installed version. Before the first run you can check
+that the download is genuine; see [Verify a release](#verify-a-release).
 
 ### 2. First run
 

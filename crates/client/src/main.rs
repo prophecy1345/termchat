@@ -12,6 +12,10 @@ use termchat::{data, ui};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("termchat {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     no_core_dumps();
     let path = data::home().join("state");
     // Alternate screen, raw mode, and a panic hook that restores the terminal.

@@ -6,7 +6,27 @@ termchat работает в окне терминала, всё делаетс�
 
 ## 1. Установка
 
-Скачайте архив для своего компьютера со страницы [релизов](https://github.com/prophecy1345/termchat/releases):
+Выберите один из способов.
+
+**Homebrew** (macOS, Linux):
+```sh
+brew install prophecy1345/tap/termchat
+```
+Обновления: `brew upgrade`.
+
+**Одной командой** (macOS, Linux): скрипт скачает нужную сборку, проверит чексумму и положит `termchat` в `~/.local/bin`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | sh
+```
+
+**Одной командой** (Windows, в PowerShell): установит в `%LOCALAPPDATA%\Programs\termchat` и добавит эту папку в PATH.
+```powershell
+irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
+```
+
+После этого откройте новый терминал и запустите `termchat`.
+
+**Вручную.** Скачайте архив для своего компьютера со страницы [релизов](https://github.com/prophecy1345/termchat/releases):
 
 | Компьютер | Архив |
 |---|---|
@@ -14,36 +34,13 @@ termchat работает в окне терминала, всё делаетс�
 | Mac на Intel | `termchat-<версия>-x86_64-apple-darwin.tar.gz` |
 | Linux, обычный 64-битный ПК | `termchat-<версия>-x86_64-unknown-linux-musl.tar.gz` |
 | Linux на ARM (Raspberry Pi 4/5, ARM-серверы) | `termchat-<версия>-aarch64-unknown-linux-musl.tar.gz` |
-| Windows 10/11 | `termchat-<версия>-x86_64-pc-windows-msvc.tar.gz` |
+| Windows 10/11 | `termchat-<версия>-x86_64-pc-windows-msvc.zip` |
 
-Распакуйте архив и запустите `termchat` из терминала.
+- **Windows:** откройте `.zip`, распакуйте, дважды щёлкните `termchat.exe` (лучше всего выглядит в Windows Terminal). SmartScreen может предупредить о неизвестном издателе: «Подробнее» → «Выполнить в любом случае».
+- **macOS:** `tar -xzf termchat-*-apple-darwin.tar.gz`, затем в этой папке `xattr -d com.apple.quarantine termchat` (программа не подписана Apple; без этого macOS напишет, что её «нельзя открыть, так как не удалось проверить разработчика») и `./termchat`. Двум способам выше этот шаг не нужен.
+- **Linux:** `tar -xzf termchat-*-linux-musl.tar.gz`, затем `./termchat` в этой папке. Программа собрана статически, ставить библиотеки не нужно.
 
-**macOS**
-```sh
-tar -xzf termchat-*-apple-darwin.tar.gz
-cd termchat-*-apple-darwin
-xattr -d com.apple.quarantine termchat   # программа не подписана Apple
-./termchat
-```
-Без строки с `xattr` macOS напишет, что программу «нельзя открыть, так как не удалось проверить разработчика». Если `xattr` ответит «No such xattr», файл не был помечен, всё в порядке. Чтобы запускать termchat из любой папки: `sudo cp termchat /usr/local/bin/`.
-
-**Linux**
-```sh
-tar -xzf termchat-*-linux-musl.tar.gz
-cd termchat-*-linux-musl
-./termchat
-```
-Программа собрана статически, ставить библиотеки не нужно. Чтобы запускать из любой папки: `sudo cp termchat /usr/local/bin/`.
-
-**Windows** (лучше в Windows Terminal; в старой консоли тоже работает, но выглядит хуже)
-```powershell
-tar -xzf termchat-<версия>-x86_64-pc-windows-msvc.tar.gz
-cd termchat-<версия>-x86_64-pc-windows-msvc
-.\termchat.exe
-```
-SmartScreen может предупредить о неизвестном издателе: «Подробнее» → «Выполнить в любом случае».
-
-Перед первым запуском можно убедиться, что скачанный файл подлинный: см. раздел [Verify a release](../README.md#verify-a-release) в README.
+`termchat --version` покажет установленную версию. Перед первым запуском можно убедиться, что скачанный файл подлинный: см. раздел [Verify a release](../README.md#verify-a-release) в README.
 
 ## 2. Первый запуск
 
