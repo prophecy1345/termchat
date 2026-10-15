@@ -75,6 +75,8 @@ not yet reviewed in `supply-chain/`).
 termchat runs in a terminal window. Everything is done with the keyboard; press
 **?** (or **F1**) at any time for the list of keys.
 
+По-русски: [docs/manual.ru.md](docs/manual.ru.md).
+
 ### 1. Install
 
 Download the archive for your computer from the
