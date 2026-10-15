@@ -1,0 +1,22 @@
+# Relay behind Caddy (automatic HTTPS). Set your domain in Caddyfile and below.
+services:
+  relay:
+    build: ..
+    command: ["--host", "relay.example.org", "--trust-proxy"]
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  relay-data:
+  caddy-data:

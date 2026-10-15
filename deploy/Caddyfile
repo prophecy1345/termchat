@@ -1,0 +1,8 @@
+# Caddy gets a Let's Encrypt certificate and proxies WebSocket traffic to the relay.
+relay.example.org {
+    reverse_proxy relay:8080
+    log {
+        # No access log: the relay keeps no IP history, neither should the proxy.
+        output discard
+    }
+}

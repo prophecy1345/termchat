@@ -1,0 +1,91 @@
+name: Release
+
+# Push a tag like v0.1.0. Every binary is built by scripts/build-release.sh,
+# so anyone can rebuild it and compare hashes (README, "Verify a release").
+on:
+  push:
+    tags: ["v*"]
+  # Manual run: builds and checks everything, publishes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Two builds of the same commit in different folders must be byte-identical.
+  reproducible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: a
+      - uses: actions/checkout@v5
+        with:
+          path: elsewhere/b
+      - uses: mlugg/setup-zig@v2
+      - run: cargo install cargo-zigbuild --locked
+      - run: |
+          for d in a elsewhere/b; do
+            (cd "$d" && rustup target add x86_64-unknown-linux-musl &&
+             BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-musl)
+          done
+          for bin in termchat termchat-relay; do
+            sha256sum a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
+            cmp a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
+          done
+
+  build:
+    needs: reproducible
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - if: matrix.zig
+        uses: mlugg/setup-zig@v2
+      - if: matrix.zig
+        run: cargo install cargo-zigbuild --locked
+      - shell: bash
+        run: |
+          rustup target add ${{ matrix.target }}
+          BUILD=${{ matrix.zig && 'zigbuild' || 'build' }} scripts/build-release.sh ${{ matrix.target }}
+          dir=termchat-${{ github.ref_name }}-${{ matrix.target }}
+          mkdir "$dir"
+          cp target/${{ matrix.target }}/release/termchat${{ matrix.exe }} target/${{ matrix.target }}/release/termchat-relay${{ matrix.exe }} LICENSE README.md "$dir/"
+          (cd "$dir" && shasum -a 256 termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} > BINARIES.sha256)
+          tar -czf "$dir.tar.gz" "$dir"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: termchat-*.tar.gz
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: sha256sum termchat-*.tar.gz > SHA256SUMS
+      # Signed (Sigstore) statement: these files came from this repo, this commit,
+      # this workflow. Verify with: gh attestation verify <file> --repo <owner>/termchat
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            termchat-*.tar.gz
+            SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz SHA256SUMS --repo "${{ github.repository }}" --draft --generate-notes
