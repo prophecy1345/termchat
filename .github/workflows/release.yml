@@ -96,8 +96,8 @@ jobs:
           TERMCHAT_BASE_URL: http://127.0.0.1:18765
           TERMCHAT_INSTALL_DIR: ${{ runner.temp }}/bin
         run: |
-          (cd dist && exec python3 -m http.server 18765 >/dev/null 2>&1) &
-          sleep 2
+          (cd dist && exec python3 -m http.server 18765 --bind 127.0.0.1 >/dev/null 2>&1) &
+          for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:18765/SHA256SUMS && break; sleep 1; done
           sh scripts/install.sh
           "$TERMCHAT_INSTALL_DIR/termchat" --version
       - if: runner.os == 'Windows'
@@ -106,8 +106,8 @@ jobs:
           TERMCHAT_VERSION: ${{ github.ref_name }}
           TERMCHAT_BASE_URL: http://127.0.0.1:18765
         run: |
-          Start-Process python -ArgumentList '-m', 'http.server', '18765' -WorkingDirectory dist -WindowStyle Hidden
-          Start-Sleep -Seconds 2
+          Start-Process python -ArgumentList '-m', 'http.server', '18765', '--bind', '127.0.0.1' -WorkingDirectory dist -WindowStyle Hidden
+          Start-Sleep -Seconds 3
           ./scripts/install.ps1
           & "$env:LOCALAPPDATA\Programs\termchat\termchat.exe" --version
 
