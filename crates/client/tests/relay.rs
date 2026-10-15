@@ -100,8 +100,13 @@ impl Peer {
         self.relay
             .send(ClientFrame::ClaimKey { target: with })
             .unwrap();
-        let ServerFrame::ClaimedKey { target, key } = self.frame().await else {
-            panic!("no key")
+        // Deliveries may arrive first; they are not what we wait for.
+        let (target, key) = loop {
+            match self.frame().await {
+                ServerFrame::ClaimedKey { target, key } => break (target, key),
+                ServerFrame::Deliver { .. } => {}
+                other => panic!("no key: {other:?}"),
+            }
         };
         assert_eq!(target, with);
         self.core
@@ -124,7 +129,13 @@ impl Peer {
                 envelope,
             })
             .unwrap();
-        assert_eq!(self.frame().await, ServerFrame::Accepted { client_id: id });
+        loop {
+            match self.frame().await {
+                ServerFrame::Accepted { client_id } if client_id == id => break,
+                ServerFrame::Deliver { .. } => {}
+                other => panic!("not accepted: {other:?}"),
+            }
+        }
     }
 
     /// Receives, decrypts and (optionally) acknowledges one message.
@@ -442,16 +453,14 @@ async fn per_target_claim_limit_hands_out_fallback() {
     }
 }
 
-#[tokio::test]
-async fn three_real_recipients_reporting_ban_the_sender() {
-    let url = start_relay(Limits::default()).await;
+/// Mallory with sessions to `n` victims who all published keys.
+async fn mallory_and_victims(url: &str, n: usize) -> (Arc<Mutex<Client>>, Peer, Vec<Peer>) {
     let mallory_core = Arc::new(Mutex::new(Client::default()));
-    let mut mallory = Peer::new(&url, Arc::clone(&mallory_core));
+    let mut mallory = Peer::new(url, Arc::clone(&mallory_core));
     mallory.connected().await;
     let mut victims = Vec::new();
-    for _ in 0..3 {
-        let core = Arc::new(Mutex::new(Client::default()));
-        let mut v = Peer::new(&url, core);
+    for _ in 0..n {
+        let mut v = Peer::new(url, Arc::new(Mutex::new(Client::default())));
         v.connected().await;
         v.publish_keys().await;
         let id = v.core.lock().unwrap().identity();
@@ -459,34 +468,60 @@ async fn three_real_recipients_reporting_ban_the_sender() {
         mallory.start_session(id.ed25519).await;
         victims.push(v);
     }
-    for (i, v) in victims.iter().enumerate() {
-        mallory
-            .send_text(v.key(), i as u64, "buy something illegal")
-            .await;
+    (mallory_core, mallory, victims)
+}
+
+async fn report_all(victims: &mut [Peer], m: [u8; 32]) {
+    for v in victims {
+        v.relay
+            .send(ClientFrame::Report {
+                sender: m,
+                text: "buy something illegal".into(),
+            })
+            .unwrap();
+        while !matches!(v.frame().await, ServerFrame::Reported) {}
     }
-    let report = |sender| ClientFrame::Report {
-        sender,
-        text: "buy something illegal".into(),
+}
+
+#[tokio::test]
+async fn three_real_recipients_reporting_ban_the_sender() {
+    // Every key counts fully here; the young-key rule has its own test.
+    let limits = Limits {
+        young_reporter: Duration::ZERO,
+        ..Limits::default()
     };
+    let url = start_relay(limits).await;
+    let (mallory_core, mut mallory, mut victims) = mallory_and_victims(&url, 3).await;
     let m = mallory.key();
+    let mut id = 0;
+    let mut write_each = async |mallory: &mut Peer, victims: &[Peer]| {
+        for v in victims {
+            id += 1;
+            mallory
+                .send_text(v.key(), id, "buy something illegal")
+                .await;
+        }
+    };
 
     // People Mallory never wrote to cannot count, however many there are.
     for _ in 0..5 {
         let mut stranger = Peer::new(&url, Arc::new(Mutex::new(Client::default())));
         stranger.connected().await;
-        stranger.relay.send(report(m)).unwrap();
-        assert_eq!(stranger.frame().await, ServerFrame::Reported);
+        report_all(std::slice::from_mut(&mut stranger), m).await;
     }
-    for v in &mut victims[..2] {
-        v.relay.send(report(m)).unwrap();
-        while !matches!(v.frame().await, ServerFrame::Reported) {}
-    }
+    // One envelope each (what adding an invite sends) is not enough (ADR-007).
+    write_each(&mut mallory, &victims).await;
+    report_all(&mut victims, m).await;
     let mut ws = raw(&url).await;
-    assert!(auth(&mut ws, &mallory_core).await == ServerFrame::AuthOk);
+    assert_eq!(auth(&mut ws, &mallory_core).await, ServerFrame::AuthOk);
 
-    // The third real recipient tips it over.
-    victims[2].relay.send(report(m)).unwrap();
-    while !matches!(victims[2].frame().await, ServerFrame::Reported) {}
+    // Three envelopes each: two reports are still not enough, the third bans.
+    write_each(&mut mallory, &victims).await;
+    write_each(&mut mallory, &victims).await;
+    report_all(&mut victims[..2], m).await;
+    let mut ws = raw(&url).await;
+    assert_eq!(auth(&mut ws, &mallory_core).await, ServerFrame::AuthOk);
+    report_all(&mut victims[2..], m).await;
     let mut ws = raw(&url).await;
     let refused = auth(&mut ws, &mallory_core).await;
     assert_eq!(
@@ -496,6 +531,71 @@ async fn three_real_recipients_reporting_ban_the_sender() {
             code: ErrorCode::Banned
         }
     );
+}
+
+#[tokio::test]
+async fn reports_from_fresh_keys_count_half() {
+    let url = start_relay(Limits::default()).await;
+    let (mallory_core, mut mallory, mut victims) = mallory_and_victims(&url, 3).await;
+    let m = mallory.key();
+    for round in 0..3 {
+        for (i, v) in victims.iter().enumerate() {
+            mallory
+                .send_text(v.key(), (round * 3 + i) as u64, "spam")
+                .await;
+        }
+    }
+    // Three reporters registered just now weigh 1.5 < 3.
+    report_all(&mut victims, m).await;
+    let mut ws = raw(&url).await;
+    assert_eq!(auth(&mut ws, &mallory_core).await, ServerFrame::AuthOk);
+}
+
+#[tokio::test]
+async fn a_stranger_gets_only_a_small_share_of_the_queue() {
+    let url = start_relay(Limits::default()).await;
+    let (mut stranger, mut bob) = {
+        let (_, s, mut v) = mallory_and_victims(&url, 1).await;
+        (s, v.remove(0))
+    };
+    stranger.publish_keys().await;
+    let bob_key = bob.key();
+    for id in 0..20 {
+        stranger.send_text(bob_key, id, "hello?").await;
+    }
+    // Bob never wrote back: the 21st envelope is refused, his queue stays usable.
+    let envelope = stranger
+        .core
+        .lock()
+        .unwrap()
+        .encrypt(
+            &bob_key,
+            Body::ContactAccept {
+                nickname: "s".into(),
+            },
+        )
+        .unwrap();
+    stranger
+        .relay
+        .send(ClientFrame::Send {
+            client_id: 99,
+            envelope,
+        })
+        .unwrap();
+    assert_eq!(
+        stranger.frame().await,
+        ServerFrame::Error {
+            client_id: Some(99),
+            code: ErrorCode::QueueFull
+        }
+    );
+
+    // Once Bob writes to them, they are no longer strangers.
+    let id = stranger.core.lock().unwrap().identity();
+    bob.core.lock().unwrap().add_contact(&id).unwrap();
+    bob.start_session(id.ed25519).await;
+    bob.send_text(stranger.key(), 1, "hi").await;
+    stranger.send_text(bob_key, 100, "thanks").await;
 }
 
 async fn auth(ws: &mut Raw, client: &Mutex<Client>) -> ServerFrame {

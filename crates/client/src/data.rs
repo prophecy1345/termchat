@@ -26,6 +26,8 @@ pub struct Data {
     /// When a fallback key was rotated out; forgotten a day after the relay TTL.
     pub old_fallback_since: Option<u64>,
     pub contacts: Vec<Contact>,
+    /// Requests we turned down; their messages are dropped unread (ADR-007).
+    pub rejected: Vec<Ed25519Key>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,6 +45,10 @@ pub struct Contact {
     pub no_history: bool,
     /// Their messages are dropped unread; we cannot write to them.
     pub blocked: bool,
+    /// Texts from a request not accepted yet, shown once it is (ADR-007).
+    pub hidden: Vec<Msg>,
+    /// Further texts from that request that were not kept.
+    pub held_back: u32,
     pub messages: Vec<Msg>,
     #[serde(skip)]
     pub unread: usize,

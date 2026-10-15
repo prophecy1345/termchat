@@ -6,7 +6,7 @@
 
 pub mod db;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -56,6 +56,9 @@ pub struct Limits {
     pub claims_per_target: Rate,
     pub stored_one_time_keys: usize,
     pub queue_envelopes: usize,
+    /// ADR-007: what one sender may park with a recipient who never wrote back.
+    pub stranger_queue_envelopes: usize,
+    pub stranger_queue_bytes: u64,
     pub queue_bytes: usize,
     /// ADR-005: undelivered envelopes and idle accounts are deleted after these.
     pub queue_ttl: Duration,
@@ -65,6 +68,10 @@ pub struct Limits {
     pub reports_per_key: Rate,
     /// Distinct people who were really written to before a key is banned (ADR-006).
     pub report_threshold: usize,
+    /// ADR-007: a report counts only after this many envelopes to the reporter,
+    /// and reporters younger than `young_reporter` count half.
+    pub report_min_envelopes: u32,
+    pub young_reporter: Duration,
 }
 
 /// Token bucket: `burst` at once, then `per_sec` on average.
@@ -107,12 +114,16 @@ impl Default for Limits {
             claims_per_target: Rate::per(100.0, DAY),
             stored_one_time_keys: 100,
             queue_envelopes: 1000,
+            stranger_queue_envelopes: 20,
+            stranger_queue_bytes: 256 * 1024,
             queue_bytes: 10 * 1024 * 1024,
             queue_ttl: Duration::from_secs(termchat_proto::QUEUE_TTL_DAYS * 86_400),
             account_ttl: Duration::from_secs(90 * 86_400),
             max_queue_bytes: 10 << 30,
             reports_per_key: Rate::per(10.0, DAY),
             report_threshold: 3,
+            report_min_envelopes: 3,
+            young_reporter: Duration::from_secs(7 * 86_400),
         }
     }
 }
@@ -205,9 +216,9 @@ struct Relay {
 struct Account {
     /// Everyone this key has written to: only new names count against the limit,
     /// and only they can report it (ADR-006).
-    recipients: HashSet<Ed25519Key>,
+    recipients: HashMap<Ed25519Key, u32>,
     /// People this key wrote to who reported it.
-    reporters: HashSet<Ed25519Key>,
+    reporters: HashMap<Ed25519Key, f64>,
     sends: Bucket,
     new_recipients: Bucket,
     publishes: Bucket,
@@ -219,8 +230,8 @@ struct Account {
 impl Account {
     fn new(l: &Limits, now: Instant) -> Self {
         Self {
-            recipients: HashSet::new(),
-            reporters: HashSet::new(),
+            recipients: HashMap::new(),
+            reporters: HashMap::new(),
             sends: Bucket::full(l.sends_per_key, now),
             new_recipients: Bucket::full(l.new_recipients_per_key, now),
             publishes: Bucket::full(l.publishes_per_key, now),
@@ -510,6 +521,14 @@ fn handle(
     let now = Instant::now();
     let mut relay = shared.lock();
     let relay = &mut *relay;
+    // Has the recipient ever written to us? Strangers get a small share of its queue (ADR-007).
+    let mutual = match &frame {
+        ClientFrame::Send { envelope, .. } => relay
+            .mem
+            .get(&envelope.recipient)
+            .is_some_and(|r| r.recipients.contains_key(&me)),
+        _ => false,
+    };
     let account = relay
         .mem
         .entry(me)
@@ -564,31 +583,39 @@ fn handle(
             if db(relay.db.banned(&to))?.is_none() {
                 return Ok(vec![error(Some(client_id), ErrorCode::UnknownRecipient)]);
             }
-            if !account.recipients.contains(&to) {
-                if !account
+            if !account.recipients.contains_key(&to)
+                && !account
                     .new_recipients
                     .take(limits.new_recipients_per_key, now)
-                {
-                    return Ok(vec![error(Some(client_id), ErrorCode::RateLimited)]);
-                }
-                account.recipients.insert(to);
+            {
+                return Ok(vec![error(Some(client_id), ErrorCode::RateLimited)]);
             }
             let size = envelope.body.len() as u64;
-            let (count, bytes) = db(relay.db.queue_stats(&to))?;
-            if count >= limits.queue_envelopes
+            let (count, bytes) = db(relay.db.queue_stats(&to, None))?;
+            let stranger_full = !mutual && {
+                let (n, b) = db(relay.db.queue_stats(&to, Some(&me)))?;
+                n >= limits.stranger_queue_envelopes || b + size > limits.stranger_queue_bytes
+            };
+            if stranger_full
+                || count >= limits.queue_envelopes
                 || bytes + size > limits.queue_bytes as u64
                 || relay.db.total_queue_bytes() + size > limits.max_queue_bytes
             {
                 return Ok(vec![error(Some(client_id), ErrorCode::QueueFull)]);
             }
             let relay_id = db(relay.db.enqueue(&to, &me, &envelope, unix_now()))?;
-            if let Some((_, tx)) = relay.online.get(&to) {
-                // Full channel: the envelope stays queued and goes out on reconnect.
-                let _ = tx.try_send(ServerFrame::Deliver {
-                    relay_id,
-                    sender: me,
-                    envelope,
-                });
+            *account.recipients.entry(to).or_default() += 1;
+            let deliver = ServerFrame::Deliver {
+                relay_id,
+                sender: me,
+                envelope,
+            };
+            // A full channel means the client lags: drop its connection so it
+            // reconnects and gets the whole queue (ADR-007).
+            if let Some((_, tx)) = relay.online.get(&to)
+                && tx.try_send(deliver).is_err()
+            {
+                relay.online.remove(&to);
             }
             vec![ServerFrame::Accepted { client_id }]
         }
@@ -603,11 +630,15 @@ fn handle(
             let Some(s) = relay.mem.get_mut(&sender) else {
                 return Ok(reported);
             };
-            if !s.recipients.contains(&me) {
+            // One ContactRequest is not enough: adding three public invites must
+            // not let their owners ban you (ADR-007).
+            if s.recipients.get(&me).copied().unwrap_or(0) < limits.report_min_envelopes {
                 return Ok(reported);
             }
-            s.reporters.insert(me);
-            let banned = s.reporters.len() >= limits.report_threshold;
+            let young = db(relay.db.created_at(&me))?
+                .is_none_or(|t| unix_now() - t < limits.young_reporter.as_secs() as i64);
+            s.reporters.insert(me, if young { 0.5 } else { 1.0 });
+            let banned = s.reporters.values().sum::<f64>() >= limits.report_threshold as f64;
             if banned {
                 db(relay.db.ban(&sender))?;
                 // Dropping its sender ends the banned key's connection loop.

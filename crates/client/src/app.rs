@@ -21,6 +21,9 @@ use crate::{Dial, Event, Relay};
 
 /// PLAN.md, M3.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
+/// ADR-007: what a not-yet-accepted request may leave behind.
+const MAX_HIDDEN: usize = 5;
+const MAX_REJECTED: usize = 1000;
 /// ADR-003: a typo in the real password must never hit the duress one.
 const DURESS_DISTANCE: usize = 4;
 /// Disappearing timer steps for Ctrl+T.
@@ -583,10 +586,11 @@ impl Main {
     /// Decrypts and stores one delivery. `true` once it is safe to ack: the
     /// message is on disk, or there was nothing worth keeping.
     fn receive(&mut self, sender: Ed25519Key, envelope: &proto::Envelope) -> bool {
-        // Blocked: not even decrypted. The caller still acks so the relay forgets it.
-        if self
-            .index(&sender)
-            .is_some_and(|i| self.data.contacts[i].blocked)
+        // Blocked or rejected: not even decrypted. The caller still acks so the relay forgets it.
+        if self.data.rejected.contains(&sender)
+            || self
+                .index(&sender)
+                .is_some_and(|i| self.data.contacts[i].blocked)
         {
             return true;
         }
@@ -628,6 +632,21 @@ impl Main {
             self.system(i, format!("⚠ {missed} message(s) missing so far"));
         }
         match got.body {
+            // A stranger's texts wait out of sight until the request is accepted.
+            Body::Text { text, .. } if got.request => {
+                let c = &mut self.data.contacts[i];
+                match c.hidden.len() < MAX_HIDDEN {
+                    true => c.hidden.push(Msg {
+                        mine: false,
+                        text,
+                        at: now(),
+                        expires_at: None,
+                        status: Status::Received,
+                    }),
+                    false => c.held_back = c.held_back.saturating_add(1),
+                }
+            }
+            Body::ContactAccept { .. } if got.request => {}
             Body::Text {
                 expires_in, text, ..
             } => {
@@ -715,8 +734,21 @@ impl Main {
                     let body = Body::ContactAccept {
                         nickname: self.data.nickname.clone(),
                     };
+                    let i = self.selected;
+                    let c = &mut self.data.contacts[i];
+                    let hidden = std::mem::take(&mut c.hidden);
+                    let held = std::mem::take(&mut c.held_back);
+                    c.messages.extend(hidden);
+                    if held > 0 {
+                        self.system(
+                            i,
+                            format!(
+                                "{held} more message(s) from before you accepted were not kept"
+                            ),
+                        );
+                    }
                     match self.transmit(&key, body) {
-                        Ok(_) => self.system(self.selected, "you accepted the request"),
+                        Ok(_) => self.system(i, "you accepted the request"),
                         Err(e) => self.status = e,
                     }
                 }
@@ -805,6 +837,7 @@ impl Main {
                 KeyCode::Char('b') => Some(Popup::Form(Form::new(Kind::Backup))),
                 KeyCode::Char('d') => Some(Popup::Form(Form::new(Kind::Duress))),
                 KeyCode::Char('w') => Some(Popup::Form(Form::new(Kind::Wipe))),
+                KeyCode::Char('p') => Some(Popup::Form(Form::new(Kind::Password))),
                 KeyCode::Char('t') => Some(Popup::Notice(self.toggle_tor())),
                 _ => None,
             },
@@ -848,6 +881,14 @@ impl Main {
             Popup::Delete => {
                 if k.code == KeyCode::Char('y') && self.selected < self.data.contacts.len() {
                     let c = self.data.contacts.remove(self.selected);
+                    // Turning down a request is remembered, so it cannot simply ask again.
+                    let was_request = self.core().is_request(&c.key) == Some(true);
+                    if was_request && !self.data.rejected.contains(&c.key) {
+                        if self.data.rejected.len() >= MAX_REJECTED {
+                            self.data.rejected.remove(0);
+                        }
+                        self.data.rejected.push(c.key);
+                    }
                     self.core().remove_contact(&c.key);
                     self.selected = self.selected.saturating_sub(1);
                     self.persist();
@@ -975,6 +1016,28 @@ impl Main {
                 self.persist();
                 Ok("Duress password set. Entering it at unlock erases everything.".into())
             }
+            Kind::Password => {
+                let current = f.fields[0].as_str();
+                let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
+                if store::open(current.as_bytes(), &file).is_err() {
+                    return Err("current password is wrong".into());
+                }
+                let new = f.new_password(1, &[current, &self.data.nickname])?;
+                if new == current {
+                    return Err("that is the current password".into());
+                }
+                // The duress password itself is unknown here, only its slot.
+                if termchat_core::opens_duress(&self.key, new.as_bytes())
+                    .map_err(|e| e.to_string())?
+                {
+                    return Err("that is your duress password".into());
+                }
+                termchat_core::rekey(&mut self.key, new.as_bytes()).map_err(|e| e.to_string())?;
+                if !self.persist() {
+                    return Err(self.status.clone());
+                }
+                Ok("Password changed.".into())
+            }
             Kind::Wipe => {
                 if f.fields[0].trim() != "WIPE" {
                     return Err("type WIPE in capitals".into());
@@ -1000,6 +1063,8 @@ impl Main {
             ));
         }
         let key = invite.identity.ed25519;
+        // Adding their invite is how a rejection is taken back.
+        self.data.rejected.retain(|k| *k != key);
         if key == self.me() {
             return Err("that is your own invite".into());
         }

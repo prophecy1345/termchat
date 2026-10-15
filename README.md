@@ -82,7 +82,10 @@ password (Ctrl+G suggests a six-word passphrase). Then:
   public keys.
 - **Ctrl+A** adds a friend from their invite.
 - **Ctrl+F** shows the safety number. Compare it in person or by phone.
-- **Ctrl+P** for backup, duress password, Tor, wipe. **?** lists every key.
+- **Ctrl+P** for backup, password change, duress password, Tor, wipe. **?** lists every key.
+- Names come from the people themselves, so unverified contacts show the start of
+  their fingerprint (`alice·36335`). Messages from someone you have not accepted
+  stay hidden until you press Ctrl+Y.
 - Paste with your terminal's paste command: pasted text is taken literally and
   never triggers hotkeys (bracketed paste).
 
@@ -115,7 +118,7 @@ Not message contents, not nicknames, not IP history.
 - Decisions: [ADR-001 stack](docs/adr/001-stack.md), [002 vodozemac](docs/adr/002-vodozemac-integration.md),
   [003 duress](docs/adr/003-duress-password.md), [004 Tor](docs/adr/004-tor.md),
   [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
-  [007 abuse resistance (proposed)](docs/adr/007-abuse-resistance.md)
+  [007 abuse resistance](docs/adr/007-abuse-resistance.md)
 - [PLAN.md](PLAN.md)
 
 ## Licence

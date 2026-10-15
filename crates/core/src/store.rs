@@ -101,6 +101,36 @@ pub fn set_duress(key: &mut FileKey, duress: Option<&[u8]>) -> Result<(), Error>
     Ok(())
 }
 
+/// Changes the main password (ADR-007): rewraps the same DEK under a new salt
+/// and password. The duress slot stays. The caller must save afterwards.
+pub fn rekey(key: &mut FileKey, password: &[u8]) -> Result<(), Error> {
+    let mut slot = random::<SLOT>()?;
+    {
+        let (salt, rest) = slot.split_at_mut(SALT);
+        let (nonce, wrapped) = rest.split_at_mut(NONCE);
+        let kek = derive(password, salt, key.params)?;
+        wrapped.copy_from_slice(
+            &aead(kek.as_slice())?
+                .encrypt(&XNonce::from(arr(nonce)), key.dek.as_slice())
+                .map_err(|_| Error::CorruptState)?,
+        );
+    }
+    let at = SLOTS_AT + key.real * SLOT;
+    key.header[at..at + SLOT].copy_from_slice(&slot);
+    Ok(())
+}
+
+/// Whether `password` is the duress password: a new main password must not be.
+pub fn opens_duress(key: &FileKey, password: &[u8]) -> Result<bool, Error> {
+    let at = SLOTS_AT + (1 - key.real) * SLOT;
+    let slot = &key.header[at..at + SLOT];
+    let (salt, rest) = slot.split_at(SALT);
+    let (nonce, wrapped) = rest.split_at(NONCE);
+    let kek = derive(password, salt, key.params)?;
+    let inner = aead(kek.as_slice())?.decrypt(&XNonce::from(arr(nonce)), wrapped);
+    Ok(inner.is_ok_and(|k| k.as_slice() == DURESS))
+}
+
 /// Whole file bytes: header, fresh nonce, body encrypted with the header as AAD.
 pub fn seal(key: &FileKey, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
     let nonce = random::<NONCE>()?;
@@ -264,6 +294,22 @@ mod tests {
             open(b"duress password", &file),
             Err(Error::WrongPassword)
         ));
+    }
+
+    #[test]
+    fn rekey_changes_the_main_password_and_keeps_duress() {
+        let mut key = create(b"old main", FAST).unwrap();
+        set_duress(&mut key, Some(b"the duress one")).unwrap();
+        assert!(opens_duress(&key, b"the duress one").unwrap());
+        assert!(!opens_duress(&key, b"old main").unwrap());
+        rekey(&mut key, b"new main").unwrap();
+        let file = seal(&key, b"state").unwrap();
+        assert!(matches!(
+            open(b"old main", &file),
+            Err(Error::WrongPassword)
+        ));
+        assert_eq!(open(b"new main", &file).unwrap().1.as_slice(), b"state");
+        assert!(matches!(open(b"the duress one", &file), Err(Error::Duress)));
     }
 
     #[test]

@@ -254,3 +254,61 @@ fn identity_restored_from_backup_talks_again() {
         text("welcome back")
     );
 }
+
+#[test]
+fn requests_are_flagged_names_stick_and_requests_are_capped() {
+    let mut bob = Client::default();
+    let b = ed(&bob);
+    let keys = bob.prekeys(0, true);
+    let mut one_time = keys.one_time;
+    let fallback = keys.fallback.unwrap();
+
+    let request = |c: &Client, nick: &str| Body::ContactRequest {
+        identity: c.identity(),
+        nickname: nick.into(),
+        note: String::new(),
+    };
+    let mut carol = Client::default();
+    let c = ed(&carol);
+    carol.add_contact(&bob.identity()).unwrap();
+    carol.start_session(&b, &one_time.remove(0)).unwrap();
+    let env = carol.encrypt(&b, request(&carol, "carol")).unwrap();
+    assert!(bob.decrypt(&c, &env).unwrap().request);
+    let env = carol.encrypt(&b, text("hidden until accepted")).unwrap();
+    assert!(bob.decrypt(&c, &env).unwrap().request, "still a request");
+    // A pending request may correct its name.
+    let env = carol.encrypt(&b, request(&carol, "Carol")).unwrap();
+    bob.decrypt(&c, &env).unwrap();
+    assert_eq!(bob.nickname(&c), Some("Carol"));
+
+    bob.add_contact(&carol.identity()).unwrap();
+    let env = carol.encrypt(&b, text("now visible")).unwrap();
+    assert!(!bob.decrypt(&c, &env).unwrap().request);
+    // After acceptance the name no longer changes from the network.
+    let env = carol
+        .encrypt(
+            &b,
+            Body::ContactAccept {
+                nickname: "Alice".into(),
+            },
+        )
+        .unwrap();
+    bob.decrypt(&c, &env).unwrap();
+    let env = carol.encrypt(&b, request(&carol, "Alice")).unwrap();
+    bob.decrypt(&c, &env).unwrap();
+    assert_eq!(bob.nickname(&c), Some("Carol"));
+
+    // Carol is accepted, so 50 strangers fill the pending slots; the 51st is refused.
+    for i in 0..51 {
+        let mut s = Client::default();
+        s.add_contact(&bob.identity()).unwrap();
+        let key = one_time.pop().unwrap_or_else(|| fallback.clone());
+        s.start_session(&b, &key).unwrap();
+        let env = s.encrypt(&b, request(&s, "stranger")).unwrap();
+        let got = bob.decrypt(&ed(&s), &env);
+        match i {
+            0..50 => assert!(got.is_ok(), "stranger {i}"),
+            _ => assert_eq!(got, Err(Error::TooManyRequests)),
+        }
+    }
+}

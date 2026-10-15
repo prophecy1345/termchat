@@ -24,7 +24,7 @@ Ctrl+X       report contact to the relay operator (and block)
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
-Ctrl+P       settings: backup, duress password, Tor, wipe
+Ctrl+P       settings: backup, password, duress, Tor, wipe
 Ctrl+K       lock now (also after 5 min idle)
 Ctrl+Q       quit
 ? / F1       this help
@@ -50,15 +50,29 @@ pub fn clean(s: &str) -> String {
         .collect()
 }
 
+/// What the contact is called here. Names are chosen by the peer, so an
+/// unverified contact, or one whose name collides with another contact or with
+/// ours, also shows the start of its fingerprint: "Alice·48213" (ADR-007).
 pub fn name(m: &Main, c: &Contact) -> String {
-    let nick = m.core().nickname(&c.key).map(str::to_owned);
+    let base = |c: &Contact| {
+        let nick = m.core().nickname(&c.key).map(str::to_owned);
+        clean(&c.petname.clone().or(nick).unwrap_or_default())
+    };
     let fp = fingerprint(&c.key);
-    clean(
-        &c.petname
-            .clone()
-            .or(nick)
-            .unwrap_or_else(|| fp[..5].to_string()),
-    )
+    let name = base(c);
+    if name.is_empty() {
+        return fp[..5].to_string();
+    }
+    // O(contacts) per name, O(n²) per frame; cache if lists grow large.
+    let collides = name == clean(&m.data.nickname)
+        || m.data
+            .contacts
+            .iter()
+            .any(|o| o.key != c.key && base(o) == name);
+    match !c.verified || collides {
+        true => format!("{name}·{}", &fp[..5]),
+        false => name,
+    }
 }
 
 fn age(at: u64) -> String {
@@ -247,6 +261,12 @@ fn chat_pane(f: &mut Frame, m: &Main, area: Rect) {
     if c.no_history {
         title.push_str("no history ");
     }
+    let waiting = c.hidden.len() + c.held_back as usize;
+    if waiting > 0 {
+        title.push_str(&format!(
+            "{waiting} message(s) hidden until you accept (Ctrl+Y) "
+        ));
+    }
 
     let them = name(m, c);
     let lines: Vec<Line> = c
@@ -311,9 +331,9 @@ fn popup_pane(f: &mut Frame, m: &Main, popup: &Popup) {
         Popup::Notice(text) => (" note ", format!("{text}\n\nany key: close"), 70, 7),
         Popup::Menu => (
             " settings ",
-            "b  back up your identity\nd  duress password\nt  Tor on/off\nw  wipe everything from this device\n\nany other key: close".to_string(),
+            "b  back up your identity\np  change password\nd  duress password\nt  Tor on/off\nw  wipe everything from this device\n\nany other key: close".to_string(),
             48,
-            9,
+            10,
         ),
         Popup::Help => (" help ", HELP.to_string(), 70, 30),
         Popup::Add(s) => (

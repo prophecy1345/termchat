@@ -15,11 +15,13 @@ use vodozemac::{Curve25519PublicKey, Ed25519PublicKey, Ed25519Signature};
 use zeroize::Zeroizing;
 
 pub use fingerprint::{fingerprint, safety_number};
-pub use store::{FileKey, KdfParams, create as create_file_key, set_duress};
+pub use store::{FileKey, KdfParams, create as create_file_key, opens_duress, rekey, set_duress};
 pub use termchat_proto as proto;
 
 use proto::{Body, Curve25519Key, Ed25519Key, Envelope, Identity, Inner, Signature, SignedKey};
 
+/// ADR-007: unanswered contact requests kept at once.
+const MAX_REQUESTS: usize = 50;
 /// ADR-002: old sessions kept per contact.
 const MAX_SESSIONS: usize = 5;
 /// protocol.md, section 7.
@@ -55,6 +57,9 @@ pub enum Error {
     Duress,
     #[error("corrupt state")]
     CorruptState,
+    /// ADR-007: too many unanswered contact requests; this one was not stored.
+    #[error("too many pending contact requests")]
+    TooManyRequests,
     #[error("random number generator failed")]
     Rng,
 }
@@ -74,6 +79,9 @@ pub struct Received {
     pub missed: u64,
     /// This message started a new session (first contact or the peer reset its state).
     pub new_session: bool,
+    /// The sender is a contact request not accepted yet: the app keeps such
+    /// messages out of sight until it is (ADR-007).
+    pub request: bool,
 }
 
 /// No `Debug`: holds secret keys.
@@ -265,6 +273,7 @@ impl Client {
                     body: inner.body,
                     missed,
                     new_session: false,
+                    request: c.is_request,
                 });
             }
         }
@@ -298,6 +307,10 @@ impl Client {
                 return Err(Error::SenderMismatch);
             }
             verify_identity(identity)?;
+            // Registering keys is cheap; every request is a stored session.
+            if self.contacts.values().filter(|c| c.is_request).count() >= MAX_REQUESTS {
+                return Err(Error::TooManyRequests);
+            }
             self.contacts.insert(
                 *sender,
                 Contact {
@@ -316,14 +329,17 @@ impl Client {
         };
         s.received.accept(inner.seq)?;
         let missed = s.received.missed();
+        let mut request = false;
         if let Some(c) = self.contacts.get_mut(sender) {
             remember_nickname(c, &inner.body);
             push_session(c, s);
+            request = c.is_request;
         }
         Ok(Received {
             body: inner.body,
             missed,
             new_session: true,
+            request,
         })
     }
 
@@ -500,10 +516,16 @@ impl SeqTracker {
     }
 }
 
+/// ADR-007: a name arrives once. A pending request may correct it with a new
+/// request; after that only the local petname changes, so a contact cannot
+/// silently rename itself into someone else.
 fn remember_nickname(c: &mut Contact, body: &Body) {
-    if let Body::ContactRequest { nickname, .. } | Body::ContactAccept { nickname } = body {
-        c.nickname = Some(nickname.clone());
-    }
+    let nickname = match body {
+        Body::ContactRequest { nickname, .. } if c.is_request || c.nickname.is_none() => nickname,
+        Body::ContactAccept { nickname } if c.nickname.is_none() => nickname,
+        _ => return,
+    };
+    c.nickname = Some(nickname.clone());
 }
 
 fn push_session(c: &mut Contact, s: SessionState) {

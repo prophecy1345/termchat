@@ -174,13 +174,28 @@ impl Db {
         Ok(fallback)
     }
 
-    /// Envelopes and bytes queued for `recipient`.
-    pub fn queue_stats(&self, recipient: &Ed25519Key) -> Result<(usize, u64)> {
+    /// Envelopes and bytes queued for `recipient`, optionally only from `sender`.
+    pub fn queue_stats(
+        &self,
+        recipient: &Ed25519Key,
+        sender: Option<&Ed25519Key>,
+    ) -> Result<(usize, u64)> {
         self.conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM queue WHERE recipient = ?",
-            [recipient],
+            "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM queue WHERE recipient = ?1 AND (?2 IS NULL OR sender = ?2)",
+            params![recipient, sender],
             |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as u64)),
         )
+    }
+
+    /// Registration time, unix seconds.
+    pub fn created_at(&self, key: &Ed25519Key) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT created_at FROM accounts WHERE key = ?",
+                [key],
+                |r| r.get(0),
+            )
+            .optional()
     }
 
     pub fn total_queue_bytes(&self) -> u64 {

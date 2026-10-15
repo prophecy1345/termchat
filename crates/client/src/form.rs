@@ -11,6 +11,7 @@ pub enum Kind {
     Restore,
     Backup,
     Duress,
+    Password,
     Wipe,
 }
 
@@ -36,6 +37,7 @@ impl Kind {
             Self::Restore => " restore from backup ",
             Self::Backup => " back up your identity ",
             Self::Duress => " duress password ",
+            Self::Password => " change password ",
             Self::Wipe => " wipe everything ",
         }
     }
@@ -62,6 +64,11 @@ impl Kind {
                 ("Duress password (empty: turn it off)", true),
                 ("Repeat", true),
             ],
+            Self::Password => &[
+                ("Current password", true),
+                ("New password", true),
+                ("Repeat", true),
+            ],
             Self::Wipe => &[("Type WIPE to confirm", false)],
         }
     }
@@ -80,6 +87,9 @@ impl Kind {
             Self::Duress => {
                 "Entering the duress password at unlock silently erases everything\nand shows the first-run screen. It does NOT help if someone copied\nthe disk first. The code is public, so they may know the feature.\nDestroying data after seizure can be a crime where you live."
             }
+            Self::Password => {
+                "The data stays as it is; only the key slot changes.\nIf you set a duress password, keep the new one far from it:\na typo that hits the duress password erases everything.   Ctrl+G: generate"
+            }
             Self::Wipe => {
                 "Erases keys, contacts and history from this device. No undo.\nWithout a backup your identity is gone for good."
             }
@@ -90,7 +100,7 @@ impl Kind {
     fn generated_field(self) -> Option<usize> {
         match self {
             Self::Setup => Some(4),
-            Self::Backup | Self::Duress => Some(1),
+            Self::Backup | Self::Duress | Self::Password => Some(1),
             Self::Restore | Self::Wipe => None,
         }
     }
