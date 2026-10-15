@@ -59,7 +59,8 @@ jobs:
           dir=termchat-${{ github.ref_name }}-${{ matrix.target }}
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/termchat${{ matrix.exe }} target/${{ matrix.target }}/release/termchat-relay${{ matrix.exe }} LICENSE README.md "$dir/"
-          (cd "$dir" && shasum -a 256 termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} > BINARIES.sha256)
+          sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          (cd "$dir" && sum termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} > BINARIES.sha256)
           tar -czf "$dir.tar.gz" "$dir"
       - uses: actions/upload-artifact@v4
         with:

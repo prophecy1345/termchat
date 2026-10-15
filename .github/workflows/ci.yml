@@ -38,5 +38,6 @@ jobs:
       - uses: actions/checkout@v5
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-vet
+          # Same version as supply-chain/ was written with; newer ones change the file format.
+          tool: cargo-vet@0.10.2
       - run: cargo vet --locked
