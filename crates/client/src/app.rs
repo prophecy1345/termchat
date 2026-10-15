@@ -472,7 +472,8 @@ impl Main {
                 one_time_left,
                 fallback_used,
             } => {
-                let rotate = fallback_used || !self.data.fallback_published;
+                // An empty relay (first run, or it lost its database) has no fallback key either.
+                let rotate = fallback_used || !self.data.fallback_published || one_time_left == 0;
                 let keys = self.core().prekeys(one_time_left as usize, rotate);
                 if !keys.one_time.is_empty() || keys.fallback.is_some() {
                     if rotate && self.data.fallback_published {
