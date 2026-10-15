@@ -143,6 +143,10 @@ impl Form {
         Action::Stay
     }
 
+    pub fn paste(&mut self, text: &str) {
+        self.fields[self.field].push_str(text);
+    }
+
     /// Two password fields must match and be strong.
     pub fn new_password(&self, at: usize, avoid: &[&str]) -> Result<&str, String> {
         let (pw, repeat) = (&self.fields[at], &self.fields[at + 1]);

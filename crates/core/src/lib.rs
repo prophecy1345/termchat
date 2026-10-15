@@ -330,8 +330,8 @@ impl Client {
     /// Encrypted state file bytes, with the app's own data (settings, history)
     /// stored alongside. The caller writes them to disk atomically.
     pub fn save(&self, key: &FileKey, app: &str) -> Result<Vec<u8>, Error> {
-        let state = State {
-            app: app.to_owned(),
+        let state = StateRef {
+            app,
             account: self.account.pickle(),
             contacts: self
                 .contacts
@@ -451,7 +451,16 @@ struct ContactState {
     sessions: Vec<(SessionPickle, u64, SeqTracker)>,
 }
 
-#[derive(Serialize, Deserialize)]
+/// Written form of [`State`]: borrows the app data so the plaintext history
+/// is not copied once more on every save.
+#[derive(Serialize)]
+struct StateRef<'a> {
+    app: &'a str,
+    account: AccountPickle,
+    contacts: Vec<ContactState>,
+}
+
+#[derive(Deserialize)]
 struct State {
     app: String,
     account: AccountPickle,

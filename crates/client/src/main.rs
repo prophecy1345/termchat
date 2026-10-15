@@ -1,8 +1,11 @@
 //! Terminal client (TUI) for termchat.
 
+use std::io::stdout;
 use std::time::Duration;
 
-use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, Event as TermEvent, EventStream, KeyEventKind,
+};
 use futures_util::StreamExt;
 use termchat::app::App;
 use termchat::{data, ui};
@@ -13,7 +16,16 @@ async fn main() -> std::io::Result<()> {
     let path = data::home().join("state");
     // Alternate screen, raw mode, and a panic hook that restores the terminal.
     let mut terminal = ratatui::init();
+    // Pasted text arrives as one event instead of key presses: otherwise control
+    // bytes inside a pasted string would fire hotkeys (delete, report, wipe).
+    let _ = crossterm::execute!(stdout(), EnableBracketedPaste);
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(stdout(), DisableBracketedPaste);
+        hook(info);
+    }));
     let result = run(&mut terminal, App::new(path)).await;
+    let _ = crossterm::execute!(stdout(), DisableBracketedPaste);
     ratatui::restore();
     result
 }
@@ -26,6 +38,7 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
         tokio::select! {
             ev = keys.next() => match ev {
                 Some(Ok(TermEvent::Key(k))) if k.kind == KeyEventKind::Press => app.on_key(k),
+                Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e),
                 None => return Ok(()),

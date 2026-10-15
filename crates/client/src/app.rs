@@ -175,6 +175,25 @@ impl App {
         }
     }
 
+    /// Bracketed paste: the text goes into the active field as text only.
+    /// Control characters are dropped so a pasted string cannot act as keys.
+    pub fn on_paste(&mut self, text: &str) {
+        let plain: String = text.chars().filter(|c| !c.is_control()).collect();
+        match &mut self.screen {
+            Screen::Setup(f) => f.paste(&plain),
+            Screen::Unlock(u) => u.input.push_str(&plain),
+            Screen::Main(m) => {
+                m.last_input = Instant::now();
+                match &mut m.popup {
+                    Some(Popup::Add(s) | Popup::Rename(s)) => s.push_str(&plain),
+                    Some(Popup::Form(f)) => f.paste(&plain),
+                    Some(_) => {}
+                    None => m.input.push_str(&crate::ui::clean(text)),
+                }
+            }
+        }
+    }
+
     /// Saves and drops every key and message from memory (PLAN.md, M3).
     pub fn lock(&mut self) {
         if let Screen::Main(m) = &mut self.screen {
@@ -199,8 +218,8 @@ fn edit(s: &mut String, k: KeyEvent) -> bool {
 
 fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
     let url = f.fields[0].trim();
-    if !(url.starts_with("wss://") || url.starts_with("ws://")) {
-        return Err("relay URL must start with wss://".into());
+    if !relay_url_ok(url) {
+        return Err("relay URL must start with wss:// (ws:// only for localhost or .onion)".into());
     }
     let onion = f.fields[1].trim();
     let onion = (!onion.is_empty()).then(|| onion.to_string());
@@ -241,6 +260,24 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
         "Back up your identity now: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
     ));
     Ok(main)
+}
+
+/// Plain `ws://` would show the relay traffic (and so who we talk to) to the
+/// network; it is only fine where TLS adds nothing: the same machine or an
+/// onion service, which authenticates and encrypts on its own.
+fn relay_url_ok(url: &str) -> bool {
+    if url.starts_with("wss://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("ws://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = authority
+        .strip_prefix('[')
+        .and_then(|h| h.split(']').next())
+        .unwrap_or_else(|| authority.rsplit_once(':').map_or(authority, |(h, _)| h));
+    matches!(host, "localhost" | "127.0.0.1" | "::1") || host.ends_with(".onion")
 }
 
 /// A backup is a state file without sessions or messages: restoring is a copy.
@@ -360,9 +397,10 @@ impl Main {
     /// Must run after every change to the ratchet or the data.
     fn persist(&mut self) -> bool {
         let saved = self
-            .core()
-            .save(&self.key, &self.data.to_json())
+            .data
+            .to_json()
             .map_err(|e| e.to_string())
+            .and_then(|app| self.core().save(&self.key, &app).map_err(|e| e.to_string()))
             .and_then(|bytes| data::write_atomic(&self.path, &bytes).map_err(|e| e.to_string()));
         if let Err(e) = &saved {
             self.status = format!("SAVE FAILED: {e}");
@@ -385,11 +423,14 @@ impl Main {
     }
 
     /// Encrypts, saves the advanced ratchet, then hands the envelope to the transport.
+    /// An unsaved ratchet must never go on the wire: a restart would replay it.
     fn transmit(&mut self, key: &Ed25519Key, body: Body) -> Result<u64, String> {
         let envelope = self.core().encrypt(key, body).map_err(|e| e.to_string())?;
         let client_id = self.data.next_client_id;
         self.data.next_client_id += 1;
-        self.persist();
+        if !self.persist() {
+            return Err(self.status.clone());
+        }
         self.relay
             .send(ClientFrame::Send {
                 client_id,
@@ -503,8 +544,10 @@ impl Main {
                 sender,
                 envelope,
             } => {
-                self.receive(sender, &envelope);
-                let _ = self.relay.send(ClientFrame::Ack { relay_id });
+                // Not saved means not acked: the relay keeps it for the next connection.
+                if self.receive(sender, &envelope) {
+                    let _ = self.relay.send(ClientFrame::Ack { relay_id });
+                }
             }
             ServerFrame::Accepted { client_id } => self.set_status(client_id, Status::Sent),
             ServerFrame::Error {
@@ -537,26 +580,27 @@ impl Main {
         }
     }
 
-    /// Decrypts and stores one delivery. Always saved before the caller acks it.
-    fn receive(&mut self, sender: Ed25519Key, envelope: &proto::Envelope) {
+    /// Decrypts and stores one delivery. `true` once it is safe to ack: the
+    /// message is on disk, or there was nothing worth keeping.
+    fn receive(&mut self, sender: Ed25519Key, envelope: &proto::Envelope) -> bool {
         // Blocked: not even decrypted. The caller still acks so the relay forgets it.
         if self
             .index(&sender)
             .is_some_and(|i| self.data.contacts[i].blocked)
         {
-            return;
+            return true;
         }
         let had_session = self.core().has_session(&sender);
         let result = self.core().decrypt(&sender, envelope);
         let got = match result {
             Ok(got) => got,
-            Err(CoreError::Duplicate) => return,
+            Err(CoreError::Duplicate) => return true,
             Err(e) => {
                 if let Some(i) = self.index(&sender) {
                     self.system(i, format!("a message could not be decrypted ({e})"));
                     self.persist();
                 }
-                return;
+                return true;
             }
         };
         let i = match self.index(&sender) {
@@ -576,7 +620,12 @@ impl Main {
             );
         }
         if got.missed > 0 {
-            self.system(i, format!("⚠ {} message(s) missing so far", got.missed));
+            // The number comes from the peer's `seq`; do not let it look alarming on purpose.
+            let missed = match got.missed {
+                0..=9999 => got.missed.to_string(),
+                _ => "over 9999".to_string(),
+            };
+            self.system(i, format!("⚠ {missed} message(s) missing so far"));
         }
         match got.body {
             Body::Text {
@@ -609,7 +658,7 @@ impl Main {
         if i != self.selected {
             self.data.contacts[i].unread += 1;
         }
-        self.persist();
+        self.persist()
     }
 
     /// Drops messages whose disappearing timer ran out, and the rotated-out
@@ -891,10 +940,11 @@ impl Main {
                 let mut copy = self.data.clone();
                 copy.backed_up = true;
                 copy.contacts.iter_mut().for_each(|c| c.messages.clear());
+                let app = copy.to_json().map_err(|e| e.to_string())?;
                 let bytes = self
                     .core()
                     .without_sessions()
-                    .save(&key, &copy.to_json())
+                    .save(&key, &app)
                     .map_err(|e| e.to_string())?;
                 data::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
                 self.data.backed_up = true;
@@ -946,7 +996,7 @@ impl Main {
         if !same(&invite.relay_url, &self.data.relay_url) && !onion_matches {
             return Err(format!(
                 "they use another relay ({}); only one relay is supported for now",
-                invite.relay_url
+                crate::ui::clean(&invite.relay_url)
             ));
         }
         let key = invite.identity.ed25519;
@@ -982,4 +1032,31 @@ fn copy_to_clipboard(text: &str) {
     let mut out = std::io::stdout();
     let _ = write!(out, "\x1b]52;c;{b64}\x07");
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_ws_only_for_local_or_onion() {
+        for ok in [
+            "wss://relay.example.org/",
+            "ws://localhost:8080/",
+            "ws://127.0.0.1:8080",
+            "ws://[::1]:8080/",
+            "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/",
+        ] {
+            assert!(relay_url_ok(ok), "{ok}");
+        }
+        for bad in [
+            "ws://relay.example.org/",
+            "ws://10.0.0.5:8080/",
+            "ws://localhost.evil.org/",
+            "http://localhost/",
+            "",
+        ] {
+            assert!(!relay_url_ok(bad), "{bad}");
+        }
+    }
 }

@@ -125,6 +125,12 @@ struct Link {
     pending: BTreeMap<u64, ClientFrame>,
 }
 
+enum Ws {
+    Direct(Box<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
+    #[cfg(feature = "tor")]
+    Tor(Box<WebSocketStream<arti_client::DataStream>>),
+}
+
 enum End {
     /// The app dropped every `Relay` handle.
     Stop,
@@ -157,24 +163,40 @@ impl Link {
         }
     }
 
+    /// Connecting can take long (TCP timeouts, Tor bootstrap). The app may lock
+    /// meanwhile, and the signer must not keep the keys alive: give up on the
+    /// connection attempt as soon as the event receiver is gone. Once connected,
+    /// `talk` drains queued frames (acks) before it stops.
     async fn session(&mut self, out: &mut mpsc::UnboundedReceiver<ClientFrame>) -> End {
+        let events = self.events.clone();
+        let connected = tokio::select! {
+            ws = self.connect() => ws,
+            _ = events.closed() => return End::Stop,
+        };
+        match connected {
+            Some(Ws::Direct(ws)) => self.talk(*ws, out).await,
+            #[cfg(feature = "tor")]
+            Some(Ws::Tor(ws)) => self.talk(*ws, out).await,
+            None => End::Lost(false),
+        }
+    }
+
+    async fn connect(&mut self) -> Option<Ws> {
         match self.dial.clone() {
-            Dial::Direct => match connect_async(self.url.as_str()).await {
-                Ok((ws, _)) => self.talk(ws, out).await,
-                Err(_) => End::Lost(false),
-            },
+            Dial::Direct => connect_async(self.url.as_str())
+                .await
+                .ok()
+                .map(|(ws, _)| Ws::Direct(Box::new(ws))),
             #[cfg(feature = "tor")]
             Dial::Tor(dir) => {
-                let Some(stream) = self.tor_stream(&dir).await else {
-                    return End::Lost(false);
-                };
-                match tokio_tungstenite::client_async(self.url.as_str(), stream).await {
-                    Ok((ws, _)) => self.talk(ws, out).await,
-                    Err(_) => End::Lost(false),
-                }
+                let stream = self.tor_stream(&dir).await?;
+                tokio_tungstenite::client_async(self.url.as_str(), stream)
+                    .await
+                    .ok()
+                    .map(|(ws, _)| Ws::Tor(Box::new(ws)))
             }
             #[cfg(not(feature = "tor"))]
-            Dial::Tor(_) => End::Stop,
+            Dial::Tor(_) => None,
         }
     }
 
