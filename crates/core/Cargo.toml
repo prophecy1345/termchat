@@ -9,3 +9,15 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+argon2 = "0.6.0"
+chacha20poly1305 = "0.11.0"
+getrandom = "0.4.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+termchat-proto = { version = "0.0.0", path = "../proto" }
+thiserror = "2.0.21"
+vodozemac = { version = "0.11.1", default-features = false, features = ["precomputed-tables"] }
+zeroize = "1.9.1"

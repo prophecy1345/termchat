@@ -1,0 +1,24 @@
+[package]
+name = "termchat-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+termchat-proto = { path = "../crates/proto" }
+
+# Not part of the main workspace: needs nightly.
+[workspace]
+
+[[bin]]
+name = "envelope"
+path = "fuzz_targets/envelope.rs"
+
+[[bin]]
+name = "inner"
+path = "fuzz_targets/inner.rs"
