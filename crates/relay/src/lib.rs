@@ -41,6 +41,8 @@ pub struct Limits {
     pub auth_timeout: Duration,
     pub ping_interval: Duration,
     pub idle_timeout: Duration,
+    /// A client that stops reading must not pin a task and its buffers forever.
+    pub send_timeout: Duration,
     pub connections_per_ip: usize,
     pub registrations_per_ip: Rate,
     /// All onion connections arrive from 127.0.0.1, so they share one budget (ADR-004).
@@ -48,6 +50,8 @@ pub struct Limits {
     pub onion_registrations: Rate,
     pub sends_per_key: Rate,
     pub new_recipients_per_key: Rate,
+    /// Each `PublishKeys` costs up to 100 inserts; a client needs a handful per day.
+    pub publishes_per_key: Rate,
     pub claims_per_key: Rate,
     pub claims_per_target: Rate,
     pub stored_one_time_keys: usize,
@@ -88,6 +92,7 @@ impl Default for Limits {
             auth_timeout: Duration::from_secs(10),
             ping_interval: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(60),
+            send_timeout: Duration::from_secs(30),
             connections_per_ip: 50,
             registrations_per_ip: Rate::per(20.0, HOUR),
             onion_connections: 2000,
@@ -97,6 +102,7 @@ impl Default for Limits {
                 per_sec: 0.5,
             },
             new_recipients_per_key: Rate::per(20.0, DAY),
+            publishes_per_key: Rate::per(30.0, HOUR),
             claims_per_key: Rate::per(30.0, HOUR),
             claims_per_target: Rate::per(100.0, DAY),
             stored_one_time_keys: 100,
@@ -204,6 +210,7 @@ struct Account {
     reporters: HashSet<Ed25519Key>,
     sends: Bucket,
     new_recipients: Bucket,
+    publishes: Bucket,
     claims: Bucket,
     claimed: Bucket,
     reports: Bucket,
@@ -216,6 +223,7 @@ impl Account {
             reporters: HashSet::new(),
             sends: Bucket::full(l.sends_per_key, now),
             new_recipients: Bucket::full(l.new_recipients_per_key, now),
+            publishes: Bucket::full(l.publishes_per_key, now),
             claims: Bucket::full(l.claims_per_key, now),
             claimed: Bucket::full(l.claims_per_target, now),
             reports: Bucket::full(l.reports_per_key, now),
@@ -328,6 +336,7 @@ fn client_ip(config: &Config, addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
 }
 
 async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
+    let timeout = shared.config.limits.send_timeout;
     let allowed = {
         let mut relay = shared.lock();
         let n = relay.connections.entry(ip).or_default();
@@ -338,7 +347,7 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
         ok
     };
     if !allowed {
-        let _ = send(&mut ws, &error(None, ErrorCode::RateLimited)).await;
+        let _ = send(&mut ws, &error(None, ErrorCode::RateLimited), timeout).await;
         return;
     }
 
@@ -350,17 +359,17 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
     {
         Ok(Ok(session)) => Some(session),
         Ok(Err(code)) => {
-            let _ = send(&mut ws, &error(None, code)).await;
+            let _ = send(&mut ws, &error(None, code), timeout).await;
             None
         }
         Err(_) => {
-            let _ = send(&mut ws, &error(None, ErrorCode::ChallengeExpired)).await;
+            let _ = send(&mut ws, &error(None, ErrorCode::ChallengeExpired), timeout).await;
             None
         }
     };
     if let Some((key, id, rx)) = session {
         if let Err(code) = serve_client(&shared, &mut ws, key, rx).await {
-            let _ = send(&mut ws, &error(None, code)).await;
+            let _ = send(&mut ws, &error(None, code), timeout).await;
         }
         let mut relay = shared.lock();
         if relay
@@ -384,6 +393,7 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
 type Session = (Ed25519Key, u64, mpsc::Receiver<ServerFrame>);
 
 async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Session, ErrorCode> {
+    let timeout = shared.config.limits.send_timeout;
     let ClientFrame::Hello { version } = recv(ws).await? else {
         return Err(ErrorCode::NotAuthenticated);
     };
@@ -392,7 +402,7 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
     }
     let mut nonce = [0; 32];
     getrandom::fill(&mut nonce).map_err(|_| ErrorCode::Internal)?;
-    send(ws, &ServerFrame::Challenge { nonce }).await?;
+    send(ws, &ServerFrame::Challenge { nonce }, timeout).await?;
 
     let ClientFrame::Auth {
         identity,
@@ -444,9 +454,9 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
         (id, frames)
     };
 
-    send(ws, &ServerFrame::AuthOk).await?;
+    send(ws, &ServerFrame::AuthOk, timeout).await?;
     for frame in &queued {
-        send(ws, frame).await?;
+        send(ws, frame, timeout).await?;
     }
     Ok((key, id, rx))
 }
@@ -468,7 +478,7 @@ async fn serve_client(
                     Some(Ok(Message::Binary(bytes))) => {
                         let frame = ClientFrame::decode(&bytes).map_err(ErrorCode::from)?;
                         for reply in handle(shared, key, frame)? {
-                            send(ws, &reply).await?;
+                            send(ws, &reply, limits.send_timeout).await?;
                         }
                     }
                     Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
@@ -477,14 +487,14 @@ async fn serve_client(
                 }
             }
             frame = rx.recv() => match frame {
-                Some(frame) => send(ws, &frame).await?,
+                Some(frame) => send(ws, &frame, limits.send_timeout).await?,
                 None => return Ok(()),
             },
             _ = ping.tick() => {
                 if last_seen.elapsed() > limits.idle_timeout {
                     return Ok(());
                 }
-                ws.send(Message::Ping(Default::default())).await.map_err(|_| ErrorCode::Internal)?;
+                write(ws, Message::Ping(Default::default()), limits.send_timeout).await?;
             }
         }
     }
@@ -509,6 +519,9 @@ fn handle(
         ClientFrame::Hello { .. } | ClientFrame::Auth { .. } => return Err(ErrorCode::Malformed),
 
         ClientFrame::PublishKeys { one_time, fallback } => {
+            if !account.publishes.take(limits.publishes_per_key, now) {
+                return Ok(vec![error(None, ErrorCode::RateLimited)]);
+            }
             db(relay.db.publish(
                 &me,
                 &one_time,
@@ -642,9 +655,15 @@ fn error(client_id: Option<u64>, code: ErrorCode) -> ServerFrame {
     ServerFrame::Error { client_id, code }
 }
 
-async fn send(ws: &mut WebSocket, frame: &ServerFrame) -> Result<(), ErrorCode> {
-    ws.send(Message::Binary(frame.encode().into()))
+async fn send(ws: &mut WebSocket, frame: &ServerFrame, timeout: Duration) -> Result<(), ErrorCode> {
+    write(ws, Message::Binary(frame.encode().into()), timeout).await
+}
+
+/// A peer that does not read for `timeout` is gone as far as we are concerned.
+async fn write(ws: &mut WebSocket, msg: Message, timeout: Duration) -> Result<(), ErrorCode> {
+    tokio::time::timeout(timeout, ws.send(msg))
         .await
+        .map_err(|_| ErrorCode::Internal)?
         .map_err(|_| ErrorCode::Internal)
 }
 

@@ -369,6 +369,35 @@ async fn send_rate_limit_and_unknown_recipient() {
 }
 
 #[tokio::test]
+async fn publish_keys_is_rate_limited() {
+    let limits = Limits {
+        publishes_per_key: Rate {
+            burst: 1.0,
+            per_sec: 0.0,
+        },
+        ..Limits::default()
+    };
+    let url = start_relay(limits).await;
+    let (_, b) = pair();
+    let mut bob = Peer::new(&url, b);
+    bob.connected().await;
+    bob.publish_keys().await;
+    bob.relay
+        .send(ClientFrame::PublishKeys {
+            one_time: vec![],
+            fallback: None,
+        })
+        .unwrap();
+    assert_eq!(
+        bob.frame().await,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::RateLimited
+        }
+    );
+}
+
+#[tokio::test]
 async fn per_target_claim_limit_hands_out_fallback() {
     let limits = Limits {
         claims_per_target: Rate {
