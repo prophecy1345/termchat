@@ -23,8 +23,9 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Host that clients sign in `Auth` (protocol.md, section 3), e.g. `relay.example.org`.
-    pub host: String,
+    /// Hosts clients may sign in `Auth` (protocol.md, section 3): the public name
+    /// and, behind Tor, the onion address (ADR-004).
+    pub hosts: Vec<String>,
     /// Take the client IP from the last `X-Forwarded-For` entry. Only behind a proxy that sets it.
     pub trust_proxy: bool,
     /// SQLite file (ADR-005); `None` keeps everything in memory (tests).
@@ -42,6 +43,9 @@ pub struct Limits {
     pub idle_timeout: Duration,
     pub connections_per_ip: usize,
     pub registrations_per_ip: Rate,
+    /// All onion connections arrive from 127.0.0.1, so they share one budget (ADR-004).
+    pub onion_connections: usize,
+    pub onion_registrations: Rate,
     pub sends_per_key: Rate,
     pub new_recipients_per_key: Rate,
     pub claims_per_key: Rate,
@@ -86,6 +90,8 @@ impl Default for Limits {
             idle_timeout: Duration::from_secs(60),
             connections_per_ip: 50,
             registrations_per_ip: Rate::per(20.0, HOUR),
+            onion_connections: 2000,
+            onion_registrations: Rate::per(200.0, HOUR),
             sends_per_key: Rate {
                 burst: 30.0,
                 per_sec: 0.5,
@@ -105,7 +111,36 @@ impl Default for Limits {
     }
 }
 
-pub async fn serve(listener: TcpListener, config: Config) -> std::io::Result<()> {
+/// Where a connection came from: per-IP limits for direct ones, one shared
+/// budget for everything that came through the local Tor daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Origin {
+    Ip(IpAddr),
+    Onion,
+}
+
+impl Limits {
+    fn connections(&self, o: Origin) -> usize {
+        match o {
+            Origin::Ip(_) => self.connections_per_ip,
+            Origin::Onion => self.onion_connections,
+        }
+    }
+
+    fn registrations(&self, o: Origin) -> Rate {
+        match o {
+            Origin::Ip(_) => self.registrations_per_ip,
+            Origin::Onion => self.onion_registrations,
+        }
+    }
+}
+
+/// `onion`: a second listener that only the local Tor daemon forwards to (ADR-004).
+pub async fn serve(
+    listener: TcpListener,
+    onion: Option<TcpListener>,
+    config: Config,
+) -> std::io::Result<()> {
     let db = db::Db::open(config.db.as_deref()).map_err(std::io::Error::other)?;
     let relay = Relay {
         db,
@@ -120,12 +155,22 @@ pub async fn serve(listener: TcpListener, config: Config) -> std::io::Result<()>
         relay: Mutex::new(relay),
     });
     tokio::spawn(cleanup(Arc::clone(&shared)));
-    let app = Router::new().route("/", get(upgrade)).with_state(shared);
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
+    let run = |listener: TcpListener, onion: bool| {
+        let app = Router::new()
+            .route("/", get(upgrade))
+            .with_state((Arc::clone(&shared), onion));
+        async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+        }
+    };
+    match onion {
+        Some(o) => tokio::try_join!(run(listener, false), run(o, true)).map(|_| ()),
+        None => run(listener, false).await,
+    }
 }
 
 struct Shared {
@@ -145,8 +190,8 @@ struct Relay {
     online: HashMap<Ed25519Key, (u64, mpsc::Sender<ServerFrame>)>,
     // grows with every key seen since start, bounded by the registration limit.
     mem: HashMap<Ed25519Key, Account>,
-    connections: HashMap<IpAddr, usize>,
-    registrations: HashMap<IpAddr, Bucket>,
+    connections: HashMap<Origin, usize>,
+    registrations: HashMap<Origin, Bucket>,
     next_conn: u64,
 }
 
@@ -237,9 +282,9 @@ async fn cleanup(shared: Arc<Shared>) {
         tick.tick().await;
         let limits = &shared.config.limits;
         let (now, unix) = (Instant::now(), unix_now());
-        let rate = limits.registrations_per_ip;
         let mut relay = shared.lock();
-        relay.registrations.retain(|_, b| {
+        relay.registrations.retain(|origin, b| {
+            let rate = limits.registrations(*origin);
             b.refill(rate, now);
             b.tokens < rate.burst
         });
@@ -259,11 +304,14 @@ async fn upgrade(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    State(shared): State<Arc<Shared>>,
+    State((shared, onion)): State<(Arc<Shared>, bool)>,
 ) -> Response {
-    let ip = client_ip(&shared.config, addr, &headers);
+    let origin = match onion {
+        true => Origin::Onion,
+        false => Origin::Ip(client_ip(&shared.config, addr, &headers)),
+    };
     ws.max_message_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| connection(shared, socket, ip))
+        .on_upgrade(move |socket| connection(shared, socket, origin))
 }
 
 fn client_ip(config: &Config, addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
@@ -279,11 +327,11 @@ fn client_ip(config: &Config, addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
     addr.ip()
 }
 
-async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: IpAddr) {
+async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
     let allowed = {
         let mut relay = shared.lock();
         let n = relay.connections.entry(ip).or_default();
-        let ok = *n < shared.config.limits.connections_per_ip;
+        let ok = *n < shared.config.limits.connections(ip);
         if ok {
             *n += 1;
         }
@@ -335,7 +383,7 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: IpAddr) {
 
 type Session = (Ed25519Key, u64, mpsc::Receiver<ServerFrame>);
 
-async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: IpAddr) -> Result<Session, ErrorCode> {
+async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Session, ErrorCode> {
     let ClientFrame::Hello { version } = recv(ws).await? else {
         return Err(ErrorCode::NotAuthenticated);
     };
@@ -353,8 +401,11 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: IpAddr) -> Result<Se
     else {
         return Err(ErrorCode::NotAuthenticated);
     };
-    termchat_core::verify_auth(&identity, &shared.config.host, &nonce, &signature)
-        .map_err(|_| ErrorCode::BadSignature)?;
+    let signed_for =
+        |host: &String| termchat_core::verify_auth(&identity, host, &nonce, &signature).is_ok();
+    if !shared.config.hosts.iter().any(signed_for) {
+        return Err(ErrorCode::BadSignature);
+    }
     let key = identity.ed25519;
 
     let (tx, rx) = mpsc::channel(256);
@@ -369,8 +420,8 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: IpAddr) -> Result<Se
                 let ok = relay
                     .registrations
                     .entry(ip)
-                    .or_insert_with(|| Bucket::full(limits.registrations_per_ip, now))
-                    .take(limits.registrations_per_ip, now);
+                    .or_insert_with(|| Bucket::full(limits.registrations(ip), now))
+                    .take(limits.registrations(ip), now);
                 if !ok {
                     return Err(ErrorCode::RateLimited);
                 }

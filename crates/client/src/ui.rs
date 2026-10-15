@@ -24,7 +24,7 @@ Ctrl+X       report contact to the relay operator (and block)
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
-Ctrl+P       settings: backup, duress password, wipe
+Ctrl+P       settings: backup, duress password, Tor, wipe
 Ctrl+K       lock now (also after 5 min idle)
 Ctrl+Q       quit
 ? / F1       this help
@@ -203,7 +203,11 @@ fn main(f: &mut Frame, m: &Main) {
     let x = input.x + 1 + u16::try_from(Line::from(m.input.as_str()).width()).unwrap_or(u16::MAX);
     f.set_cursor_position((x.min(input.right().saturating_sub(2)), input.y + 1));
 
-    let link = if m.connected {
+    let link = if m.connected && m.data.tor {
+        "● online via Tor".green()
+    } else if m.data.tor {
+        "○ connecting via Tor…".yellow()
+    } else if m.connected {
         "● online".green()
     } else {
         "○ connecting…".yellow()
@@ -307,9 +311,9 @@ fn popup_pane(f: &mut Frame, m: &Main, popup: &Popup) {
         Popup::Notice(text) => (" note ", format!("{text}\n\nany key: close"), 70, 7),
         Popup::Menu => (
             " settings ",
-            "b  back up your identity\nd  duress password\nw  wipe everything from this device\n\nany other key: close".to_string(),
+            "b  back up your identity\nd  duress password\nt  Tor on/off\nw  wipe everything from this device\n\nany other key: close".to_string(),
             48,
-            8,
+            9,
         ),
         Popup::Help => (" help ", HELP.to_string(), 70, 30),
         Popup::Add(s) => (

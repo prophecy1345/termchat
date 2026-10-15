@@ -6,6 +6,15 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # paste: proc-macro used at compile time by Arti crates (ADR-004); no runtime
+    # code, no known vulnerability. Drop once Arti moves off it.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained compile-time proc-macro pulled in by arti" },
+    # rsa "Marvin" timing attack needs private-key operations (decrypt/sign). rsa
+    # comes in through Arti's key-format crates; a Tor *client* only verifies
+    # legacy RSA relay signatures, and termchat never creates an RSA private key.
+    { id = "RUSTSEC-2023-0071", reason = "no RSA private-key operations in a Tor client" },
+]
 
 [licenses]
 version = 2
@@ -17,6 +26,11 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # Public-domain style, pulled in by Arti (ADR-004).
+    "CC0-1.0",
+    "Unlicense",
+    # File-level copyleft, GPL-compatible (secondary license clause); pulled in by Arti.
+    "MPL-2.0",
     "ISC",
     "MIT",
     "Unicode-3.0",

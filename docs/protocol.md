@@ -40,7 +40,7 @@ R -> C  AuthOk | Error { code }
 "termchat-auth-v1" || relay_host || nonce
 ```
 
-- `relay_host` из URL relay (например `relay.example.org`) не даёт переиспользовать подпись на другом relay.
+- `relay_host` из URL relay (например `relay.example.org` или `xxxx.onion`) не даёт переиспользовать подпись на другом relay. Relay принимает любой из своих адресов (`--host` можно указать несколько раз).
 - Связь ключа обмена с ключом подписи даёт подпись внутри `identity`; relay её проверяет.
 - Nonce одноразовый и живёт не дольше 30 секунд.
 
@@ -148,7 +148,7 @@ Body =
 ```
 termchat:<base64url(postcard(Invite))>
 
-Invite { version: u16, relay_url: String, identity: Identity }
+Invite { version: u16, relay_url: String, onion_url: Option<String>, identity: Identity }
 ```
 
 Fallback key в приглашение не кладётся: он ротируется и быстро устареет. One-time key берётся через `ClaimKey`, подпись защищает от подмены.

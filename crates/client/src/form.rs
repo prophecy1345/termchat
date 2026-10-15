@@ -45,6 +45,8 @@ impl Kind {
         match self {
             Self::Setup => &[
                 ("Relay URL", false),
+                ("Relay onion URL (optional, ws://….onion/)", false),
+                ("Use Tor? y/n (hides your IP; needs the onion URL)", false),
                 ("Nickname (the only thing others learn about you)", false),
                 ("Password", true),
                 ("Repeat password", true),
@@ -87,7 +89,7 @@ impl Kind {
     /// Which secret field Ctrl+G fills (with the next one as its repeat).
     fn generated_field(self) -> Option<usize> {
         match self {
-            Self::Setup => Some(2),
+            Self::Setup => Some(4),
             Self::Backup | Self::Duress => Some(1),
             Self::Restore | Self::Wipe => None,
         }
@@ -97,6 +99,9 @@ impl Kind {
 impl Form {
     pub fn new(kind: Kind) -> Self {
         let mut fields: Vec<_> = kind.labels().iter().map(|_| Zeroizing::default()).collect();
+        if kind == Kind::Setup {
+            fields[2] = Zeroizing::new("y".into());
+        }
         if kind == Kind::Backup {
             let default = std::env::home_dir()
                 .unwrap_or_default()

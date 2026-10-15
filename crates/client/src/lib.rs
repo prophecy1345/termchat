@@ -10,15 +10,16 @@ pub mod password;
 pub mod ui;
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use termchat_proto::{ClientFrame, Identity, ServerFrame, Signature, VERSION};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::http::Uri;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{WebSocketStream, connect_async};
 
 const MIN_DELAY: Duration = Duration::from_secs(1);
 const MAX_DELAY: Duration = Duration::from_secs(60);
@@ -36,6 +37,15 @@ pub enum Event {
     Frame(ServerFrame),
 }
 
+/// How to reach the relay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Dial {
+    Direct,
+    /// Only through Tor, with Arti's state in this folder (ADR-004). Never falls
+    /// back to a direct connection, so the IP cannot leak.
+    Tor(PathBuf),
+}
+
 /// Handle to the background connection. Dropping it closes the connection.
 #[derive(Clone)]
 pub struct Relay {
@@ -48,12 +58,22 @@ impl Relay {
         url: &str,
         identity: Identity,
         sign: Signer,
+        dial: Dial,
     ) -> Result<(Self, mpsc::Receiver<Event>), Error> {
-        let host = url
-            .parse::<Uri>()
-            .ok()
-            .and_then(|u| u.host().map(str::to_owned))
-            .ok_or(Error::BadUrl)?;
+        let uri = url.parse::<Uri>().map_err(|_| Error::BadUrl)?;
+        let host = uri.host().map(str::to_owned).ok_or(Error::BadUrl)?;
+        #[cfg(feature = "tor")]
+        let port = uri
+            .port_u16()
+            .unwrap_or(if uri.scheme_str() == Some("wss") {
+                443
+            } else {
+                80
+            });
+        #[cfg(not(feature = "tor"))]
+        if matches!(dial, Dial::Tor(_)) {
+            return Err(Error::NoTor);
+        }
         // Ignore the error: a provider may already be installed by the app.
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (tx, rx) = mpsc::unbounded_channel();
@@ -61,6 +81,11 @@ impl Relay {
         let link = Link {
             url: url.to_owned(),
             host,
+            #[cfg(feature = "tor")]
+            port,
+            dial,
+            #[cfg(feature = "tor")]
+            tor: None,
             identity,
             sign,
             events: events_tx,
@@ -80,13 +105,19 @@ impl Relay {
 pub enum Error {
     BadUrl,
     Closed,
+    /// This build was made without the `tor` feature.
+    NoTor,
 }
-
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 struct Link {
     url: String,
     host: String,
+    #[cfg(feature = "tor")]
+    port: u16,
+    dial: Dial,
+    /// Bootstrapped once, reused across reconnects.
+    #[cfg(feature = "tor")]
+    tor: Option<std::sync::Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>,
     identity: Identity,
     sign: Signer,
     events: mpsc::Sender<Event>,
@@ -127,9 +158,53 @@ impl Link {
     }
 
     async fn session(&mut self, out: &mut mpsc::UnboundedReceiver<ClientFrame>) -> End {
-        let Ok((mut ws, _)) = connect_async(self.url.as_str()).await else {
-            return End::Lost(false);
-        };
+        match self.dial.clone() {
+            Dial::Direct => match connect_async(self.url.as_str()).await {
+                Ok((ws, _)) => self.talk(ws, out).await,
+                Err(_) => End::Lost(false),
+            },
+            #[cfg(feature = "tor")]
+            Dial::Tor(dir) => {
+                let Some(stream) = self.tor_stream(&dir).await else {
+                    return End::Lost(false);
+                };
+                match tokio_tungstenite::client_async(self.url.as_str(), stream).await {
+                    Ok((ws, _)) => self.talk(ws, out).await,
+                    Err(_) => End::Lost(false),
+                }
+            }
+            #[cfg(not(feature = "tor"))]
+            Dial::Tor(_) => End::Stop,
+        }
+    }
+
+    #[cfg(feature = "tor")]
+    async fn tor_stream(&mut self, dir: &std::path::Path) -> Option<arti_client::DataStream> {
+        if self.tor.is_none() {
+            let config = arti_client::config::TorClientConfigBuilder::from_directories(
+                dir.join("state"),
+                dir.join("cache"),
+            )
+            .build()
+            .ok()?;
+            self.tor = Some(
+                arti_client::TorClient::create_bootstrapped(config)
+                    .await
+                    .ok()?,
+            );
+        }
+        self.tor
+            .as_ref()?
+            .connect((self.host.as_str(), self.port))
+            .await
+            .ok()
+    }
+
+    async fn talk<S: AsyncRead + AsyncWrite + Unpin>(
+        &mut self,
+        mut ws: WebSocketStream<S>,
+        out: &mut mpsc::UnboundedReceiver<ClientFrame>,
+    ) -> End {
         if self.handshake(&mut ws).await.is_none()
             || self.events.send(Event::Connected).await.is_err()
         {
@@ -164,7 +239,10 @@ impl Link {
         }
     }
 
-    async fn handshake(&self, ws: &mut Ws) -> Option<()> {
+    async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
+        &self,
+        ws: &mut WebSocketStream<S>,
+    ) -> Option<()> {
         write(ws, &ClientFrame::Hello { version: VERSION }).await?;
         let ServerFrame::Challenge { nonce } = read(ws).await? else {
             return None;
@@ -185,13 +263,18 @@ impl Link {
     }
 }
 
-async fn write(ws: &mut Ws, frame: &ClientFrame) -> Option<()> {
+async fn write<S: AsyncRead + AsyncWrite + Unpin>(
+    ws: &mut WebSocketStream<S>,
+    frame: &ClientFrame,
+) -> Option<()> {
     ws.send(Message::Binary(frame.encode().into())).await.ok()
 }
 
 /// Next frame; `None` on close, error, garbage or silence longer than `IDLE`.
 /// Pings are answered by tungstenite itself while reading.
-async fn read(ws: &mut Ws) -> Option<ServerFrame> {
+async fn read<S: AsyncRead + AsyncWrite + Unpin>(
+    ws: &mut WebSocketStream<S>,
+) -> Option<ServerFrame> {
     loop {
         match tokio::time::timeout(IDLE, ws.next()).await.ok()?? {
             Ok(Message::Binary(bytes)) => return ServerFrame::decode(&bytes).ok(),

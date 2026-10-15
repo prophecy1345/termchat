@@ -15,6 +15,10 @@ pub struct Data {
     /// A backup of the identity exists; until then the status bar nags.
     pub backed_up: bool,
     pub relay_url: String,
+    /// The relay's onion address, if it has one (ADR-004).
+    pub onion_url: Option<String>,
+    /// Connect only through Tor.
+    pub tor: bool,
     pub nickname: String,
     pub next_client_id: u64,
     pub fallback_published: bool,

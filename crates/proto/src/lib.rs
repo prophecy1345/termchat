@@ -223,6 +223,8 @@ pub struct Identity {
 pub struct Invite {
     pub version: u16,
     pub relay_url: String,
+    /// The same relay as a Tor onion service, if it has one (ADR-004).
+    pub onion_url: Option<String>,
     pub identity: Identity,
 }
 
@@ -241,7 +243,7 @@ impl Invite {
             .trim()
             .strip_prefix(INVITE_PREFIX)
             .ok_or(Error::Malformed)?;
-        if b64.len() > 4 * MAX_RELAY_URL {
+        if b64.len() > 8 * MAX_RELAY_URL {
             return Err(Error::TooLarge);
         }
         let bytes = URL_SAFE_NO_PAD.decode(b64).map_err(|_| Error::Malformed)?;
@@ -249,7 +251,12 @@ impl Invite {
         if invite.version != VERSION {
             return Err(Error::UnsupportedVersion);
         }
-        if invite.relay_url.len() > MAX_RELAY_URL {
+        if invite.relay_url.len() > MAX_RELAY_URL
+            || invite
+                .onion_url
+                .as_ref()
+                .is_some_and(|u| u.len() > MAX_RELAY_URL)
+        {
             return Err(Error::TooLarge);
         }
         Ok(invite)
@@ -496,6 +503,9 @@ mod tests {
         let invite = Invite {
             version: VERSION,
             relay_url: "wss://relay.example.org/".into(),
+            onion_url: Some(
+                "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/".into(),
+            ),
             identity: Identity {
                 ed25519: [1; 32],
                 curve25519: [2; 32],
@@ -503,7 +513,7 @@ mod tests {
             },
         };
         let s = invite.encode();
-        assert!(s.starts_with("termchat:") && s.len() < 250, "{s}");
+        assert!(s.starts_with("termchat:") && s.len() < 350, "{s}");
         assert_eq!(Invite::decode(&format!("  {s}\n")).unwrap(), invite);
         assert_eq!(Invite::decode("termchat:!!!"), Err(Error::Malformed));
         assert_eq!(Invite::decode(&s[1..]), Err(Error::Malformed));

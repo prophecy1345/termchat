@@ -19,13 +19,13 @@ async fn start_relay(limits: Limits) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
     let config = Config {
-        host: "127.0.0.1".into(),
+        hosts: vec!["127.0.0.1".into()],
         trust_proxy: false,
         db: None,
         reports: None,
         limits,
     };
-    tokio::spawn(termchat_relay::serve(listener, config));
+    tokio::spawn(termchat_relay::serve(listener, None, config));
     url
 }
 
@@ -42,7 +42,7 @@ impl Peer {
         let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
             signer.lock().unwrap().auth_signature(host, nonce)
         });
-        let (relay, events) = Relay::connect(url, identity, sign).unwrap();
+        let (relay, events) = Relay::connect(url, identity, sign, termchat::Dial::Direct).unwrap();
         Self {
             core,
             relay,
@@ -223,13 +223,13 @@ async fn reconnects_when_relay_comes_up_later() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let listener = TcpListener::bind(addr).await.unwrap();
     let config = Config {
-        host: "127.0.0.1".into(),
+        hosts: vec!["127.0.0.1".into()],
         trust_proxy: false,
         db: None,
         reports: None,
         limits: Limits::default(),
     };
-    tokio::spawn(termchat_relay::serve(listener, config));
+    tokio::spawn(termchat_relay::serve(listener, None, config));
     alice.connected().await;
 }
 
@@ -496,13 +496,16 @@ async fn queue_and_prekeys_survive_a_relay_restart() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
         let config = Config {
-            host: "127.0.0.1".into(),
+            hosts: vec!["127.0.0.1".into()],
             trust_proxy: false,
             db: Some(path),
             reports: None,
             limits: Limits::default(),
         };
-        (url, tokio::spawn(termchat_relay::serve(listener, config)))
+        (
+            url,
+            tokio::spawn(termchat_relay::serve(listener, None, config)),
+        )
     };
     let (a, b) = pair();
     let (url, relay) = start(path.clone()).await;

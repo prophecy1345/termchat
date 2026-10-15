@@ -17,7 +17,7 @@ use zeroize::Zeroizing;
 use crate::data::{self, Contact, Data, Msg, Status};
 use crate::form::{self, Action, Form, Kind};
 use crate::password;
-use crate::{Event, Relay};
+use crate::{Dial, Event, Relay};
 
 /// PLAN.md, M3.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
@@ -202,13 +202,34 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
     if !(url.starts_with("wss://") || url.starts_with("ws://")) {
         return Err("relay URL must start with wss://".into());
     }
-    let nickname = f.fields[1].trim();
+    let onion = f.fields[1].trim();
+    let onion = (!onion.is_empty()).then(|| onion.to_string());
+    if onion
+        .as_ref()
+        .is_some_and(|o| !(o.starts_with("ws://") && o.trim_end_matches('/').ends_with(".onion")))
+    {
+        return Err("onion URL looks like ws://xxxx.onion/".into());
+    }
+    let tor = match f.fields[2].trim().to_lowercase().as_str() {
+        "y" | "yes" => true,
+        "n" | "no" => false,
+        _ => return Err("Use Tor: answer y or n".into()),
+    };
+    if tor && onion.is_none() {
+        return Err("Tor needs the relay's onion URL (or answer n)".into());
+    }
+    if tor && !cfg!(feature = "tor") {
+        return Err("this build has no Tor support; answer n".into());
+    }
+    let nickname = f.fields[3].trim();
     check_nickname(nickname).map_err(|_| "nickname: 1-64 bytes, no control characters")?;
-    let password = f.new_password(2, &[nickname])?;
+    let password = f.new_password(4, &[nickname])?;
     let key =
         create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
     let data = Data {
         relay_url: url.into(),
+        onion_url: onion,
+        tor,
         nickname: nickname.into(),
         ..Data::default()
     };
@@ -269,19 +290,38 @@ impl Unlock {
     }
 }
 
+/// Starts the relay link: through Tor only if Tor is on (ADR-004).
+fn link(
+    core: &Arc<Mutex<Client>>,
+    data: &Data,
+    path: &Path,
+) -> Result<(Relay, Receiver<Event>), String> {
+    let identity = core
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .identity();
+    let signer = Arc::clone(core);
+    let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
+        signer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .auth_signature(host, nonce)
+    });
+    let (url, dial) = match (&data.onion_url, data.tor) {
+        (Some(onion), true) => (onion.as_str(), Dial::Tor(path.with_file_name("arti"))),
+        (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
+        (_, false) => (data.relay_url.as_str(), Dial::Direct),
+    };
+    Relay::connect(url, identity, sign, dial).map_err(|e| match e {
+        crate::Error::NoTor => "this build has no Tor support".into(),
+        _ => format!("bad relay URL: {url}"),
+    })
+}
+
 impl Main {
     fn open(core: Client, key: FileKey, data: Data, path: PathBuf) -> Result<Box<Self>, String> {
-        let identity = core.identity();
         let core = Arc::new(Mutex::new(core));
-        let signer = Arc::clone(&core);
-        let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
-            signer
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .auth_signature(host, nonce)
-        });
-        let (relay, events) =
-            Relay::connect(&data.relay_url, identity, sign).map_err(|_| "bad relay URL")?;
+        let (relay, events) = link(&core, &data, &path)?;
         Ok(Box::new(Self {
             core,
             key,
@@ -311,6 +351,7 @@ impl Main {
         Invite {
             version: proto::VERSION,
             relay_url: self.data.relay_url.clone(),
+            onion_url: self.data.onion_url.clone(),
             identity: self.core().identity(),
         }
         .encode()
@@ -714,6 +755,7 @@ impl Main {
                 KeyCode::Char('b') => Some(Popup::Form(Form::new(Kind::Backup))),
                 KeyCode::Char('d') => Some(Popup::Form(Form::new(Kind::Duress))),
                 KeyCode::Char('w') => Some(Popup::Form(Form::new(Kind::Wipe))),
+                KeyCode::Char('t') => Some(Popup::Notice(self.toggle_tor())),
                 _ => None,
             },
             Popup::Form(mut f) => match f.on_key(k) {
@@ -811,6 +853,32 @@ impl Main {
         Some(text).filter(|t| !t.is_empty())
     }
 
+    /// Switches Tor on or off and reconnects; returns what to tell the user.
+    fn toggle_tor(&mut self) -> String {
+        if !self.data.tor && self.data.onion_url.is_none() {
+            return "This relay has no onion URL, so Tor is not available.".into();
+        }
+        self.data.tor = !self.data.tor;
+        match link(&self.core, &self.data, &self.path) {
+            Ok((relay, events)) => {
+                (self.relay, self.events) = (relay, events);
+                self.connected = false;
+                self.persist();
+                match self.data.tor {
+                    true => {
+                        "Tor on: connecting only through Tor. The first connection takes 10-30 s."
+                            .into()
+                    }
+                    false => "Tor off: the relay and your provider now see your IP address.".into(),
+                }
+            }
+            Err(e) => {
+                self.data.tor = !self.data.tor;
+                e
+            }
+        }
+    }
+
     /// Settings forms. `Ok` carries what to tell the user.
     fn submit(&mut self, f: &Form) -> Result<String, String> {
         match f.kind {
@@ -871,7 +939,10 @@ impl Main {
     /// Adds a contact from an invite string and starts the handshake.
     fn add(&mut self, invite: &str) -> Result<(), String> {
         let invite = Invite::decode(invite).map_err(|e| format!("invalid invite: {e}"))?;
-        if invite.relay_url.trim_end_matches('/') != self.data.relay_url.trim_end_matches('/') {
+        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+        let onion_matches =
+            matches!((&invite.onion_url, &self.data.onion_url), (Some(a), Some(b)) if same(a, b));
+        if !same(&invite.relay_url, &self.data.relay_url) && !onion_matches {
             return Err(format!(
                 "they use another relay ({}); only one relay is supported for now",
                 invite.relay_url
