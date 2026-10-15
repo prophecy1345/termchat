@@ -75,8 +75,9 @@ not yet reviewed in `supply-chain/`).
 termchat
 ```
 
-First run asks for the relay URL (and its onion URL if you want Tor), a nickname and a
-password (Ctrl+G suggests a six-word passphrase). Then:
+First run comes with the project's public relay filled in (below); just pick a
+nickname and a password (Ctrl+G suggests a six-word passphrase) and answer whether
+to use Tor. Then:
 
 - **Ctrl+O** shows your invite. Send it to a friend any way you like: it holds only
   public keys.
@@ -90,6 +91,16 @@ password (Ctrl+G suggests a six-word passphrase). Then:
   never triggers hotkeys (bracketed paste).
 
 Data lives in `~/.termchat` (override with `TERMCHAT_HOME`).
+
+## Public relay
+
+| | |
+|---|---|
+| Direct | `wss://chat.46-224-214-19.sslip.io/` |
+| Tor | `ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/` |
+
+It stores only what [docs/self-host.md](docs/self-host.md#what-the-relay-stores) lists,
+keeps no access log, and is not behind Cloudflare or any other TLS-terminating proxy.
 
 ## Run a relay
 

@@ -15,6 +15,12 @@ pub enum Kind {
     Wipe,
 }
 
+/// The project's public relay, prefilled on first run; any other relay can be
+/// typed over it (docs/self-host.md).
+pub const DEFAULT_RELAY: &str = "wss://chat.46-224-214-19.sslip.io/";
+pub const DEFAULT_ONION: &str =
+    "ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/";
+
 pub struct Form {
     pub kind: Kind,
     pub fields: Vec<Zeroizing<String>>,
@@ -76,7 +82,7 @@ impl Kind {
     pub fn info(self) -> &'static str {
         match self {
             Self::Setup => {
-                "No names, phones or emails: just a nickname.\nCtrl+G: generate a passphrase   Ctrl+B: restore from a backup"
+                "No names, phones or emails: just a nickname. The relay below is the\nproject's public one; keep it or type your own.\nCtrl+G: generate a passphrase   Ctrl+B: restore from a backup"
             }
             Self::Restore => {
                 "Afterwards unlock with the backup's password. Chats start fresh;\ncontacts see that you restarted the conversation.   Esc: back"
@@ -110,6 +116,8 @@ impl Form {
     pub fn new(kind: Kind) -> Self {
         let mut fields: Vec<_> = kind.labels().iter().map(|_| Zeroizing::default()).collect();
         if kind == Kind::Setup {
+            fields[0] = Zeroizing::new(DEFAULT_RELAY.into());
+            fields[1] = Zeroizing::new(DEFAULT_ONION.into());
             fields[2] = Zeroizing::new("y".into());
         }
         if kind == Kind::Backup {
