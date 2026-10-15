@@ -8,16 +8,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use termchat_core::proto::{
     self, Body, ClientFrame, Ed25519Key, Invite, ServerFrame, check_nickname,
 };
-use termchat_core::{Client, Error as CoreError, FileKey, KdfParams, create_file_key};
+use termchat_core::{
+    Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
+};
 use tokio::sync::mpsc::Receiver;
 use zeroize::Zeroizing;
 
 use crate::data::{self, Contact, Data, Msg, Status};
+use crate::form::{self, Action, Form, Kind};
+use crate::password;
 use crate::{Event, Relay};
 
 /// PLAN.md, M3.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
-const MIN_PASSWORD: usize = 8;
+/// ADR-003: a typo in the real password must never hit the duress one.
+const DURESS_DISTANCE: usize = 4;
 /// Disappearing timer steps for Ctrl+T.
 const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
 
@@ -28,17 +33,10 @@ pub struct App {
 }
 
 pub enum Screen {
-    Setup(Setup),
+    /// First run or restore from backup.
+    Setup(Form),
     Unlock(Unlock),
     Main(Box<Main>),
-}
-
-#[derive(Default)]
-pub struct Setup {
-    /// relay URL, nickname, password, confirmation.
-    pub fields: [Zeroizing<String>; 4],
-    pub field: usize,
-    pub error: String,
 }
 
 #[derive(Default)]
@@ -49,6 +47,10 @@ pub struct Unlock {
 
 pub enum Popup {
     Help,
+    Notice(String),
+    /// Ctrl+P: backup, duress password, wipe.
+    Menu,
+    Form(Form),
     Add(String),
     Invite(String),
     Verify,
@@ -69,6 +71,8 @@ pub struct Main {
     pub status: String,
     pub last_input: Instant,
     path: PathBuf,
+    /// Everything was erased; the app returns to the first-run screen.
+    wiped: bool,
 }
 
 pub fn now() -> u64 {
@@ -82,7 +86,7 @@ impl App {
     pub fn new(path: PathBuf) -> Self {
         let screen = match path.exists() {
             true => Screen::Unlock(Unlock::default()),
-            false => Screen::Setup(Setup::default()),
+            false => Screen::Setup(Form::new(Kind::Setup)),
         };
         Self {
             screen,
@@ -127,22 +131,43 @@ impl App {
             return;
         }
         match &mut self.screen {
-            Screen::Setup(s) => {
-                if let Some(main) = s.on_key(k, &self.path) {
-                    self.screen = Screen::Main(main);
-                }
+            Screen::Setup(f) if ctrl && k.code == KeyCode::Char('b') && f.kind == Kind::Setup => {
+                self.screen = Screen::Setup(Form::new(Kind::Restore));
             }
-            Screen::Unlock(u) => {
-                if let Some(main) = u.on_key(k, &self.path) {
-                    self.screen = Screen::Main(main);
+            Screen::Setup(f) => match f.on_key(k) {
+                Action::Cancel if f.kind == Kind::Restore => {
+                    self.screen = Screen::Setup(Form::new(Kind::Setup))
                 }
-            }
+                Action::Submit if f.kind == Kind::Restore => match restore(f, &self.path) {
+                    Ok(()) => {
+                        let hint = "restored: enter the backup's password".to_string();
+                        self.screen = Screen::Unlock(Unlock {
+                            error: hint,
+                            ..Unlock::default()
+                        });
+                    }
+                    Err(e) => f.error = e,
+                },
+                Action::Submit => match setup(f, &self.path) {
+                    Ok(main) => self.screen = Screen::Main(main),
+                    Err(e) => f.error = e,
+                },
+                _ => {}
+            },
+            Screen::Unlock(u) => match u.on_key(k, &self.path) {
+                Unlocked::Stay => {}
+                Unlocked::Open(main) => self.screen = Screen::Main(main),
+                Unlocked::Wiped => self.screen = Screen::Setup(Form::new(Kind::Setup)),
+            },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
                 if ctrl && k.code == KeyCode::Char('k') {
                     self.lock();
                 } else {
                     m.on_key(k, ctrl);
+                    if m.wiped {
+                        self.screen = Screen::Setup(Form::new(Kind::Setup));
+                    }
                 }
             }
         }
@@ -170,77 +195,73 @@ fn edit(s: &mut String, k: KeyEvent) -> bool {
     false
 }
 
-impl Setup {
-    fn on_key(&mut self, k: KeyEvent, path: &Path) -> Option<Box<Main>> {
-        match k.code {
-            KeyCode::Tab | KeyCode::Down => self.field = (self.field + 1) % 4,
-            KeyCode::BackTab | KeyCode::Up => self.field = (self.field + 3) % 4,
-            _ if edit(&mut self.fields[self.field], k) => {
-                if self.field < 3 {
-                    self.field += 1;
-                } else {
-                    match self.finish(path) {
-                        Ok(main) => return Some(main),
-                        Err(e) => self.error = e,
-                    }
-                }
-            }
-            _ => {}
-        }
-        None
+fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
+    let url = f.fields[0].trim();
+    if !(url.starts_with("wss://") || url.starts_with("ws://")) {
+        return Err("relay URL must start with wss://".into());
     }
+    let nickname = f.fields[1].trim();
+    check_nickname(nickname).map_err(|_| "nickname: 1-64 bytes, no control characters")?;
+    let password = f.new_password(2, &[nickname])?;
+    let key =
+        create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
+    let data = Data {
+        relay_url: url.into(),
+        nickname: nickname.into(),
+        ..Data::default()
+    };
+    let mut main = Main::open(Client::default(), key, data, path.to_owned())?;
+    if !main.persist() {
+        return Err(main.status);
+    }
+    main.popup = Some(Popup::Notice(
+        "Back up your identity now: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
+    ));
+    Ok(main)
+}
 
-    fn finish(&mut self, path: &Path) -> Result<Box<Main>, String> {
-        let [url, nickname, password, confirm] = &self.fields;
-        let url = url.trim();
-        if !(url.starts_with("wss://") || url.starts_with("ws://")) {
-            return Err("relay URL must start with wss://".into());
-        }
-        let nickname = nickname.trim();
-        check_nickname(nickname).map_err(|_| "nickname: 1-64 bytes, no control characters")?;
-        if password.chars().count() < MIN_PASSWORD {
-            return Err(format!("password: at least {MIN_PASSWORD} characters"));
-        }
-        if password != confirm {
-            return Err("passwords do not match".into());
-        }
-        let key =
-            create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
-        let data = Data {
-            relay_url: url.into(),
-            nickname: nickname.into(),
-            ..Data::default()
-        };
-        let mut main = Main::open(Client::default(), key, data, path.to_owned())?;
-        if !main.persist() {
-            return Err(main.status);
-        }
-        Ok(main)
-    }
+/// A backup is a state file without sessions or messages: restoring is a copy.
+fn restore(f: &Form, path: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(form::expand(&f.fields[0]))
+        .map_err(|e| format!("cannot read backup: {e}"))?;
+    data::write_atomic(path, &bytes).map_err(|e| e.to_string())
+}
+
+pub enum Unlocked {
+    Stay,
+    Open(Box<Main>),
+    /// The duress password was entered and the data is gone.
+    Wiped,
 }
 
 impl Unlock {
-    fn on_key(&mut self, k: KeyEvent, path: &Path) -> Option<Box<Main>> {
+    fn on_key(&mut self, k: KeyEvent, path: &Path) -> Unlocked {
         if !edit(&mut self.input, k) {
-            return None;
+            return Unlocked::Stay;
         }
         // Argon2 blocks the UI thread for ~1 s; move to spawn_blocking if it bothers.
-        let result = std::fs::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| match Client::load(self.input.as_bytes(), &bytes) {
-                Err(CoreError::WrongPassword) => Err("wrong password".into()),
-                other => other.map_err(|e| e.to_string()),
-            })
-            .and_then(|(core, key, app)| {
-                let data = Data::from_json(&app).map_err(|e| e.to_string())?;
-                Main::open(core, key, data, path.to_owned())
-            });
+        let loaded = std::fs::read(path)
+            .map_err(|e| format!("cannot read state: {e}"))
+            .map(|bytes| Client::load(self.input.as_bytes(), &bytes));
         self.input = Zeroizing::default();
+        let result = match loaded {
+            // ADR-003: erase first, say nothing.
+            Ok(Err(CoreError::Duress)) => {
+                let _ = data::wipe(path);
+                return Unlocked::Wiped;
+            }
+            Ok(Err(CoreError::WrongPassword)) => Err("wrong password".to_string()),
+            Ok(Err(e)) => Err(e.to_string()),
+            Ok(Ok((core, key, app))) => Data::from_json(&app)
+                .map_err(|e| e.to_string())
+                .and_then(|data| Main::open(core, key, data, path.to_owned())),
+            Err(e) => Err(e),
+        };
         match result {
-            Ok(main) => Some(main),
+            Ok(main) => Unlocked::Open(main),
             Err(e) => {
                 self.error = e;
-                None
+                Unlocked::Stay
             }
         }
     }
@@ -269,9 +290,10 @@ impl Main {
             selected: 0,
             input: String::new(),
             popup: None,
-            status: String::new(),
+            status: data::permission_warning(&path).unwrap_or_default(),
             last_input: Instant::now(),
             path,
+            wiped: false,
         }))
     }
 
@@ -562,6 +584,7 @@ impl Main {
             (false, KeyCode::Up) => self.select(self.selected.saturating_sub(1)),
             (false, KeyCode::Down) => self.select(self.selected + 1),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(String::new())),
+            (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu),
             (true, KeyCode::Char('o')) => self.popup = Some(Popup::Invite(self.invite())),
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
             (true, KeyCode::Char('r')) if key.is_some() => {
@@ -639,7 +662,24 @@ impl Main {
 
     fn on_popup_key(&mut self, popup: Popup, k: KeyEvent) {
         let keep = match popup {
-            Popup::Help => None,
+            Popup::Help | Popup::Notice(_) => None,
+            Popup::Menu => match k.code {
+                KeyCode::Char('b') => Some(Popup::Form(Form::new(Kind::Backup))),
+                KeyCode::Char('d') => Some(Popup::Form(Form::new(Kind::Duress))),
+                KeyCode::Char('w') => Some(Popup::Form(Form::new(Kind::Wipe))),
+                _ => None,
+            },
+            Popup::Form(mut f) => match f.on_key(k) {
+                Action::Stay => Some(Popup::Form(f)),
+                Action::Cancel => None,
+                Action::Submit => match self.submit(&f) {
+                    Ok(done) => Some(Popup::Notice(done)),
+                    Err(e) => {
+                        f.error = e;
+                        Some(Popup::Form(f))
+                    }
+                },
+            },
             Popup::Invite(invite) => {
                 if k.code == KeyCode::Char('c') {
                     copy_to_clipboard(&invite);
@@ -688,6 +728,63 @@ impl Main {
             Popup::Add(_) | Popup::Rename(_) => None,
         };
         self.popup = keep;
+    }
+
+    /// Settings forms. `Ok` carries what to tell the user.
+    fn submit(&mut self, f: &Form) -> Result<String, String> {
+        match f.kind {
+            Kind::Backup => {
+                let path = form::expand(&f.fields[0]);
+                let pw = f.new_password(1, &[&self.data.nickname])?;
+                let key = create_file_key(pw.as_bytes(), KdfParams::DEFAULT)
+                    .map_err(|e| e.to_string())?;
+                let mut copy = self.data.clone();
+                copy.backed_up = true;
+                copy.contacts.iter_mut().for_each(|c| c.messages.clear());
+                let bytes = self
+                    .core()
+                    .without_sessions()
+                    .save(&key, &copy.to_json())
+                    .map_err(|e| e.to_string())?;
+                data::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
+                self.data.backed_up = true;
+                self.persist();
+                Ok(format!(
+                    "Backup written to {}.\nMove it off this device. Restore: Ctrl+B on the first-run screen.",
+                    path.display()
+                ))
+            }
+            Kind::Duress => {
+                let (current, duress) = (f.fields[0].as_str(), f.fields[1].as_str());
+                let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
+                if store::open(current.as_bytes(), &file).is_err() {
+                    return Err("current password is wrong".into());
+                }
+                if duress.is_empty() {
+                    set_duress(&mut self.key, None).map_err(|e| e.to_string())?;
+                    self.persist();
+                    return Ok("Duress password turned off.".into());
+                }
+                if password::distance(current, duress) < DURESS_DISTANCE {
+                    return Err(format!(
+                        "must differ from your password by at least {DURESS_DISTANCE} characters"
+                    ));
+                }
+                let duress = f.new_password(1, &[current, &self.data.nickname])?;
+                set_duress(&mut self.key, Some(duress.as_bytes())).map_err(|e| e.to_string())?;
+                self.persist();
+                Ok("Duress password set. Entering it at unlock erases everything.".into())
+            }
+            Kind::Wipe => {
+                if f.fields[0].trim() != "WIPE" {
+                    return Err("type WIPE in capitals".into());
+                }
+                data::wipe(&self.path).map_err(|e| e.to_string())?;
+                self.wiped = true;
+                Ok(String::new())
+            }
+            Kind::Setup | Kind::Restore => Ok(String::new()),
+        }
     }
 
     /// Adds a contact from an invite string and starts the handshake.

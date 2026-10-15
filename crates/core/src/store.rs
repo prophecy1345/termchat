@@ -4,8 +4,9 @@
 //! `version u16 | m_kib u32 | t u32 | p u32 | slot | slot | nonce 24 | body`
 //! where `slot = salt 16 | nonce 24 | wrapped DEK 32 + tag 16`.
 //! The body is encrypted with a random data key (DEK) and the whole header as AAD.
-//! One slot wraps the DEK under the password; the other is random bytes
-//! (M4: wraps a duress marker instead). Order of slots is random.
+//! One slot wraps the DEK under the password. The other is random bytes, or
+//! wraps `DURESS` under the duress password (ADR-003). Order of slots is random,
+//! and both look the same: an AEAD ciphertext is indistinguishable from noise.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -20,6 +21,9 @@ const NONCE: usize = 24;
 const WRAPPED: usize = 32 + 16;
 const SLOT: usize = SALT + NONCE + WRAPPED;
 const HEADER: usize = 2 + 4 * 3 + 2 * SLOT;
+const SLOTS_AT: usize = HEADER - 2 * SLOT;
+/// What the duress slot wraps instead of a DEK. A real DEK is random, so it never matches.
+const DURESS: [u8; 32] = *b"termchat-duress-marker-v1\0\0\0\0\0\0\0";
 
 /// Argon2id cost, stored in the header so it can be raised later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +47,9 @@ impl KdfParams {
 pub struct FileKey {
     header: Vec<u8>,
     dek: Zeroizing<Vec<u8>>,
+    /// Slot holding the DEK; the other one is free for a duress password.
+    real: usize,
+    params: KdfParams,
 }
 
 /// New file key: random DEK wrapped under `password` in one of two slots.
@@ -67,7 +74,31 @@ pub fn create(password: &[u8], params: KdfParams) -> Result<FileKey, Error> {
     }
     header.extend_from_slice(&slots[0]);
     header.extend_from_slice(&slots[1]);
-    Ok(FileKey { header, dek })
+    Ok(FileKey {
+        header,
+        dek,
+        real,
+        params,
+    })
+}
+
+/// Sets (or with `None` clears) the duress password in the free slot.
+/// The caller must save afterwards: the header is part of the body's AAD.
+pub fn set_duress(key: &mut FileKey, duress: Option<&[u8]>) -> Result<(), Error> {
+    let mut slot = random::<SLOT>()?;
+    if let Some(password) = duress {
+        let (salt, rest) = slot.split_at_mut(SALT);
+        let (nonce, wrapped) = rest.split_at_mut(NONCE);
+        let kek = derive(password, salt, key.params)?;
+        wrapped.copy_from_slice(
+            &aead(kek.as_slice())?
+                .encrypt(&XNonce::from(arr(nonce)), DURESS.as_slice())
+                .map_err(|_| Error::CorruptState)?,
+        );
+    }
+    let at = SLOTS_AT + (1 - key.real) * SLOT;
+    key.header[at..at + SLOT].copy_from_slice(&slot);
+    Ok(())
 }
 
 /// Whole file bytes: header, fresh nonce, body encrypted with the header as AAD.
@@ -105,36 +136,46 @@ pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>
         return Err(Error::CorruptState);
     }
 
-    // Derive for both slots before deciding: equal time for either password (ADR-003).
-    let slots = &header[HEADER - 2 * SLOT..];
-    let mut deks = Vec::with_capacity(2);
-    for slot in slots.as_chunks::<SLOT>().0 {
+    // Derive for both slots and decrypt the body exactly once on every path
+    // (with a dummy key if needed): either password, or a wrong one, takes the
+    // same time (ADR-003).
+    let mut opened = Vec::with_capacity(2);
+    for (i, slot) in header[SLOTS_AT..].as_chunks::<SLOT>().0.iter().enumerate() {
         let (salt, rest) = slot.split_at(SALT);
         let (slot_nonce, wrapped) = rest.split_at(NONCE);
         let kek = derive(password, salt, params)?;
-        deks.push(
-            aead(kek.as_slice())?
-                .decrypt(&XNonce::from(arr(slot_nonce)), wrapped)
-                .ok()
-                .map(Zeroizing::new),
-        );
+        if let Ok(inner) = aead(kek.as_slice())?.decrypt(&XNonce::from(arr(slot_nonce)), wrapped) {
+            opened.push((i, Zeroizing::new(inner)));
+        }
     }
-    for dek in deks.into_iter().flatten() {
-        if let Ok(plain) = aead(dek.as_slice())?.decrypt(
+    let duress = opened.iter().any(|(_, k)| k.as_slice() == DURESS);
+    let real = opened.into_iter().find(|(_, k)| k.as_slice() != DURESS);
+    let dek = real.as_ref().map_or(&[0u8; 32][..], |(_, k)| k.as_slice());
+    let plain = aead(dek)?
+        .decrypt(
             &XNonce::from(arr(nonce)),
             Payload {
                 msg: body,
                 aad: header,
             },
-        ) {
+        )
+        .ok();
+
+    match (real, plain) {
+        (Some((real, dek)), Some(plain)) => {
             let key = FileKey {
                 header: header.to_vec(),
                 dek,
+                real,
+                params,
             };
-            return Ok((key, Zeroizing::new(plain)));
+            Ok((key, Zeroizing::new(plain)))
         }
+        // The real password, but the body is damaged: never treat this as duress.
+        (Some(_), None) => Err(Error::CorruptState),
+        (None, _) if duress => Err(Error::Duress),
+        (None, _) => Err(Error::WrongPassword),
     }
-    Err(Error::WrongPassword)
 }
 
 fn derive(password: &[u8], salt: &[u8], p: KdfParams) -> Result<Zeroizing<[u8; 32]>, Error> {
@@ -186,6 +227,73 @@ mod tests {
             open(b"correct horse", &file).unwrap().1.as_slice(),
             b"state 2"
         );
+    }
+
+    #[test]
+    fn duress_password_is_recognised_and_main_still_works() {
+        let mut key = create(b"main password", FAST).unwrap();
+        let plain_len = seal(&key, b"state").unwrap().len();
+        set_duress(&mut key, Some(b"duress password")).unwrap();
+        let file = seal(&key, b"state").unwrap();
+        assert_eq!(
+            file.len(),
+            plain_len,
+            "duress must not change the file shape"
+        );
+
+        assert!(matches!(
+            open(b"duress password", &file),
+            Err(Error::Duress)
+        ));
+        assert!(matches!(open(b"wrong", &file), Err(Error::WrongPassword)));
+        let (mut key, plain) = open(b"main password", &file).unwrap();
+        assert_eq!(plain.as_slice(), b"state");
+
+        // A damaged body with the real password is corruption, not duress.
+        let mut bad = file.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        assert!(matches!(
+            open(b"main password", &bad),
+            Err(Error::CorruptState)
+        ));
+
+        set_duress(&mut key, None).unwrap();
+        let file = seal(&key, b"state").unwrap();
+        assert!(matches!(
+            open(b"duress password", &file),
+            Err(Error::WrongPassword)
+        ));
+    }
+
+    #[test]
+    fn both_passwords_take_the_same_time() {
+        use std::time::Instant;
+        let params = KdfParams {
+            m_kib: 8 * 1024,
+            t: 1,
+            p: 1,
+        };
+        let mut key = create(b"main password", params).unwrap();
+        set_duress(&mut key, Some(b"duress password")).unwrap();
+        // Argon2 dominates. Only a successful open also runs the ChaCha20 keystream
+        // over the body, so huge bodies add a size-dependent difference (ADR-003).
+        let file = seal(&key, &vec![0; 16 << 10]).unwrap();
+        let time = |pw: &[u8]| {
+            let t = Instant::now();
+            let _ = open(pw, &file);
+            t.elapsed().as_secs_f64()
+        };
+        let _ = time(b"warm up");
+        let (main, duress, wrong) = (
+            time(b"main password"),
+            time(b"duress password"),
+            time(b"wrong"),
+        );
+        for other in [duress, wrong] {
+            let ratio = main / other;
+            assert!((0.5..2.0).contains(&ratio), "main {main} vs {other}");
+        }
     }
 
     #[test]

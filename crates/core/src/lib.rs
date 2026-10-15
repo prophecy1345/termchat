@@ -15,7 +15,7 @@ use vodozemac::{Curve25519PublicKey, Ed25519PublicKey, Ed25519Signature};
 use zeroize::Zeroizing;
 
 pub use fingerprint::{fingerprint, safety_number};
-pub use store::{FileKey, KdfParams, create as create_file_key};
+pub use store::{FileKey, KdfParams, create as create_file_key, set_duress};
 pub use termchat_proto as proto;
 
 use proto::{Body, Curve25519Key, Ed25519Key, Envelope, Identity, Inner, Signature, SignedKey};
@@ -50,6 +50,9 @@ pub enum Error {
     Duplicate,
     #[error("wrong password")]
     WrongPassword,
+    /// The duress password was entered: the caller must wipe (ADR-003).
+    #[error("wrong password")]
+    Duress,
     #[error("corrupt state")]
     CorruptState,
     #[error("random number generator failed")]
@@ -396,6 +399,28 @@ impl Client {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Identity and contacts without sessions, for a backup. Restoring it
+    /// starts fresh sessions: peers see "restarted the conversation".
+    pub fn without_sessions(&self) -> Self {
+        let contacts = self
+            .contacts
+            .iter()
+            .map(|(key, c)| {
+                let contact = Contact {
+                    curve25519: c.curve25519,
+                    is_request: c.is_request,
+                    nickname: c.nickname.clone(),
+                    sessions: Vec::new(),
+                };
+                (*key, contact)
+            })
+            .collect();
+        Self {
+            account: Account::from_pickle(self.account.pickle()),
+            contacts,
         }
     }
 

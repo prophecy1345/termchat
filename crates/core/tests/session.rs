@@ -221,3 +221,36 @@ fn state_survives_save_and_load() {
     let got = bob.decrypt(&a, &second).unwrap();
     assert_eq!((got.body, got.missed), (text("after restart"), 0));
 }
+
+#[test]
+fn identity_restored_from_backup_talks_again() {
+    let (mut alice, mut bob) = pair();
+    let (a, b) = (ed(&alice), ed(&bob));
+    let env = alice
+        .encrypt(&b, text("before the phone fell in the river"))
+        .unwrap();
+    bob.decrypt(&a, &env).unwrap();
+
+    // Backup holds identity and contacts, no sessions; restored on a new device.
+    let backup = alice
+        .without_sessions()
+        .save(&create_file_key(b"backup pw", FAST).unwrap(), "")
+        .unwrap();
+    drop(alice);
+    let mut alice = Client::load(b"backup pw", &backup).unwrap().0;
+    assert_eq!(ed(&alice), a);
+    assert!(!alice.has_session(&b));
+
+    // Fresh session from a new one-time key; Bob is told the conversation restarted.
+    let otk = bob.prekeys(0, false).one_time.remove(0);
+    alice.start_session(&b, &otk).unwrap();
+    let env = alice.encrypt(&b, text("new phone, same me")).unwrap();
+    let got = bob.decrypt(&a, &env).unwrap();
+    assert!(got.new_session);
+    assert_eq!(got.body, text("new phone, same me"));
+    let reply = bob.encrypt(&a, text("welcome back")).unwrap();
+    assert_eq!(
+        alice.decrypt(&b, &reply).unwrap().body,
+        text("welcome back")
+    );
+}

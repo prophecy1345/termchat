@@ -7,8 +7,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use termchat_core::{fingerprint, safety_number};
 
-use crate::app::{App, Main, Popup, Screen, Setup, Unlock, now};
+use crate::app::{App, Main, Popup, Screen, Unlock, now};
 use crate::data::{Contact, Status};
+use crate::form::Form;
 
 const HELP: &str = "\
 Enter        send message
@@ -21,6 +22,7 @@ Ctrl+D       delete contact
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
+Ctrl+P       settings: backup, duress password, wipe
 Ctrl+K       lock now (also after 5 min idle)
 Ctrl+Q       quit
 ? / F1       this help
@@ -67,7 +69,7 @@ fn span(s: u64) -> String {
 
 pub fn render(f: &mut Frame, app: &App) {
     match &app.screen {
-        Screen::Setup(s) => setup(f, s),
+        Screen::Setup(s) => form(f, s),
         Screen::Unlock(u) => unlock(f, u),
         Screen::Main(m) => main(f, m),
     }
@@ -84,41 +86,49 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     )
 }
 
-fn setup(f: &mut Frame, s: &Setup) {
-    let labels = [
-        "Relay URL",
-        "Nickname (the only thing others learn about you)",
-        "Password",
-        "Repeat password",
-    ];
-    let mut lines = vec![
-        Line::from("Welcome to termchat. No names, phones or emails: just a nickname.".bold()),
-        Line::from(""),
-    ];
-    for (i, label) in labels.iter().enumerate() {
-        let value = match i {
-            2 | 3 => "•".repeat(s.fields[i].chars().count()),
-            _ => s.fields[i].to_string(),
+/// Any form, centred, over whatever is below (setup screen or a settings popup).
+fn form(f: &mut Frame, form: &Form) {
+    let mut lines: Vec<Line> = form
+        .kind
+        .info()
+        .lines()
+        .map(|l| Line::from(l.to_string()))
+        .collect();
+    lines.push(Line::from(""));
+    for (i, ((label, secret), value)) in form.kind.labels().iter().zip(&form.fields).enumerate() {
+        let shown = match secret {
+            true => "•".repeat(value.chars().count()),
+            false => value.to_string(),
         };
-        let style = if i == s.field {
+        let style = if i == form.field {
             Style::new().fg(Color::Yellow)
         } else {
             Style::new()
         };
         lines.push(Line::styled(format!("{label}:"), style));
         lines.push(Line::styled(
-            format!("  {value}{}", if i == s.field { "▏" } else { "" }),
+            format!("  {shown}{}", if i == form.field { "▏" } else { "" }),
             style,
+        ));
+    }
+    if let Some(phrase) = &form.generated {
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            format!("Generated: {}  (write it down)", phrase.as_str()).green(),
         ));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(
-        "Tab: next field   Enter: continue   Ctrl+Q: quit".dim(),
+        "Tab: next field   Enter: continue   Esc: cancel   Ctrl+Q: quit".dim(),
     ));
-    lines.push(Line::from(s.error.as_str().red()));
-    let area = centered(f.area(), 72, 16);
+    lines.push(Line::from(form.error.as_str().red()));
+    let height = u16::try_from(lines.len()).unwrap_or(30) + 2;
+    let area = centered(f.area(), 76, height);
+    f.render_widget(Clear, area);
     f.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(" termchat setup ")),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::bordered().title(form.kind.title())),
         area,
     );
 }
@@ -192,6 +202,12 @@ fn main(f: &mut Frame, m: &Main) {
         link,
         Span::raw(format!("  {}  ", clean(&m.data.nickname))),
         Span::raw("? help  ").dim(),
+        Span::raw(if m.data.backed_up {
+            ""
+        } else {
+            "! no backup: Ctrl+P  "
+        })
+        .yellow(),
         Span::raw(m.status.as_str()).red(),
     ]);
     f.render_widget(Paragraph::new(line), status);
@@ -277,7 +293,15 @@ fn chat_pane(f: &mut Frame, m: &Main, area: Rect) {
 
 fn popup_pane(f: &mut Frame, m: &Main, popup: &Popup) {
     let (title, text, w, h) = match popup {
-        Popup::Help => (" help ", HELP.to_string(), 64, 20),
+        Popup::Form(fm) => return form(f, fm),
+        Popup::Notice(text) => (" note ", format!("{text}\n\nany key: close"), 70, 7),
+        Popup::Menu => (
+            " settings ",
+            "b  back up your identity\nd  duress password\nw  wipe everything from this device\n\nany other key: close".to_string(),
+            48,
+            8,
+        ),
+        Popup::Help => (" help ", HELP.to_string(), 64, 21),
         Popup::Add(s) => (
             " add contact ",
             format!("Paste their invite and press Enter (Esc cancels):\n\n{s}▏"),

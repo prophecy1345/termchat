@@ -10,7 +10,10 @@ use termchat_proto::Ed25519Key;
 /// Everything the TUI keeps besides the crypto state. No personal data:
 /// only our own nickname and what we chose to call our contacts (rule 14).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Data {
+    /// A backup of the identity exists; until then the status bar nags.
+    pub backed_up: bool,
     pub relay_url: String,
     pub nickname: String,
     pub next_client_id: u64,
@@ -92,7 +95,11 @@ pub fn home() -> PathBuf {
 /// Temp file, fsync, rename: a crash leaves either the old or the new state.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)?;
     }
     let tmp = path.with_extension("tmp");
     let mut opts = OpenOptions::new();
@@ -105,9 +112,64 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
+/// Crypto-erase (ADR-003): random bytes over the whole file, fsync, delete.
+/// Without the header the body is noise. On SSDs old blocks may survive until
+/// TRIM; see the ADR for what that means.
+pub fn wipe(path: &Path) -> io::Result<()> {
+    for p in [path.to_path_buf(), path.with_extension("tmp")] {
+        let Ok(len) = fs::metadata(&p).map(|m| m.len()) else {
+            continue;
+        };
+        let mut noise = vec![0u8; usize::try_from(len).unwrap_or(0)];
+        getrandom::fill(&mut noise).map_err(|e| io::Error::other(e.to_string()))?;
+        let mut file = OpenOptions::new().write(true).open(&p)?;
+        file.write_all(&noise)?;
+        file.sync_all()?;
+        fs::remove_file(&p)?;
+    }
+    Ok(())
+}
+
+/// A warning if other users could read the state file or its folder.
+pub fn permission_warning(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let loose = |p: &Path| fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o077 != 0);
+        let dir = path.parent()?;
+        if loose(path) || loose(dir) {
+            return Some(format!(
+                "WARNING: others can read {}; run: chmod 700 {} && chmod 600 {}",
+                dir.display(),
+                dir.display(),
+                path.display()
+            ));
+        }
+    }
+    let _ = path;
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_is_private_and_wipe_removes_everything() {
+        let dir = std::env::temp_dir().join(format!("termchat-test-{}", std::process::id()));
+        let path = dir.join("state");
+        write_atomic(&path, b"secret").unwrap();
+        assert_eq!(permission_warning(&path), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(permission_warning(&path).is_some());
+        }
+        wipe(&path).unwrap();
+        assert!(!path.exists() && !path.with_extension("tmp").exists());
+        let _ = fs::remove_dir(&dir);
+    }
 
     #[test]
     fn no_history_chats_are_not_saved_and_inflight_sends_fail() {
