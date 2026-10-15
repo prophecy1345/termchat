@@ -124,6 +124,7 @@ fn stranger_needs_valid_contact_request() {
     carol.start_session(&b, &keys.remove(0)).unwrap();
     let forged = Body::ContactRequest {
         identity: alice.identity(),
+        nickname: "alice".into(),
         note: "it's alice".into(),
     };
     let env = carol.encrypt(&b, forged).unwrap();
@@ -136,13 +137,28 @@ fn stranger_needs_valid_contact_request() {
     carol.start_session(&b, &keys.remove(0)).unwrap();
     let req = Body::ContactRequest {
         identity: carol.identity(),
+        nickname: "carol".into(),
         note: "hi".into(),
     };
     let env = carol.encrypt(&b, req).unwrap();
     assert!(bob.decrypt(&c, &env).unwrap().new_session);
     assert_eq!(bob.is_request(&c), Some(true));
+    assert_eq!(bob.nickname(&c), Some("carol"));
     bob.add_contact(&carol.identity()).unwrap();
     assert_eq!(bob.is_request(&c), Some(false));
+
+    // Bob answers with his nickname; it survives a reload on Carol's side.
+    let env = bob
+        .encrypt(
+            &c,
+            Body::ContactAccept {
+                nickname: "bob".into(),
+            },
+        )
+        .unwrap();
+    carol.decrypt(&b, &env).unwrap();
+    let carol = Client::load(b"pw", &carol.save(b"pw", FAST).unwrap()).unwrap();
+    assert_eq!(carol.nickname(&b), Some("bob"));
 }
 
 #[test]

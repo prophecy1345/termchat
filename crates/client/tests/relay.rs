@@ -328,7 +328,12 @@ async fn send_rate_limit_and_unknown_recipient() {
         .core
         .lock()
         .unwrap()
-        .encrypt(&bob_key, Body::ContactAccept)
+        .encrypt(
+            &bob_key,
+            Body::ContactAccept {
+                nickname: "alice".into(),
+            },
+        )
         .unwrap();
     alice
         .relay

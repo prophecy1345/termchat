@@ -84,6 +84,8 @@ struct Contact {
     curve25519: Curve25519Key,
     /// Wrote to us first; not accepted yet.
     is_request: bool,
+    /// What they call themselves; from `ContactRequest` / `ContactAccept`.
+    nickname: Option<String>,
     /// Newest (active) last.
     sessions: Vec<SessionState>,
 }
@@ -157,6 +159,7 @@ impl Client {
             .or_insert_with(|| Contact {
                 curve25519: identity.curve25519,
                 is_request: false,
+                nickname: None,
                 sessions: Vec::new(),
             });
         if contact.curve25519 != identity.curve25519 {
@@ -169,6 +172,10 @@ impl Client {
     /// `None` for unknown keys.
     pub fn is_request(&self, contact: &Ed25519Key) -> Option<bool> {
         self.contacts.get(contact).map(|c| c.is_request)
+    }
+
+    pub fn nickname(&self, contact: &Ed25519Key) -> Option<&str> {
+        self.contacts.get(contact)?.nickname.as_deref()
     }
 
     /// Starts an outbound session with a one-time (or fallback) key claimed from the relay.
@@ -247,6 +254,7 @@ impl Client {
                 let inner = open_inner(&plain, sender, &me)?;
                 s.received.accept(inner.seq)?;
                 let missed = s.received.missed();
+                remember_nickname(c, &inner.body);
                 // The session the peer uses becomes our active one.
                 let s = c.sessions.remove(i);
                 c.sessions.push(s);
@@ -292,6 +300,7 @@ impl Client {
                 Contact {
                     curve25519: identity.curve25519,
                     is_request: true,
+                    nickname: None,
                     sessions: Vec::new(),
                 },
             );
@@ -305,6 +314,7 @@ impl Client {
         s.received.accept(inner.seq)?;
         let missed = s.received.missed();
         if let Some(c) = self.contacts.get_mut(sender) {
+            remember_nickname(c, &inner.body);
             push_session(c, s);
         }
         Ok(Received {
@@ -327,7 +337,13 @@ impl Client {
                         .iter()
                         .map(|s| (s.session.pickle(), s.sent, s.received.clone()))
                         .collect();
-                    (*key, c.curve25519, c.is_request, sessions)
+                    ContactState {
+                        key: *key,
+                        curve25519: c.curve25519,
+                        is_request: c.is_request,
+                        nickname: c.nickname.clone(),
+                        sessions,
+                    }
                 })
                 .collect(),
         };
@@ -341,8 +357,9 @@ impl Client {
         let contacts = state
             .contacts
             .into_iter()
-            .map(|(key, curve25519, is_request, sessions)| {
-                let sessions = sessions
+            .map(|c| {
+                let sessions = c
+                    .sessions
                     .into_iter()
                     .map(|(p, sent, received)| SessionState {
                         session: Session::from_pickle(p),
@@ -351,10 +368,11 @@ impl Client {
                     })
                     .collect();
                 (
-                    key,
+                    c.key,
                     Contact {
-                        curve25519,
-                        is_request,
+                        curve25519: c.curve25519,
+                        is_request: c.is_request,
+                        nickname: c.nickname,
                         sessions,
                     },
                 )
@@ -367,12 +385,14 @@ impl Client {
     }
 }
 
-type ContactState = (
-    Ed25519Key,
-    Curve25519Key,
-    bool,
-    Vec<(SessionPickle, u64, SeqTracker)>,
-);
+#[derive(Serialize, Deserialize)]
+struct ContactState {
+    key: Ed25519Key,
+    curve25519: Curve25519Key,
+    is_request: bool,
+    nickname: Option<String>,
+    sessions: Vec<(SessionPickle, u64, SeqTracker)>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -410,6 +430,12 @@ impl SeqTracker {
 
     fn missed(&self) -> u64 {
         self.missing.len() as u64 + self.lost
+    }
+}
+
+fn remember_nickname(c: &mut Contact, body: &Body) {
+    if let Body::ContactRequest { nickname, .. } | Body::ContactAccept { nickname } = body {
+        c.nickname = Some(nickname.clone());
     }
 }
 

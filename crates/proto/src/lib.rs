@@ -9,6 +9,8 @@ pub const VERSION: u16 = 1;
 /// Padded plaintext sizes (protocol.md, section 8).
 pub const BUCKETS: [usize; 3] = [512, 4096, 16384];
 pub const MAX_TEXT_BYTES: usize = 16_000;
+/// Self-chosen display name, only ever sent inside E2EE.
+pub const MAX_NICKNAME_BYTES: usize = 64;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
@@ -220,11 +222,16 @@ pub struct Inner {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Body {
     /// First message to someone who does not know us yet.
+    /// The nickname is the only thing we learn about a person; no real names,
+    /// phones or emails exist anywhere in the protocol.
     ContactRequest {
         identity: Identity,
+        nickname: String,
         note: String,
     },
-    ContactAccept,
+    ContactAccept {
+        nickname: String,
+    },
     Text {
         sent_at: u64,
         expires_in: Option<u32>,
@@ -265,6 +272,9 @@ impl Inner {
     fn check_limits(&self) -> Result<(), Error> {
         match &self.body {
             Body::Text { text, .. } if text.len() > MAX_TEXT_BYTES => Err(Error::TooLarge),
+            Body::ContactRequest { nickname, .. } | Body::ContactAccept { nickname } => {
+                check_nickname(nickname)
+            }
             _ => Ok(()),
         }
     }
@@ -272,6 +282,17 @@ impl Inner {
 
 /// Accepts only the canonical encoding: postcard tolerates overlong varints,
 /// so the value must re-encode to exactly the input (found by fuzzing).
+/// Control characters would let a peer drive the recipient's terminal.
+pub fn check_nickname(nickname: &str) -> Result<(), Error> {
+    if nickname.len() > MAX_NICKNAME_BYTES {
+        return Err(Error::TooLarge);
+    }
+    if nickname.trim().is_empty() || nickname.chars().any(char::is_control) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
+
 fn decode_exact<'a, T: Serialize + Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
     let value: T = postcard::from_bytes(bytes).map_err(|_| Error::Malformed)?;
     match postcard::to_allocvec(&value) {
@@ -341,6 +362,7 @@ mod tests {
                     signature,
                     ..identity
                 },
+                nickname: "Ёжик 🦔".into(),
                 note: "hi".into(),
             },
             ..text(0)
@@ -349,6 +371,19 @@ mod tests {
             Inner::from_padded(&inner.to_padded().unwrap()).unwrap(),
             inner
         );
+        for (bad, err) in [
+            ("evil\u{1b}[2J", Error::Malformed),
+            ("  ", Error::Malformed),
+            (&*"я".repeat(33), Error::TooLarge),
+        ] {
+            let inner = Inner {
+                body: Body::ContactAccept {
+                    nickname: bad.into(),
+                },
+                ..text(0)
+            };
+            assert_eq!(inner.to_padded(), Err(err));
+        }
         let key = SignedKey {
             key: [4; 32],
             signature,
