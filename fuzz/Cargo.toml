@@ -26,3 +26,11 @@ path = "fuzz_targets/inner.rs"
 [[bin]]
 name = "client_frame"
 path = "fuzz_targets/client_frame.rs"
+
+[[bin]]
+name = "server_frame"
+path = "fuzz_targets/server_frame.rs"
+
+[[bin]]
+name = "invite"
+path = "fuzz_targets/invite.rs"

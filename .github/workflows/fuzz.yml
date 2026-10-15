@@ -11,14 +11,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [envelope, inner, client_frame]
+        target: [envelope, inner, client_frame, server_frame, invite]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: rustup toolchain install nightly --profile minimal
-      - run: cargo install cargo-fuzz --locked
+      - run: cargo install cargo-fuzz@0.13.2 --locked
       - run: cargo +nightly fuzz run ${{ matrix.target }} --fuzz-dir fuzz -- -max_total_time=600
       - if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crash-${{ matrix.target }}
           path: fuzz/artifacts
