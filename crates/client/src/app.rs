@@ -434,6 +434,9 @@ impl Main {
                 let rotate = fallback_used || !self.data.fallback_published;
                 let keys = self.core().prekeys(one_time_left as usize, rotate);
                 if !keys.one_time.is_empty() || keys.fallback.is_some() {
+                    if rotate && self.data.fallback_published {
+                        self.data.old_fallback_since = Some(now());
+                    }
                     self.data.fallback_published = true;
                     self.persist();
                     let _ = self.relay.send(ClientFrame::PublishKeys {
@@ -567,10 +570,21 @@ impl Main {
         self.persist();
     }
 
-    /// Drops messages whose disappearing timer ran out.
+    /// Drops messages whose disappearing timer ran out, and the rotated-out
+    /// fallback key once nothing sent to it can still be queued (ADR-002).
     fn expire(&mut self) {
         let t = now();
         let mut changed = false;
+        let keep = (proto::QUEUE_TTL_DAYS + 1) * 86_400;
+        if self
+            .data
+            .old_fallback_since
+            .is_some_and(|since| t >= since + keep)
+        {
+            self.core().forget_old_fallback();
+            self.data.old_fallback_since = None;
+            changed = true;
+        }
         for c in &mut self.data.contacts {
             let before = c.messages.len();
             c.messages.retain(|m| m.expires_at.is_none_or(|e| e > t));

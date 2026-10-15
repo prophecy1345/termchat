@@ -429,6 +429,12 @@ impl Client {
         self.contacts.remove(contact);
     }
 
+    /// Drops the fallback key that was rotated out (ADR-002). Call once envelopes
+    /// sent to it can no longer be in the relay queue.
+    pub fn forget_old_fallback(&mut self) -> bool {
+        self.account.forget_fallback_key()
+    }
+
     pub fn has_session(&self, contact: &Ed25519Key) -> bool {
         self.contacts
             .get(contact)

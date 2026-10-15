@@ -1,9 +1,12 @@
 //! Relay: forwards encrypted envelopes between authenticated clients.
 //!
 //! Sees only public keys and ciphertext. Logs neither IPs nor contents.
-//! State lives in memory until M5.
+//! Accounts, prekeys, queue and bans live in SQLite (ADR-005); rate limits,
+//! online connections and who wrote to whom stay in memory.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+pub mod db;
+
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -14,9 +17,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
-use termchat_proto::{
-    ClientFrame, Ed25519Key, Envelope, ErrorCode, MAX_FRAME_BYTES, ServerFrame, SignedKey, VERSION,
-};
+use termchat_proto::{ClientFrame, Ed25519Key, ErrorCode, MAX_FRAME_BYTES, ServerFrame, VERSION};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -26,6 +27,8 @@ pub struct Config {
     pub host: String,
     /// Take the client IP from the last `X-Forwarded-For` entry. Only behind a proxy that sets it.
     pub trust_proxy: bool,
+    /// SQLite file (ADR-005); `None` keeps everything in memory (tests).
+    pub db: Option<std::path::PathBuf>,
     /// Operator's report journal (ADR-006); `None` keeps no journal.
     pub reports: Option<std::path::PathBuf>,
     pub limits: Limits,
@@ -46,6 +49,11 @@ pub struct Limits {
     pub stored_one_time_keys: usize,
     pub queue_envelopes: usize,
     pub queue_bytes: usize,
+    /// ADR-005: undelivered envelopes and idle accounts are deleted after these.
+    pub queue_ttl: Duration,
+    pub account_ttl: Duration,
+    /// All queues together, bytes.
+    pub max_queue_bytes: u64,
     pub reports_per_key: Rate,
     /// Distinct people who were really written to before a key is banned (ADR-006).
     pub report_threshold: usize,
@@ -88,6 +96,9 @@ impl Default for Limits {
             stored_one_time_keys: 100,
             queue_envelopes: 1000,
             queue_bytes: 10 * 1024 * 1024,
+            queue_ttl: Duration::from_secs(termchat_proto::QUEUE_TTL_DAYS * 86_400),
+            account_ttl: Duration::from_secs(90 * 86_400),
+            max_queue_bytes: 10 << 30,
             reports_per_key: Rate::per(10.0, DAY),
             report_threshold: 3,
         }
@@ -95,9 +106,18 @@ impl Default for Limits {
 }
 
 pub async fn serve(listener: TcpListener, config: Config) -> std::io::Result<()> {
+    let db = db::Db::open(config.db.as_deref()).map_err(std::io::Error::other)?;
+    let relay = Relay {
+        db,
+        online: HashMap::new(),
+        mem: HashMap::new(),
+        connections: HashMap::new(),
+        registrations: HashMap::new(),
+        next_conn: 0,
+    };
     let shared = Arc::new(Shared {
         config,
-        relay: Mutex::new(Relay::default()),
+        relay: Mutex::new(relay),
     });
     tokio::spawn(cleanup(Arc::clone(&shared)));
     let app = Router::new().route("/", get(upgrade)).with_state(shared);
@@ -120,59 +140,64 @@ impl Shared {
     }
 }
 
-#[derive(Default)]
 struct Relay {
+    db: db::Db,
     online: HashMap<Ed25519Key, (u64, mpsc::Sender<ServerFrame>)>,
-    // accounts are never forgotten while the process runs; M5 moves them to SQLite.
-    accounts: HashMap<Ed25519Key, Account>,
+    // grows with every key seen since start, bounded by the registration limit.
+    mem: HashMap<Ed25519Key, Account>,
     connections: HashMap<IpAddr, usize>,
     registrations: HashMap<IpAddr, Bucket>,
-    next_id: u64,
+    next_conn: u64,
 }
 
+/// Per-key state that never touches the disk (ADR-005): limits and who wrote to whom.
 struct Account {
-    one_time: VecDeque<SignedKey>,
-    fallback: Option<SignedKey>,
-    fallback_used: bool,
-    queue: VecDeque<(u64, Ed25519Key, Envelope)>,
-    queue_bytes: usize,
-    /// Everyone this key has written to: only new names count against the limit.
+    /// Everyone this key has written to: only new names count against the limit,
+    /// and only they can report it (ADR-006).
     recipients: HashSet<Ed25519Key>,
+    /// People this key wrote to who reported it.
+    reporters: HashSet<Ed25519Key>,
     sends: Bucket,
     new_recipients: Bucket,
     claims: Bucket,
     claimed: Bucket,
     reports: Bucket,
-    /// People this key wrote to who reported it.
-    reporters: HashSet<Ed25519Key>,
-    banned: bool,
 }
 
 impl Account {
     fn new(l: &Limits, now: Instant) -> Self {
         Self {
-            one_time: VecDeque::new(),
-            fallback: None,
-            fallback_used: false,
-            queue: VecDeque::new(),
-            queue_bytes: 0,
             recipients: HashSet::new(),
+            reporters: HashSet::new(),
             sends: Bucket::full(l.sends_per_key, now),
             new_recipients: Bucket::full(l.new_recipients_per_key, now),
             claims: Bucket::full(l.claims_per_key, now),
             claimed: Bucket::full(l.claims_per_target, now),
             reports: Bucket::full(l.reports_per_key, now),
-            reporters: HashSet::new(),
-            banned: false,
         }
     }
+}
 
-    fn key_count(&self) -> ServerFrame {
-        ServerFrame::KeyCount {
-            one_time_left: u32::try_from(self.one_time.len()).unwrap_or(u32::MAX),
-            fallback_used: self.fallback_used,
-        }
-    }
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// Storage errors never reach the client as details; they are logged without content.
+fn db<T>(r: db::Result<T>) -> Result<T, ErrorCode> {
+    r.map_err(|e| {
+        tracing::warn!("storage: {e}");
+        ErrorCode::Internal
+    })
+}
+
+fn key_count(store: &db::Db, key: &Ed25519Key) -> Result<ServerFrame, ErrorCode> {
+    let (one_time_left, fallback_used) = db(store.key_count(key))?;
+    Ok(ServerFrame::KeyCount {
+        one_time_left,
+        fallback_used,
+    })
 }
 
 struct Bucket {
@@ -204,18 +229,29 @@ impl Bucket {
     }
 }
 
-/// Forgets per-IP state that has fully recovered, so it does not grow forever.
+/// Every 10 minutes: expire old envelopes and idle accounts (ADR-005) and forget
+/// per-IP state that has fully recovered, so it does not grow forever.
 async fn cleanup(shared: Arc<Shared>) {
     let mut tick = tokio::time::interval(Duration::from_secs(600));
     loop {
         tick.tick().await;
-        let now = Instant::now();
-        let rate = shared.config.limits.registrations_per_ip;
+        let limits = &shared.config.limits;
+        let (now, unix) = (Instant::now(), unix_now());
+        let rate = limits.registrations_per_ip;
         let mut relay = shared.lock();
         relay.registrations.retain(|_, b| {
             b.refill(rate, now);
             b.tokens < rate.burst
         });
+        // Long-lived connections count as seen.
+        let online: Vec<Ed25519Key> = relay.online.keys().copied().collect();
+        for key in &online {
+            let _ = db(relay.db.register(key, unix));
+        }
+        let ttl = |d: Duration| d.as_secs() as i64;
+        let _ = db(relay
+            .db
+            .expire(unix, ttl(limits.queue_ttl), ttl(limits.account_ttl)));
     }
 }
 
@@ -326,35 +362,34 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: IpAddr) -> Result<Se
         let mut relay = shared.lock();
         let now = Instant::now();
         let limits = &shared.config.limits;
-        if relay.accounts.get(&key).is_some_and(|a| a.banned) {
-            return Err(ErrorCode::Banned);
-        }
-        if !relay.accounts.contains_key(&key) {
-            let ok = relay
-                .registrations
-                .entry(ip)
-                .or_insert_with(|| Bucket::full(limits.registrations_per_ip, now))
-                .take(limits.registrations_per_ip, now);
-            if !ok {
-                return Err(ErrorCode::RateLimited);
+        match db(relay.db.banned(&key))? {
+            Some(true) => return Err(ErrorCode::Banned),
+            Some(false) => {}
+            None => {
+                let ok = relay
+                    .registrations
+                    .entry(ip)
+                    .or_insert_with(|| Bucket::full(limits.registrations_per_ip, now))
+                    .take(limits.registrations_per_ip, now);
+                if !ok {
+                    return Err(ErrorCode::RateLimited);
+                }
             }
-            relay.accounts.insert(key, Account::new(limits, now));
         }
-        relay.next_id += 1;
-        let id = relay.next_id;
+        db(relay.db.register(&key, unix_now()))?;
+        relay.next_conn += 1;
+        let id = relay.next_conn;
         // A newer connection replaces the old one; the old loop ends when its sender drops.
         relay.online.insert(key, (id, tx));
-        let account = relay.accounts.get(&key).ok_or(ErrorCode::Internal)?;
-        let mut frames: Vec<ServerFrame> = account
-            .queue
-            .iter()
-            .map(|(relay_id, sender, envelope)| ServerFrame::Deliver {
-                relay_id: *relay_id,
-                sender: *sender,
-                envelope: envelope.clone(),
+        let mut frames: Vec<ServerFrame> = db(relay.db.queued(&key))?
+            .into_iter()
+            .map(|q| ServerFrame::Deliver {
+                relay_id: q.id,
+                sender: q.sender,
+                envelope: q.envelope,
             })
             .collect();
-        frames.push(account.key_count());
+        frames.push(key_count(&relay.db, &key)?);
         (id, frames)
     };
 
@@ -414,47 +449,42 @@ fn handle(
     let now = Instant::now();
     let mut relay = shared.lock();
     let relay = &mut *relay;
-    let account = relay.accounts.get_mut(&me).ok_or(ErrorCode::Internal)?;
+    let account = relay
+        .mem
+        .entry(me)
+        .or_insert_with(|| Account::new(limits, now));
 
     Ok(match frame {
         ClientFrame::Hello { .. } | ClientFrame::Auth { .. } => return Err(ErrorCode::Malformed),
 
         ClientFrame::PublishKeys { one_time, fallback } => {
-            account.one_time.extend(one_time);
-            while account.one_time.len() > limits.stored_one_time_keys {
-                account.one_time.pop_front();
-            }
-            if fallback.is_some() {
-                account.fallback = fallback;
-                account.fallback_used = false;
-            }
-            vec![account.key_count()]
+            db(relay.db.publish(
+                &me,
+                &one_time,
+                fallback.as_ref(),
+                limits.stored_one_time_keys,
+            ))?;
+            vec![key_count(&relay.db, &me)?]
         }
 
         ClientFrame::ClaimKey { target } => {
             if !account.claims.take(limits.claims_per_key, now) {
                 return Ok(vec![error(None, ErrorCode::RateLimited)]);
             }
-            let Some(t) = relay.accounts.get_mut(&target) else {
+            if db(relay.db.banned(&target))?.is_none() {
                 return Ok(vec![error(None, ErrorCode::UnknownRecipient)]);
-            };
+            }
             // Past the per-target limit only the fallback key is handed out.
-            let one_time = match t.claimed.take(limits.claims_per_target, now) {
-                true => t.one_time.pop_front(),
-                false => None,
-            };
-            let key = match one_time {
-                Some(k) => k,
-                None => match &t.fallback {
-                    Some(k) => {
-                        t.fallback_used = true;
-                        k.clone()
-                    }
-                    None => return Ok(vec![error(None, ErrorCode::NoKeys)]),
-                },
+            let t = relay
+                .mem
+                .entry(target)
+                .or_insert_with(|| Account::new(limits, now));
+            let one_time_allowed = t.claimed.take(limits.claims_per_target, now);
+            let Some(key) = db(relay.db.claim(&target, one_time_allowed))? else {
+                return Ok(vec![error(None, ErrorCode::NoKeys)]);
             };
             if let Some((_, tx)) = relay.online.get(&target) {
-                let _ = tx.try_send(t.key_count());
+                let _ = tx.try_send(key_count(&relay.db, &target)?);
             }
             vec![ServerFrame::ClaimedKey { target, key }]
         }
@@ -467,10 +497,9 @@ fn handle(
             if !account.sends.take(limits.sends_per_key, now) {
                 return Ok(vec![error(Some(client_id), ErrorCode::RateLimited)]);
             }
-            if !relay.accounts.contains_key(&to) {
+            if db(relay.db.banned(&to))?.is_none() {
                 return Ok(vec![error(Some(client_id), ErrorCode::UnknownRecipient)]);
             }
-            let account = relay.accounts.get_mut(&me).ok_or(ErrorCode::Internal)?;
             if !account.recipients.contains(&to) {
                 if !account
                     .new_recipients
@@ -480,24 +509,23 @@ fn handle(
                 }
                 account.recipients.insert(to);
             }
-            let r = relay.accounts.get_mut(&to).ok_or(ErrorCode::Internal)?;
-            let size = envelope.body.len();
-            if r.queue.len() >= limits.queue_envelopes || r.queue_bytes + size > limits.queue_bytes
+            let size = envelope.body.len() as u64;
+            let (count, bytes) = db(relay.db.queue_stats(&to))?;
+            if count >= limits.queue_envelopes
+                || bytes + size > limits.queue_bytes as u64
+                || relay.db.total_queue_bytes() + size > limits.max_queue_bytes
             {
                 return Ok(vec![error(Some(client_id), ErrorCode::QueueFull)]);
             }
-            relay.next_id += 1;
-            let relay_id = relay.next_id;
+            let relay_id = db(relay.db.enqueue(&to, &me, &envelope, unix_now()))?;
             if let Some((_, tx)) = relay.online.get(&to) {
                 // Full channel: the envelope stays queued and goes out on reconnect.
                 let _ = tx.try_send(ServerFrame::Deliver {
                     relay_id,
                     sender: me,
-                    envelope: envelope.clone(),
+                    envelope,
                 });
             }
-            r.queue.push_back((relay_id, me, envelope));
-            r.queue_bytes += size;
             vec![ServerFrame::Accepted { client_id }]
         }
 
@@ -507,21 +535,22 @@ fn handle(
             if !account.reports.take(limits.reports_per_key, now) {
                 return Ok(reported);
             }
-            // Only someone the sender actually wrote to can report it.
-            let Some(s) = relay.accounts.get_mut(&sender) else {
+            // Only someone the sender actually wrote to (since the relay started) can report it.
+            let Some(s) = relay.mem.get_mut(&sender) else {
                 return Ok(reported);
             };
             if !s.recipients.contains(&me) {
                 return Ok(reported);
             }
             s.reporters.insert(me);
-            if s.reporters.len() >= limits.report_threshold && !s.banned {
-                s.banned = true;
+            let banned = s.reporters.len() >= limits.report_threshold;
+            if banned {
+                db(relay.db.ban(&sender))?;
                 // Dropping its sender ends the banned key's connection loop.
                 relay.online.remove(&sender);
             }
             if let Some(path) = &shared.config.reports
-                && let Err(e) = journal(path, &sender, &text, s.banned)
+                && let Err(e) = journal(path, &sender, &text, banned)
             {
                 tracing::warn!("cannot write report journal: {e}");
             }
@@ -529,11 +558,7 @@ fn handle(
         }
 
         ClientFrame::Ack { relay_id } => {
-            if let Some(i) = account.queue.iter().position(|(id, _, _)| *id == relay_id)
-                && let Some((_, _, env)) = account.queue.remove(i)
-            {
-                account.queue_bytes -= env.body.len();
-            }
+            db(relay.db.ack(&me, relay_id))?;
             vec![]
         }
     })

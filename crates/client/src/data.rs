@@ -18,6 +18,8 @@ pub struct Data {
     pub nickname: String,
     pub next_client_id: u64,
     pub fallback_published: bool,
+    /// When a fallback key was rotated out; forgotten a day after the relay TTL.
+    pub old_fallback_since: Option<u64>,
     pub contacts: Vec<Contact>,
 }
 

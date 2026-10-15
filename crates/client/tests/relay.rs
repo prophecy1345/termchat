@@ -21,6 +21,7 @@ async fn start_relay(limits: Limits) -> String {
     let config = Config {
         host: "127.0.0.1".into(),
         trust_proxy: false,
+        db: None,
         reports: None,
         limits,
     };
@@ -224,6 +225,7 @@ async fn reconnects_when_relay_comes_up_later() {
     let config = Config {
         host: "127.0.0.1".into(),
         trust_proxy: false,
+        db: None,
         reports: None,
         limits: Limits::default(),
     };
@@ -485,4 +487,55 @@ async fn auth(ws: &mut Raw, client: &Mutex<Client>) -> ServerFrame {
     )
     .await;
     raw_recv(ws).await
+}
+
+#[tokio::test]
+async fn queue_and_prekeys_survive_a_relay_restart() {
+    let path = std::env::temp_dir().join(format!("termchat-restart-{}.db", std::process::id()));
+    let start = |path: std::path::PathBuf| async move {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
+        let config = Config {
+            host: "127.0.0.1".into(),
+            trust_proxy: false,
+            db: Some(path),
+            reports: None,
+            limits: Limits::default(),
+        };
+        (url, tokio::spawn(termchat_relay::serve(listener, config)))
+    };
+    let (a, b) = pair();
+    let (url, relay) = start(path.clone()).await;
+    let mut bob = Peer::new(&url, Arc::clone(&b));
+    bob.connected().await;
+    bob.publish_keys().await;
+    let bob_key = bob.key();
+    drop(bob);
+    let mut alice = Peer::new(&url, Arc::clone(&a));
+    alice.connected().await;
+    alice.start_session(bob_key).await;
+    alice.send_text(bob_key, 1, "secret across restarts").await;
+    drop(alice);
+
+    relay.abort();
+    let (url, _relay) = start(path.clone()).await;
+
+    // Bob was offline the whole time: the envelope waited on disk.
+    let mut bob = Peer::new(&url, b);
+    assert_eq!(bob.recv_text(true).await, "secret across restarts");
+    // Bob's prekeys were kept too: someone new can still start a session.
+    let mut carol = Peer::new(&url, Arc::new(Mutex::new(Client::default())));
+    carol.connected().await;
+    carol
+        .relay
+        .send(ClientFrame::ClaimKey { target: bob_key })
+        .unwrap();
+    assert!(matches!(
+        carol.frame().await,
+        ServerFrame::ClaimedKey { .. }
+    ));
+
+    for ext in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+    }
 }

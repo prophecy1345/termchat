@@ -19,6 +19,9 @@ pub const MAX_BODY_BYTES: usize = 20 * 1024;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 /// One-time keys per `PublishKeys`: vodozemac keeps 50 on the server.
 pub const MAX_KEYS_PER_PUBLISH: usize = 100;
+/// How long the relay keeps an undelivered envelope (ADR-005). Clients keep an
+/// old fallback key one day longer (ADR-002).
+pub const QUEUE_TTL_DAYS: u64 = 14;
 
 pub type Ed25519Key = [u8; 32];
 pub type Curve25519Key = [u8; 32];
