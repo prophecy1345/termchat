@@ -66,8 +66,8 @@ When the duress password is entered, before anything is shown:
 4. The interface settings file and the Tor directory (`arti/`, ADR-004) are
    deleted too: the first holds nothing secret, the second shows that termchat
    was used over Tor. Arti may still flush its state while the wipe runs, so
-   the client deletes the directory again whenever it shows the first-run
-   screen; a fresh install has nothing there.
+   the client deletes the directory again on the next start that finds no
+   state file; a fresh install has nothing there.
 5. The client shows the first-run screen, with no "data erased" or "wrong
    password" message.
 
