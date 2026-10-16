@@ -72,8 +72,9 @@ not yet reviewed in `supply-chain/`).
 
 ## User guide
 
-termchat runs in a terminal window. Everything is done with the keyboard; press
-**?** (or **F1**) at any time for the list of keys.
+termchat runs in a terminal window. Use the keyboard or the mouse; press **?** (or
+**F1**) at any time for the list of keys, and **Ctrl+P** for the menu, which also
+holds this guide.
 
 По-русски: [docs/manual.ru.md](docs/manual.ru.md).
 
@@ -147,27 +148,41 @@ After setup termchat suggests making a backup right away (see
 ### 3. The screen
 
 ```
-┌ contacts ─────────┐┌ alice·36335 ! not verified (Ctrl+F) ──────────────┐
-│! alice·36335      ││  2m alice·36335: hi!                              │
-│? bob·58121 (1)    ││ now you: hello ✓                                  │
-└───────────────────┘└───────────────────────────────────────────────────┘
-┌ message ────────────────────────────────────────────────────────────────┐
-│type here, Enter sends                                                   │
-└─────────────────────────────────────────────────────────────────────────┘
-● online  you  ? help
+ contacts                 │ alice·36335   ! not verified (Ctrl+F)
+                          │
+ ! alice·36335            │ alice·36335  2m
+ ● bob              2     │ hi!
+ ? carol·58121            │
+                          │ you  now
+                          │ hello ✓
+                          │
+                          │ › type here, Enter sends
+ + add             ≡ menu │
+ ● online  you  ! no backup: Ctrl+P         ^P menu  ? keys  ^K lock  ^Q quit
 ```
 
-- **Left:** contacts. **Up/Down** chooses one. `(1)` is the number of unread messages.
-- **Right:** the chat with the chosen contact. The age of each message (`now`, `2m`,
-  `3h`, `4d`) is shown on the left.
-- **Bottom:** where you type. **Enter** sends.
+- **Left:** contacts, the most recent chat on top. Click one, or use **Up/Down**.
+  The number on the right counts unread messages. Drag the line between the list
+  and the chat to make the list wider or narrower. In a narrow window the list
+  hides; Up/Down still switch chats.
+- **Right:** the chat with the chosen contact. Messages are grouped under the
+  sender's name and their age (`now`, `2m`, `3h`, `4d`). **PgUp/PgDn** or the mouse
+  wheel scrolls back; `↓ PgDn` shows that you are not at the newest message.
+- **Bottom:** where you type. **Enter** sends. Long text wraps. **←/→**, **Home/End**,
+  **Alt+←/→** (by word), **Ctrl+W** (delete a word) and **Ctrl+U** (delete to the
+  start) edit it.
 - **Status bar:** `● online`, `● online via Tor`, or `○ connecting…`; your nickname;
-  warnings in red.
+  warnings. The hints on the right can be clicked.
+- **Right-click** a contact for everything you can do with it (accept, rename,
+  verify, disappearing messages, block, report, delete).
+- **Menu** (**Ctrl+P** or `≡ menu`): settings, keys, this manual, your invite, add
+  contact, backup.
 
 Marks next to contacts:
 
 | Mark | Meaning |
 |---|---|
+| `●` | Unread messages |
 | `?` | A contact request you have not accepted yet |
 | `!` | Safety number not verified yet |
 | `×` | Blocked |
@@ -175,6 +190,9 @@ Marks next to contacts:
 
 Marks next to your messages: `…` sending, `✓` accepted by the relay, `✗` failed
 (the reason is shown next to it).
+
+With the mouse on, the terminal's own text selection needs **Shift** held while
+dragging (Option on macOS in some terminals), or turn the mouse off in settings.
 
 ### 4. Adding a contact
 
@@ -221,7 +239,7 @@ invites again by another way.
 
 ### 7. Chat options
 
-All of these act on the chosen contact:
+All of these act on the chosen contact; right-clicking it offers the same list:
 
 | Key | What it does |
 |---|---|
@@ -237,7 +255,7 @@ All of these act on the chosen contact:
 Your identity (keys) exists only on your device. **Without a backup, a lost or broken
 device means a lost identity** and your contacts must add you again.
 
-- **Make a backup:** **Ctrl+P**, then **b**. Choose where to save (default
+- **Make a backup:** **Ctrl+P**, then **b** (or settings → security). Choose where to save (default
   `~/termchat-backup`) and a backup password. The backup holds your identity and
   contact list, not your messages. **Move it off this device** (USB stick, another
   computer).
@@ -245,21 +263,25 @@ device means a lost identity** and your contacts must add you again.
   to the backup, then unlock with the backup's password. Chats start fresh; contacts
   see "they restarted the conversation".
 - Use **one device at a time**. After restoring on a new device, wipe the old one
-  (Ctrl+P, w).
+  (settings → security → wipe).
 
 ### 9. Locking, passwords and wiping
 
-- termchat **locks itself after 5 minutes** without a key press; **Ctrl+K** locks at
+- termchat **locks itself after 5 minutes** without a key press or click; **Ctrl+K** locks at
   once. Locking removes keys and messages from memory; unlock with your password.
-- **Change password:** Ctrl+P, then **p** (current password, new one twice).
-- **Duress password** (Ctrl+P, then **d**): a second password. Typing it at the unlock
+
+The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to the
+**security** tab (**Tab** or a click):
+
+- **Change password:** current password, new one twice.
+- **Duress password:** a second password. Typing it at the unlock
   screen silently erases everything and shows the first-run screen, as if termchat
   had never been used. Read the warning on that screen first: it does not help if
   someone copied your disk beforehand, and destroying data after a seizure can be a
   crime in some countries. Leave the new field empty to turn it off.
-- **Wipe everything:** Ctrl+P, then **w**, type `WIPE`. Keys, contacts and history are
+- **Wipe everything:** type `WIPE`. Keys, contacts and history are
   erased from this device. There is no undo.
-- **Tor on/off later:** Ctrl+P, then **t**.
+- **Tor on/off later:** the `Tor` row.
 
 ### 10. Where data lives
 
@@ -276,12 +298,37 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 
 | Problem | What to do |
 |---|---|
-| Stuck on `○ connecting…` | Check your internet. With Tor, the first connection can take up to a minute. If it never connects, try Ctrl+P, t to go without Tor and see whether the relay is reachable. |
+| Stuck on `○ connecting…` | Check your internet. With Tor, the first connection can take up to a minute. If it never connects, turn Tor off in settings → security to go without Tor and see whether the relay is reachable. |
 | `SAVE FAILED` in the status bar | The disk is full or not writable. Messages are not acknowledged until they are saved, so nothing is lost; free some space. |
 | `wrong password` | Passwords are case-sensitive and depend on the keyboard layout. There is no recovery; restore from a backup if you have one. |
 | `they use another relay` when adding a contact | Your friend's invite is for a different relay. Both of you must use the same one (for now). |
 | **c** does not copy the invite | Your terminal does not support clipboard access (OSC 52). Select the text with the mouse instead. |
-| The layout looks broken | Make the window larger (at least 80×24) and use a font with Unicode box characters. |
+| The layout looks broken | Make the window larger (at least 80×24) and use a font with Unicode box characters. In an old terminal without true colour pick the `terminal` theme. |
+| Selecting text with the mouse does not work | Hold **Shift** while dragging, or turn the mouse off in settings → interface. |
+| No sound | macOS plays a system sound; Linux needs `canberra-gtk-play` or `paplay`; otherwise the terminal bell is used, which your terminal may mute. |
+
+### 12. Settings, themes and notifications
+
+**Ctrl+P**, then **s** opens settings. **Tab** or a click switches tabs, **Up/Down**
+moves, **Enter** or a click changes the value.
+
+- **theme:** 18 colour themes, light and dark; moving through the list shows each
+  one at once. The chat keeps your terminal's background; the theme colours the
+  bars and windows.
+- **notifications:** when a message arrives for a chat you are not looking at, a
+  card with the sender's name (never the text) shows in the corner for 5 seconds;
+  click it to open the chat. **Sound** plays the system notification sound (on by
+  default). **System notification** (off by default) asks the terminal to show a
+  desktop notification that always says just "termchat: new message": the
+  operating system keeps a history of notifications outside termchat, so names
+  and text never go there. The window title shows only the number of unread
+  messages, `termchat (3)`.
+- **interface:** mouse on or off.
+- **security:** backup, password, duress password, Tor, wipe.
+
+These settings live in `~/.termchat/settings.json`, unencrypted so that the lock
+screen can use your theme. They hold nothing about your contacts, and wiping
+removes the file too.
 
 ### Keys at a glance
 
@@ -289,13 +336,14 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 |---|---|
 | Enter | send |
 | Up / Down | choose contact |
+| PgUp / PgDn | scroll the chat |
 | Ctrl+A | add contact from an invite |
 | Ctrl+O | show your invite (**c** copies) |
 | Ctrl+Y | accept request |
 | Ctrl+F | safety number (**v** marks verified) |
 | Ctrl+T / Ctrl+E | disappearing messages / no history |
 | Ctrl+R / Ctrl+B / Ctrl+D / Ctrl+X | rename / block / delete or reject / report |
-| Ctrl+P | settings: **b** backup, **p** password, **d** duress, **t** Tor, **w** wipe |
+| Ctrl+P | menu: **s** settings, **k** keys, **m** manual, **o** invite, **a** add, **b** backup |
 | Ctrl+K | lock |
 | Ctrl+Q or Ctrl+C | quit |
 | ? or F1 | help |
@@ -340,7 +388,8 @@ Not message contents, not nicknames, not IP history.
 - Decisions: [ADR-001 stack](docs/adr/001-stack.md), [002 vodozemac](docs/adr/002-vodozemac-integration.md),
   [003 duress](docs/adr/003-duress-password.md), [004 Tor](docs/adr/004-tor.md),
   [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
-  [007 abuse resistance](docs/adr/007-abuse-resistance.md)
+  [007 abuse resistance](docs/adr/007-abuse-resistance.md),
+  [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md)
 - [PLAN.md](PLAN.md)
 
 ## Licence
