@@ -103,19 +103,11 @@ pub const THEMES: &[(&str, Palette)] = &[
     ("vesper", hex([0xffc799, 0x1a1a1a, 0x101010, 0x232323, 0x232323, 0x282828, 0x101010, 0x5c5c5c, 0x7e7e7e, 0xffffff, 0xa0a0a0, 0xffd1a8, 0x99ffe4, 0xffc799, 0xff8080, 0x66ddcc, 0xffc799])),
 ];
 
-/// Unknown names fall back to the default.
-pub fn by_name(name: &str) -> &'static Palette {
-    THEMES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map_or(&THEMES[0].1, |(_, p)| p)
+/// Position in `THEMES`; unknown names are the default.
+pub fn index(name: &str) -> usize {
+    THEMES.iter().position(|(n, _)| *n == name).unwrap_or(0)
 }
 
-/// The theme after `name`, for cycling through them.
-pub fn next(name: &str) -> &'static str {
-    let i = THEMES
-        .iter()
-        .position(|(n, _)| *n == name)
-        .map_or(0, |i| i + 1);
-    THEMES[i % THEMES.len()].0
+pub fn by_name(name: &str) -> &'static Palette {
+    &THEMES[index(name)].1
 }

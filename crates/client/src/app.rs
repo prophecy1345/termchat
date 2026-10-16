@@ -58,7 +58,17 @@ pub struct Unlock {
 }
 
 pub enum Popup {
-    Help,
+    /// A long text with a filter: the keys or the manual.
+    Pager {
+        doc: Doc,
+        filter: Input,
+        /// Rows scrolled down from the top.
+        scroll: usize,
+    },
+    Settings {
+        tab: usize,
+        at: usize,
+    },
     Notice(String),
     /// Ctrl+P, with the highlighted row.
     Menu(usize),
@@ -73,6 +83,19 @@ pub enum Popup {
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Doc {
+    Keys,
+    Manual,
+}
+
+/// Tabs of the settings window.
+pub const TABS: [&str; 4] = ["theme", "notifications", "interface", "security"];
+/// Mouse-only keys: a click on settings row `i` is `F(ROW_KEY + i)`, on tab
+/// `i` it is `F(TAB_KEY + i)`. No keyboard has these.
+pub const ROW_KEY: u8 = 100;
+pub const TAB_KEY: u8 = 200;
 
 pub struct Main {
     pub core: Arc<Mutex<Client>>,
@@ -201,18 +224,21 @@ impl App {
             },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
-                let page =
-                    isize::try_from(self.hits.borrow().history.height.max(2) - 1).unwrap_or(1);
+                let hits = self.hits.borrow().clone();
+                let pager = matches!(m.popup, Some(Popup::Pager { .. }));
+                let view = if pager { hits.pager } else { hits.history };
+                let page = isize::try_from(view.height.max(2) - 1).unwrap_or(1);
+                let by = match k.code {
+                    KeyCode::PageUp => Some(page),
+                    KeyCode::PageDown => Some(-page),
+                    KeyCode::Up if pager => Some(1),
+                    KeyCode::Down if pager => Some(-1),
+                    _ => None,
+                };
                 if ctrl && k.code == KeyCode::Char('k') {
                     self.lock();
-                } else if m.popup.is_none() && matches!(k.code, KeyCode::PageUp | KeyCode::PageDown)
-                {
-                    let by = if k.code == KeyCode::PageUp {
-                        page
-                    } else {
-                        -page
-                    };
-                    scroll(m, by, self.hits.borrow().max_scroll);
+                } else if let Some(by) = by.filter(|_| pager || m.popup.is_none()) {
+                    scroll(m, by, &hits);
                 } else {
                     m.on_key(k, ctrl, &mut self.settings);
                     m.resort();
@@ -237,15 +263,24 @@ impl App {
         {
             return self.on_key(*k);
         }
-        if let Some(w) = hits.window {
-            if e.kind == left && !w.contains(at) {
+        let Screen::Main(m) = &mut self.screen else {
+            if hits
+                .window
+                .is_some_and(|w| e.kind == left && !w.contains(at))
+            {
                 self.on_key(KeyEvent::from(KeyCode::Esc));
             }
             return;
-        }
-        let Screen::Main(m) = &mut self.screen else {
-            return;
         };
+        if let Some(w) = hits.window {
+            match e.kind {
+                MouseEventKind::ScrollUp => scroll(m, 3, &hits),
+                MouseEventKind::ScrollDown => scroll(m, -3, &hits),
+                _ if e.kind == left && !w.contains(at) => self.on_key(KeyEvent::from(KeyCode::Esc)),
+                _ => {}
+            }
+            return;
+        }
         let row = |r: ratatui::layout::Rect| hits.list_offset + usize::from(at.y - r.y);
         match e.kind {
             MouseEventKind::Down(MouseButton::Left) if hits.list.contains(at) => {
@@ -256,12 +291,6 @@ impl App {
                 if m.current().is_some() {
                     m.popup = Some(Popup::Actions(0));
                 }
-            }
-            MouseEventKind::Down(MouseButton::Left) if hits.add.contains(at) => {
-                m.popup = Some(Popup::Add(Input::default()))
-            }
-            MouseEventKind::Down(MouseButton::Left) if hits.menu.contains(at) => {
-                m.popup = Some(Popup::Menu(0))
             }
             MouseEventKind::Down(MouseButton::Left) if hits.edge == Some(at.x) => self.drag = true,
             MouseEventKind::Drag(MouseButton::Left) if self.drag => {
@@ -277,8 +306,8 @@ impl App {
                 m.select(m.selected.saturating_sub(1))
             }
             MouseEventKind::ScrollDown if hits.list.contains(at) => m.select(m.selected + 1),
-            MouseEventKind::ScrollUp => scroll(m, 3, hits.max_scroll),
-            MouseEventKind::ScrollDown => scroll(m, -3, hits.max_scroll),
+            MouseEventKind::ScrollUp => scroll(m, 3, &hits),
+            MouseEventKind::ScrollDown => scroll(m, -3, &hits),
             _ => {}
         }
     }
@@ -352,7 +381,7 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
         return Err(main.status);
     }
     main.popup = Some(Popup::Notice(
-        "Back up your identity now: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
+        "Welcome. Click a contact to open the chat, right-click it for actions;\nCtrl+P opens the menu (settings, keys, manual), ? lists the keys.\n\nFirst, back up your identity: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
     ));
     Ok(main)
 }
@@ -824,8 +853,10 @@ impl Main {
         }
         let key = self.current().map(|c| c.key);
         match (ctrl, k.code) {
-            (false, KeyCode::F(1)) => self.popup = Some(Popup::Help),
-            (false, KeyCode::Char('?')) if self.input.is_empty() => self.popup = Some(Popup::Help),
+            (false, KeyCode::F(1)) => self.popup = Some(pager(Doc::Keys)),
+            (false, KeyCode::Char('?')) if self.input.is_empty() => {
+                self.popup = Some(pager(Doc::Keys))
+            }
             (false, KeyCode::Up) => self.select(self.selected.saturating_sub(1)),
             (false, KeyCode::Down) => self.select(self.selected + 1),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
@@ -906,18 +937,100 @@ impl Main {
     }
 
     /// Ctrl+P menu: hotkey and label.
-    pub fn menu(&self, s: &Settings) -> Vec<(char, String)> {
-        let on = |b: bool| if b { "on" } else { "off" };
+    pub fn menu(&self) -> Vec<(char, String)> {
         let nag = if self.data.backed_up { "" } else { "  ●" };
         vec![
+            ('s', "settings".into()),
+            ('k', "keys".into()),
+            ('m', "manual".into()),
+            ('o', "your invite".into()),
+            ('a', "add contact".into()),
             ('b', format!("back up your identity{nag}")),
-            ('p', "change password".into()),
-            ('d', "duress password".into()),
-            ('t', format!("Tor: {}", on(self.data.tor))),
-            ('c', format!("colour theme: {}", s.theme)),
-            ('m', format!("mouse: {}", on(s.mouse))),
-            ('w', "wipe everything from this device".into()),
         ]
+    }
+
+    /// Rows of a settings tab: label and whether it is ticked.
+    pub fn settings_rows(&self, s: &Settings, tab: usize) -> Vec<(String, bool)> {
+        let row = |label: &str, on: bool| (label.to_string(), on);
+        match tab {
+            0 => theme::THEMES
+                .iter()
+                .map(|(name, _)| row(name, *name == s.theme))
+                .collect(),
+            1 => vec![
+                row("sound for new messages", s.sound),
+                row("system notification: \"termchat: new message\"", s.notify),
+            ],
+            2 => vec![row("mouse (off: the terminal selects text)", s.mouse)],
+            _ => vec![
+                row(
+                    &format!(
+                        "back up your identity{}",
+                        if self.data.backed_up { "" } else { "  ●" }
+                    ),
+                    false,
+                ),
+                row("change password", false),
+                row("duress password", false),
+                row("Tor", self.data.tor),
+                row("wipe everything from this device", false),
+            ],
+        }
+    }
+
+    /// Settings window keys: Tab/arrows move, Enter or a click acts.
+    fn on_settings_key(
+        &mut self,
+        tab: usize,
+        at: usize,
+        k: KeyEvent,
+        s: &mut Settings,
+    ) -> Option<Popup> {
+        let n = self.settings_rows(s, tab).len().max(1);
+        let theme_at = theme::index(&s.theme);
+        let goto = |tab: usize| {
+            let tab = tab % TABS.len();
+            (tab, if tab == 0 { theme_at } else { 0 })
+        };
+        let (tab, at) = match k.code {
+            KeyCode::Esc => return None,
+            KeyCode::Tab | KeyCode::Right => goto(tab + 1),
+            KeyCode::BackTab | KeyCode::Left => goto(tab + TABS.len() - 1),
+            KeyCode::F(f) if f >= TAB_KEY => goto(usize::from(f - TAB_KEY)),
+            KeyCode::F(f) if f >= ROW_KEY => {
+                return self.settings_act(tab, usize::from(f - ROW_KEY), s);
+            }
+            KeyCode::Enter => return self.settings_act(tab, at, s),
+            // Moving through themes shows each one at once.
+            KeyCode::Up if tab == 0 => return self.settings_act(0, (at + n - 1) % n, s),
+            KeyCode::Down if tab == 0 => return self.settings_act(0, (at + 1) % n, s),
+            KeyCode::Up => (tab, (at + n - 1) % n),
+            KeyCode::Down => (tab, (at + 1) % n),
+            _ => (tab, at),
+        };
+        Some(Popup::Settings { tab, at })
+    }
+
+    fn settings_act(&mut self, tab: usize, at: usize, s: &mut Settings) -> Option<Popup> {
+        match (tab, at) {
+            (3, 0) => return Some(Popup::Form(Form::new(Kind::Backup))),
+            (3, 1) => return Some(Popup::Form(Form::new(Kind::Password))),
+            (3, 2) => return Some(Popup::Form(Form::new(Kind::Duress))),
+            (3, 3) => return Some(Popup::Notice(self.toggle_tor())),
+            (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),
+            (0, _) => {
+                s.theme = theme::THEMES
+                    .get(at)
+                    .map_or(s.theme.clone(), |t| t.0.into())
+            }
+            (1, 0) => s.sound = !s.sound,
+            (1, _) => s.notify = !s.notify,
+            _ => s.mouse = !s.mouse,
+        }
+        if let Err(e) = s.save(&settings::path(&self.path)) {
+            self.status = format!("cannot save settings: {e}");
+        }
+        Some(Popup::Settings { tab, at })
     }
 
     /// Right-click menu for the open contact: the Ctrl+key and its label.
@@ -987,24 +1100,36 @@ impl Main {
 
     fn on_popup_key(&mut self, popup: Popup, k: KeyEvent, settings: &mut Settings) {
         let keep = match popup {
-            Popup::Help | Popup::Notice(_) => None,
-            Popup::Menu(at) => match pick(&self.menu(settings), at, k) {
+            Popup::Notice(_) => None,
+            Popup::Pager { .. } if k.code == KeyCode::Esc => None,
+            Popup::Pager {
+                doc, mut filter, ..
+            } => {
+                filter.on_key(k);
+                Some(Popup::Pager {
+                    doc,
+                    filter,
+                    scroll: 0,
+                })
+            }
+            Popup::Settings { tab, at } => self.on_settings_key(tab, at, k, settings),
+            Popup::Menu(at) => match pick(&self.menu(), at, k) {
                 Err(at) => Some(Popup::Menu(at)),
                 Ok(None) => None,
+                Ok(Some('s')) => {
+                    let at = theme::index(&settings.theme);
+                    Some(Popup::Settings { tab: 0, at })
+                }
+                Ok(Some('k')) => Some(pager(Doc::Keys)),
+                Ok(Some('m')) => Some(pager(Doc::Manual)),
                 Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
-                Ok(Some('d')) => Some(Popup::Form(Form::new(Kind::Duress))),
-                Ok(Some('w')) => Some(Popup::Form(Form::new(Kind::Wipe))),
-                Ok(Some('p')) => Some(Popup::Form(Form::new(Kind::Password))),
-                Ok(Some('t')) => Some(Popup::Notice(self.toggle_tor())),
+                // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
-                    match c {
-                        'c' => settings.theme = theme::next(&settings.theme).into(),
-                        _ => settings.mouse = !settings.mouse,
-                    }
-                    if let Err(e) = settings.save(&settings::path(&self.path)) {
-                        self.status = format!("cannot save settings: {e}");
-                    }
-                    Some(Popup::Menu(at))
+                    return self.on_key(
+                        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                        true,
+                        settings,
+                    );
                 }
             },
             Popup::Actions(at) => match pick(&self.actions(), at, k) {
@@ -1268,9 +1393,23 @@ impl Main {
     }
 }
 
-/// History rows up (positive) or down, within the `max` there is.
-fn scroll(m: &mut Main, by: isize, max: usize) {
-    m.scroll = m.scroll.saturating_add_signed(by).min(max);
+/// Scrolls the open pager, or else the chat: `by` rows up (positive) or down.
+fn scroll(m: &mut Main, by: isize, hits: &Hits) {
+    match &mut m.popup {
+        Some(Popup::Pager { scroll, .. }) => {
+            *scroll = scroll.saturating_add_signed(-by).min(hits.pager_max);
+        }
+        None => m.scroll = m.scroll.saturating_add_signed(by).min(hits.max_scroll),
+        Some(_) => {}
+    }
+}
+
+fn pager(doc: Doc) -> Popup {
+    Popup::Pager {
+        doc,
+        filter: Input::default(),
+        scroll: 0,
+    }
 }
 
 /// A menu: Up/Down move, Enter or a hotkey picks, any other key closes.

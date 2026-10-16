@@ -125,6 +125,7 @@ Then open a new terminal and run `termchat`.
 `termchat --version` prints the installed version. Before the first run you can check
 that the download is genuine; see [Verify a release](#verify-a-release).
 
+<!-- manual:start: shown inside termchat (menu, manual) -->
 ### 2. First run
 
 The setup screen has six fields. **Tab** or **Enter** moves to the next one,
@@ -299,6 +300,8 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 | Ctrl+Q or Ctrl+C | quit |
 | ? or F1 | help |
 | Esc | close a window |
+
+<!-- manual:end -->
 
 ## Public relay
 

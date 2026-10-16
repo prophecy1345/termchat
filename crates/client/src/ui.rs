@@ -14,9 +14,10 @@ use ratatui::widgets::{
 };
 use termchat_core::{fingerprint, safety_number};
 
-use crate::app::{App, Main, Popup, Screen, Unlock, now};
+use crate::app::{App, Doc, Main, Popup, ROW_KEY, Screen, TAB_KEY, TABS, Unlock, now};
 use crate::data::{Contact, Status};
 use crate::form::Form;
+use crate::input::Input;
 use crate::settings::Settings;
 use crate::theme::Palette;
 
@@ -151,8 +152,6 @@ pub struct Hits {
     /// Contact rows, and the index of the first one shown.
     pub list: Rect,
     pub list_offset: usize,
-    pub add: Rect,
-    pub menu: Rect,
     /// The column between the list and the chat, for resizing.
     pub edge: Option<u16>,
     pub history: Rect,
@@ -160,6 +159,9 @@ pub struct Hits {
     pub max_scroll: usize,
     /// The open window, if any: clicks outside close it.
     pub window: Option<Rect>,
+    /// The text area of the keys or manual window, and how far it scrolls.
+    pub pager: Rect,
+    pub pager_max: usize,
     /// Buttons and menu rows: a click is the key they stand for.
     pub keys: Vec<(Rect, KeyEvent)>,
 }
@@ -186,8 +188,8 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 /// A button: label, whether it is the primary action, and its key.
 type Button<'a> = (&'a str, bool, KeyEvent);
 
-/// A centred window on the panel colour: body, then a row of buttons. The
-/// first `rows.len()` body lines are menu rows, clickable as those keys.
+/// A centred window on the panel colour: body, then a row of buttons.
+/// Returns the body area, for callers that make lines clickable.
 #[allow(clippy::too_many_arguments)]
 fn window(
     f: &mut Frame,
@@ -195,11 +197,10 @@ fn window(
     h: &mut Hits,
     title: &str,
     mut body: Vec<Line<'_>>,
-    rows: &[KeyEvent],
     buttons: &[Button],
     w: u16,
     danger: bool,
-) {
+) -> Rect {
     let edge = if danger { t.red } else { t.accent };
     let mut spots = Vec::new();
     if !buttons.is_empty() {
@@ -241,15 +242,21 @@ fn window(
         area,
     );
     h.window = Some(area);
-    for (i, k) in (0u16..).zip(rows) {
-        let r = Rect::new(area.x + 1, area.y + 1 + i, area.width.saturating_sub(2), 1);
-        h.keys.push((r.intersection(area), *k));
-    }
     let y = area.y + lines;
     for (x, width, k) in spots {
         h.keys
             .push((Rect::new(area.x + 2 + x, y, width, 1).intersection(area), k));
     }
+    area.inner(Margin::new(2, 1))
+}
+
+/// Body line `row` of a window, clickable as `k`.
+fn click_row(h: &mut Hits, body: Rect, row: usize, k: KeyEvent) {
+    let y = body
+        .y
+        .saturating_add(u16::try_from(row).unwrap_or(u16::MAX));
+    let r = Rect::new(body.x, y, body.width, 1).intersection(body);
+    h.keys.push((r, k));
 }
 
 /// An input field `w` columns wide, scrolled so the cursor (a char index)
@@ -366,7 +373,6 @@ fn form(f: &mut Frame, t: &Palette, h: &mut Hits, form: &Form) {
         h,
         form.kind.title().trim(),
         lines,
-        &[],
         &buttons,
         W,
         danger,
@@ -389,17 +395,7 @@ fn unlock(f: &mut Frame, t: &Palette, h: &mut Hits, u: &Unlock) {
         ("↵ unlock", true, key(KeyCode::Enter)),
         ("^q quit", false, ctrl('q')),
     ];
-    window(
-        f,
-        t,
-        h,
-        "termchat · locked",
-        lines,
-        &[],
-        &buttons,
-        50,
-        false,
-    );
+    window(f, t, h, "termchat · locked", lines, &buttons, 50, false);
 }
 
 fn main(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, settings: &Settings) {
@@ -416,7 +412,7 @@ fn main(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, settings: &Settings)
         false => body,
     };
     chat_pane(f, t, h, m, chat);
-    status_bar(f, t, m, bar);
+    status_bar(f, t, h, m, bar);
 
     if let Some(popup) = &m.popup {
         f.buffer_mut()
@@ -500,8 +496,10 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         h.list_offset = state.offset();
     }
 
-    h.add = Rect::new(foot.x, foot.y, 6, 1).intersection(foot);
-    h.menu = Rect::new(foot.right().saturating_sub(7), foot.y, 7, 1).intersection(foot);
+    let add = Rect::new(foot.x, foot.y, 6, 1).intersection(foot);
+    let menu = Rect::new(foot.right().saturating_sub(7), foot.y, 7, 1).intersection(foot);
+    h.keys.push((add, ctrl('a')));
+    h.keys.push((menu, ctrl('p')));
     f.render_widget(Paragraph::new(Line::styled(" + add", muted)), foot);
     f.render_widget(
         Paragraph::new(Line::styled("≡ menu ", muted)).alignment(Alignment::Right),
@@ -658,18 +656,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     h.history = pane;
     h.max_scroll = max;
     if max > 0 {
-        let mut state = ScrollbarState::new(max).position(top);
-        f.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_symbol(Some("▕"))
-                .track_style(Style::new().fg(t.surface_dim))
-                .thumb_symbol("▐")
-                .thumb_style(Style::new().fg(t.overlay0)),
-            history.inner(Margin::new(0, 1)),
-            &mut state,
-        );
+        scrollbar(f, t, history.inner(Margin::new(0, 1)), max, top);
     }
     if scroll > 0 {
         let hint = Span::styled(" ↓ PgDn ", Style::new().bg(t.panel_bg).fg(t.accent));
@@ -717,7 +704,7 @@ fn input_bar(
     }
 }
 
-fn status_bar(f: &mut Frame, t: &Palette, m: &Main, area: Rect) {
+fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let link = match (m.connected, m.data.tor) {
         (true, true) => (" ● online via Tor", t.green),
         (false, true) => (" ○ connecting via Tor…", t.yellow),
@@ -745,22 +732,262 @@ fn status_bar(f: &mut Frame, t: &Palette, m: &Main, area: Rect) {
     }
     let key = Style::new().fg(t.accent).add_modifier(Modifier::BOLD);
     let word = Style::new().fg(t.overlay0);
+    let hints = [
+        ("^P", "menu", ctrl('p')),
+        ("?", "keys", self::key(KeyCode::F(1))),
+        ("^K", "lock", ctrl('k')),
+        ("^Q", "quit", ctrl('q')),
+    ];
     let mut right = Vec::new();
-    for (k, w) in [
-        ("^P", "menu"),
-        ("?", "keys"),
-        ("^K", "lock"),
-        ("^Q", "quit"),
-    ] {
-        right.push(Span::styled(k, key));
+    for (k, w, _) in &hints {
+        right.push(Span::styled(*k, key));
         right.push(Span::styled(format!(" {w}  "), word));
     }
     let (left, right) = (Line::from(left), Line::from(right));
     f.render_widget(Block::new().style(Style::new().bg(t.panel_bg)), area);
     if left.width() + right.width() <= usize::from(area.width) {
+        let mut x = area.right() - u16::try_from(right.width()).unwrap_or(0);
+        for (k, w, ev) in hints {
+            let width = u16::try_from(k.len() + w.len() + 1).unwrap_or(0);
+            h.keys.push((Rect::new(x, area.y, width, 1), ev));
+            x += width + 2;
+        }
         f.render_widget(Paragraph::new(right).alignment(Alignment::Right), area);
     }
     f.render_widget(Paragraph::new(left), area);
+}
+
+/// A thin scrollbar on the right edge of `area`.
+fn scrollbar(f: &mut Frame, t: &Palette, area: Rect, max: usize, top: usize) {
+    let mut state = ScrollbarState::new(max).position(top);
+    let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .track_symbol(Some("▕"))
+        .track_style(Style::new().fg(t.surface1))
+        .thumb_symbol("▐")
+        .thumb_style(Style::new().fg(t.overlay1));
+    f.render_stateful_widget(bar, area, &mut state);
+}
+
+/// The user guide from the README, between its manual markers.
+fn manual() -> &'static str {
+    const README: &str = include_str!("../../../README.md");
+    let start = README.find("<!-- manual:start").unwrap_or(0);
+    let end = README.find("<!-- manual:end -->").unwrap_or(README.len());
+    let body = &README[start..end.max(start)];
+    body.split_once('\n').map_or(body, |(_, rest)| rest)
+}
+
+/// Just enough Markdown for the manual: headings, lists, tables, code, bold,
+/// `code` and links (shown as their text). Only paragraphs containing `q`
+/// are kept.
+fn markdown(t: &Palette, src: &str, q: &str) -> Vec<Line<'static>> {
+    let text = Style::new().fg(t.text);
+    let src: Vec<&str> = src
+        .split("\n\n")
+        .filter(|block| block.to_lowercase().contains(q))
+        .collect();
+    let mut out = Vec::new();
+    let mut code = false;
+    for raw in src.join("\n\n").lines() {
+        if raw.starts_with("```") {
+            code = !code;
+            continue;
+        }
+        if raw.starts_with("|---") {
+            continue;
+        }
+        let line = if code {
+            Line::from(vec![
+                Span::styled("▏ ", Style::new().fg(t.overlay0)),
+                Span::styled(raw.to_string(), Style::new().fg(t.accent)),
+            ])
+        } else if let Some(title) = raw.strip_prefix("### ").or(raw.strip_prefix("## ")) {
+            Line::styled(
+                title.to_string(),
+                Style::new().fg(t.mauve).add_modifier(Modifier::BOLD),
+            )
+        } else if let Some(item) = raw.strip_prefix("- ") {
+            let mut spans = vec![Span::styled(" • ", Style::new().fg(t.accent))];
+            spans.extend(inline(t, item, text));
+            Line::from(spans)
+        } else if raw.starts_with('|') {
+            let cells: Vec<&str> = raw.trim_matches('|').split('|').map(str::trim).collect();
+            inline(t, &cells.join("  │  "), text).into()
+        } else {
+            inline(t, raw, text).into()
+        };
+        out.push(line);
+    }
+    out
+}
+
+/// `code` in the accent colour, **bold** bold, [text](link) as its text.
+fn inline(t: &Palette, s: &str, base: Style) -> Vec<Span<'static>> {
+    let mut s = s.to_string();
+    while let Some(mid) = s.find("](") {
+        let (Some(open), Some(close)) = (s[..mid].rfind('['), s[mid..].find(')')) else {
+            break;
+        };
+        let label = s[open + 1..mid].to_string();
+        s.replace_range(open..mid + close + 1, &label);
+    }
+    let mut spans = Vec::new();
+    for (i, part) in s.split('`').enumerate() {
+        if i % 2 == 1 {
+            spans.push(Span::styled(part.to_string(), Style::new().fg(t.accent)));
+            continue;
+        }
+        for (j, p) in part.split("**").enumerate().filter(|(_, p)| !p.is_empty()) {
+            let style = match j % 2 {
+                1 => base.add_modifier(Modifier::BOLD),
+                _ => base,
+            };
+            spans.push(Span::styled(p.to_string(), style));
+        }
+    }
+    spans
+}
+
+/// A tall window for long text: a search line, the text, a scrollbar.
+fn pager(
+    f: &mut Frame,
+    t: &Palette,
+    h: &mut Hits,
+    title: &str,
+    lines: Vec<Line<'static>>,
+    filter: &Input,
+    scroll: usize,
+) {
+    let area = centered(f.area(), 86, f.area().height.saturating_sub(2));
+    f.render_widget(Clear, area);
+    let block = Block::bordered()
+        .border_style(Style::new().fg(t.accent))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::new().fg(t.text).add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::horizontal(1))
+        .style(Style::new().bg(t.panel_bg).fg(t.text));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let [search, rule, body, foot] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let accent = Style::new().fg(t.accent).add_modifier(Modifier::BOLD);
+    let muted = Style::new().fg(t.overlay0);
+    let query = match filter.is_empty() {
+        true => Span::styled("type to search", muted),
+        false => Span::raw(filter.to_string()),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled("/ ", accent), query])),
+        search,
+    );
+    let x = search.x + 2 + u16::try_from(filter.cursor_chars()).unwrap_or(0);
+    f.set_cursor_position((x.min(search.right()), search.y));
+    f.render_widget(
+        Paragraph::new("─".repeat(usize::from(rule.width))).style(Style::new().fg(t.surface1)),
+        rule,
+    );
+
+    let text = Rect::new(body.x, body.y, body.width.saturating_sub(2), body.height);
+    let empty = lines.is_empty();
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let max = para
+        .line_count(text.width)
+        .saturating_sub(usize::from(text.height));
+    let top = scroll.min(max);
+    if empty {
+        f.render_widget(Paragraph::new(Span::styled("no matches", muted)), text);
+    }
+    f.render_widget(
+        para.scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
+        text,
+    );
+    if max > 0 {
+        scrollbar(f, t, body, max, top);
+    }
+    let close = Span::styled(" esc close ", Style::new().bg(t.surface0).fg(t.text));
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            close,
+            Span::styled("   ↑↓ PgUp PgDn wheel: scroll   type: search", muted),
+        ])),
+        foot,
+    );
+    h.keys.push((
+        Rect::new(foot.x, foot.y, 11, 1).intersection(foot),
+        key(KeyCode::Esc),
+    ));
+    h.window = Some(area);
+    h.pager = text;
+    h.pager_max = max;
+}
+
+/// Settings: tabs on top, rows below; the highlighted row is marked ▸,
+/// the current values ✓.
+fn settings_pane(
+    f: &mut Frame,
+    t: &Palette,
+    h: &mut Hits,
+    m: &Main,
+    s: &Settings,
+    tab: usize,
+    at: usize,
+) {
+    const W: usize = 58;
+    let mut tabs = Vec::new();
+    for (i, name) in TABS.iter().enumerate() {
+        let style = match i == tab {
+            true => Style::new()
+                .bg(t.accent)
+                .fg(on_accent(t))
+                .add_modifier(Modifier::BOLD),
+            false => Style::new().bg(t.surface0).fg(t.text),
+        };
+        tabs.push(Span::styled(format!(" {name} "), style));
+        tabs.push(Span::raw(" "));
+    }
+    let mut lines = vec![Line::from(tabs), Line::from("")];
+    let rows = m.settings_rows(s, tab);
+    for (i, (label, on)) in rows.iter().enumerate() {
+        let here = i == at;
+        let row = match here {
+            true => Style::new().bg(t.selection_bg),
+            false => Style::new(),
+        };
+        let mark = if here { "▸ " } else { "  " };
+        let tick = if *on { " ✓" } else { "" };
+        let pad = W.saturating_sub(2 + Span::raw(label).width() + tick.chars().count());
+        lines.push(Line::from(vec![
+            Span::styled(mark, row.fg(t.accent)),
+            Span::styled(label.clone(), row.fg(t.text)),
+            Span::styled(tick, row.fg(t.green)),
+            Span::styled(" ".repeat(pad), row),
+        ]));
+    }
+    let buttons = [
+        ("↵ select", true, key(KeyCode::Enter)),
+        ("tab next", false, key(KeyCode::Tab)),
+        ("esc close", false, key(KeyCode::Esc)),
+    ];
+    let body = window(f, t, h, "settings", lines, &buttons, 62, false);
+    let mut x = body.x;
+    for (i, name) in (0u8..).zip(TABS) {
+        let w = u16::try_from(name.len() + 2).unwrap_or(0);
+        let spot = Rect::new(x, body.y, w, 1).intersection(body);
+        h.keys.push((spot, key(KeyCode::F(TAB_KEY + i))));
+        x += w + 1;
+    }
+    for (i, n) in (0u8..).zip(0..rows.len()) {
+        click_row(h, body, n + 2, key(KeyCode::F(ROW_KEY + i)));
+    }
 }
 
 fn popup_pane(
@@ -780,21 +1007,43 @@ fn popup_pane(
         Popup::Form(fm) => form(f, t, h, fm),
         Popup::Notice(text) => {
             let ok = [("↵ ok", true, key(KeyCode::Enter))];
-            window(f, t, h, "note", plain(text), &[], &ok, 70, false);
+            window(f, t, h, "note", plain(text), &ok, 70, false);
         }
         Popup::Menu(at) | Popup::Actions(at) => {
             let (title, items) = match popup {
-                Popup::Menu(_) => ("menu".to_string(), m.menu(settings)),
+                Popup::Menu(_) => ("menu".to_string(), m.menu()),
                 _ => (
                     m.current().map(|c| name(m, c)).unwrap_or_default(),
                     m.actions(),
                 ),
             };
-            let keys: Vec<KeyEvent> = items.iter().map(|(c, _)| key(KeyCode::Char(*c))).collect();
             let lines = menu_rows(t, &items, *at, 44);
-            window(f, t, h, &title, lines, &keys, close, 48, false);
+            let body = window(f, t, h, &title, lines, close, 48, false);
+            for (i, (c, _)) in items.iter().enumerate() {
+                click_row(h, body, i, key(KeyCode::Char(*c)));
+            }
         }
-        Popup::Help => window(f, t, h, "keys", keyed(t, HELP), &[], close, 72, false),
+        Popup::Settings { tab, at } => settings_pane(f, t, h, m, settings, *tab, *at),
+        Popup::Pager {
+            doc,
+            filter,
+            scroll,
+        } => {
+            let q = filter.to_lowercase();
+            let (title, lines) = match doc {
+                Doc::Keys => (
+                    "keys",
+                    keyed(t, HELP)
+                        .into_iter()
+                        .zip(HELP.lines())
+                        .filter(|(_, l)| l.to_lowercase().contains(&q))
+                        .map(|(line, _)| line)
+                        .collect(),
+                ),
+                Doc::Manual => ("manual", markdown(t, manual(), &q)),
+            };
+            pager(f, t, h, title, lines, filter, *scroll);
+        }
         Popup::Add(s) => {
             let lines = vec![
                 Line::from("Paste their invite and press Enter."),
@@ -802,7 +1051,7 @@ fn popup_pane(
                 field(t, s, Some(s.cursor_chars()), 66),
             ];
             let buttons = [("↵ add", true, key(KeyCode::Enter)), cancel];
-            window(f, t, h, "add contact", lines, &[], &buttons, 70, false);
+            window(f, t, h, "add contact", lines, &buttons, 70, false);
         }
         Popup::Invite(invite) => {
             let lines = vec![
@@ -819,7 +1068,7 @@ fn popup_pane(
                 ("c copy to clipboard", true, key(KeyCode::Char('c'))),
                 ("esc close", false, esc),
             ];
-            window(f, t, h, "your invite", lines, &[], &buttons, 70, false);
+            window(f, t, h, "your invite", lines, &buttons, 70, false);
         }
         Popup::Verify => {
             let Some(c) = m.current() else { return };
@@ -843,7 +1092,7 @@ fn popup_pane(
                 ("v toggle verified", true, key(KeyCode::Char('v'))),
                 ("esc close", false, esc),
             ];
-            window(f, t, h, "safety number", lines, &[], &buttons, 64, false);
+            window(f, t, h, "safety number", lines, &buttons, 64, false);
         }
         Popup::Rename(s) => {
             let lines = vec![
@@ -852,7 +1101,7 @@ fn popup_pane(
                 field(t, s, Some(s.cursor_chars()), 46),
             ];
             let buttons = [("↵ save", true, key(KeyCode::Enter)), cancel];
-            window(f, t, h, "rename", lines, &[], &buttons, 50, false);
+            window(f, t, h, "rename", lines, &buttons, 50, false);
         }
         Popup::Report(text) => {
             let mut lines = plain(
@@ -873,7 +1122,6 @@ fn popup_pane(
                 h,
                 "report to the relay operator",
                 lines,
-                &[],
                 &buttons,
                 76,
                 true,
@@ -885,7 +1133,7 @@ fn popup_pane(
                 ("y delete", true, key(KeyCode::Char('y'))),
                 ("esc keep", false, esc),
             ];
-            window(f, t, h, "delete contact", lines, &[], &buttons, 50, true);
+            window(f, t, h, "delete contact", lines, &buttons, 50, true);
         }
     }
 }
@@ -912,6 +1160,18 @@ mod tests {
         assert_eq!(wrap("", 4, 0), (vec![String::new()], (0, 0)));
         // Wide characters take two columns.
         assert_eq!(wrap("日本語", 4, 3).0, ["日本", "語"]);
+    }
+
+    #[test]
+    fn manual_is_the_readme_guide() {
+        let m = manual();
+        assert!(m.starts_with("### 2. First run"), "{}", &m[..40]);
+        assert!(!m.contains("manual:end"));
+        let t = crate::theme::by_name("catppuccin");
+        let lines = markdown(t, "## A\n- **b** `c` [d](e)\n|---|\n| x | y |", "");
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(text, ["A", " • b c d", "x  │  y"]);
+        assert_eq!(markdown(t, "one\ntwo\n\nthree", "tw").len(), 2);
     }
 
     #[test]

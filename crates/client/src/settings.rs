@@ -17,6 +17,10 @@ pub struct Settings {
     pub mouse: bool,
     /// Contact list width, its edge included.
     pub sidebar: u16,
+    /// A system sound for new messages (ADR-008).
+    pub sound: bool,
+    /// A system notification for new messages, without name or text.
+    pub notify: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +29,8 @@ impl Default for Settings {
             theme: theme::THEMES[0].0.into(),
             mouse: true,
             sidebar: 28,
+            sound: true,
+            notify: false,
         }
     }
 }
