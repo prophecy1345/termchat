@@ -70,6 +70,8 @@ When the duress password is entered, before anything is shown:
    state file; a fresh install has nothing there.
 5. The client shows the first-run screen, with no "data erased" or "wrong
    password" message.
+6. Nothing goes to the network: no goodbye to contacts, no `Unregister`
+   (ADR-009). The relay forgets the key once it has been idle for 90 days.
 
 The same works on the auto-lock screen.
 

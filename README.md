@@ -289,7 +289,10 @@ The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to th
   someone copied your disk beforehand, and destroying data after a seizure can be a
   crime in some countries. Leave the new field empty to turn it off.
 - **Wipe everything:** type `WIPE`. Keys, contacts and history are
-  erased from this device. There is no undo.
+  erased from this device. There is no undo. Your contacts get a goodbye
+  (their chat with you becomes read-only) and the relay forgets your key.
+  Without a connection the client asks whether to wipe without telling them.
+  The duress password never does this: it wipes silently.
 - **Tor on/off later:** the `Tor` row.
 
 ### 10. Where data lives
@@ -400,7 +403,8 @@ Not message contents, not nicknames, not IP history.
   [003 duress](docs/adr/003-duress-password.md), [004 Tor](docs/adr/004-tor.md),
   [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
   [007 abuse resistance](docs/adr/007-abuse-resistance.md),
-  [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md)
+  [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md),
+  [009 leaving](docs/adr/009-leaving.md)
 - [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
 
 ## Licence

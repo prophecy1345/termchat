@@ -73,12 +73,15 @@ R -> C  Deliver { relay_id: u64, sender: ed25519, envelope: Envelope }
 C -> R  Ack { relay_id }
 C -> R  Report { sender: ed25519, text: String }   // ADR-006, text до 16000 байт
 R -> C  Reported                                  // одинаковый ответ на любом пути
+C -> R  Unregister                                // ADR-009: забыть мой ключ, prekeys и очередь
+R -> C  Unregistered                              // затем relay закрывает соединение
 ```
 
 - Relay держит конверт в очереди получателя, пока тот не пришлёт `Ack`. Неподтверждённые конверты приходят снова при каждом подключении. В M2 очередь в памяти и теряется при перезапуске relay; в M5 она переезжает в SQLite и получает TTL.
 - `Accepted` означает, что relay принял конверт. В клиенте это «доставлено на сервер». E2E-квитанций о прочтении нет.
 - `sender` в `Deliver` ставит relay по аутентифицированному соединению. Клиент не доверяет этому полю: настоящий отправитель подтверждается расшифровкой и проверкой внутреннего сообщения (раздел 7).
 - `Ack` разрешает relay удалить конверт (важно с M5, когда появляется очередь).
+- `Unregister` отправляет стирание после прощаний (ADR-009). Relay удаляет строку аккаунта вместе с prekeys и входящей очередью (баны остаются), отвечает `Unregistered` и закрывает соединение. После этого `ClaimKey` и `Send` на этот ключ отвечают `UnknownRecipient`.
 
 ## 6. Конверт
 
@@ -109,6 +112,7 @@ Body =
     ContactRequest { identity: Identity, nickname: String, note: String }  // первое сообщение незнакомцу
   | ContactAccept { nickname: String }
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
+  | Goodbye                                                                // ADR-009: отправитель стёр аккаунт
 ```
 
 Лимиты: `text` до 16000 байт, `nickname` до 64 байт, `note` до 256 байт.

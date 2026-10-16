@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 use termchat_core::proto::{
-    self, Body, ClientFrame, Ed25519Key, Invite, ServerFrame, check_nickname,
+    self, Body, ClientFrame, Ed25519Key, ErrorCode, Invite, ServerFrame, check_nickname,
 };
 use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
@@ -27,6 +27,10 @@ use crate::{Dial, Event, Relay, theme};
 
 /// Idle time before the client locks itself.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
+/// How long a wipe waits for the relay to take the goodbyes (ADR-009).
+const LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
+const NOT_REMOVED: &str =
+    "The relay did not confirm removing your key; it forgets idle keys after 90 days.";
 /// ADR-007: what a not-yet-accepted request may leave behind.
 const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
@@ -77,6 +81,10 @@ pub enum Popup {
         at: usize,
     },
     Notice(String),
+    /// A wipe is waiting for the relay (ADR-009).
+    Leaving,
+    /// The relay cannot be told; the reason, then "wipe anyway?".
+    WipeAnyway(String),
     /// Ctrl+P, with the highlighted row.
     Menu(usize),
     /// Right click on a contact, with the highlighted row.
@@ -135,8 +143,16 @@ pub struct Main {
     pub status: String,
     pub last_input: Instant,
     path: PathBuf,
-    /// Everything was erased; the app returns to the first-run screen.
-    wiped: bool,
+    /// Everything was erased; the app returns to the first-run screen with this note.
+    wiped: Option<String>,
+    leaving: Option<Leaving>,
+}
+
+/// Goodbyes sent and not yet accepted, then `Unregister` (ADR-009).
+struct Leaving {
+    waiting: Vec<u64>,
+    until: Instant,
+    unregistering: bool,
 }
 
 pub fn now() -> u64 {
@@ -181,10 +197,12 @@ impl App {
     }
 
     /// After a wipe the device must look freshly installed, theme included.
-    fn wiped(&mut self) {
+    fn wiped(&mut self, note: String) {
         self.settings = Settings::default();
         self.toasts.clear();
-        self.screen = Screen::Setup(Form::new(Kind::Setup));
+        let mut form = Form::new(Kind::Setup);
+        form.error = note;
+        self.screen = Screen::Setup(form);
     }
 
     /// Next relay event while unlocked; never resolves otherwise.
@@ -202,6 +220,9 @@ impl App {
             return;
         };
         m.on_relay(ev);
+        if let Some(note) = m.wiped.take() {
+            return self.wiped(note);
+        }
         m.resort();
         for (key, request) in std::mem::take(&mut m.alerts) {
             // Already in front of the user's eyes.
@@ -243,6 +264,10 @@ impl App {
                 self.lock();
             } else {
                 m.expire();
+                m.leave_timeout();
+                if let Some(note) = m.wiped.take() {
+                    self.wiped(note);
+                }
             }
         }
     }
@@ -283,7 +308,7 @@ impl App {
             Screen::Unlock(u) => match u.on_key(k, &self.path) {
                 Unlocked::Stay => {}
                 Unlocked::Open(main) => self.screen = Screen::Main(main),
-                Unlocked::Wiped => self.wiped(),
+                Unlocked::Wiped => self.wiped(String::new()),
             },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
@@ -316,8 +341,8 @@ impl App {
                 } else {
                     m.on_key(k, ctrl, &mut self.settings);
                     m.resort();
-                    if m.wiped {
-                        self.wiped();
+                    if let Some(note) = m.wiped.take() {
+                        self.wiped(note);
                     }
                 }
             }
@@ -485,6 +510,13 @@ fn ws_host(url: &str) -> Option<String> {
     Some(host.to_owned())
 }
 
+fn why(code: ErrorCode) -> String {
+    match code {
+        ErrorCode::UnknownRecipient => "contact is no longer on the relay".into(),
+        code => format!("{code:?}"),
+    }
+}
+
 /// A backup is a state file without sessions or messages: restoring is a copy.
 fn restore(f: &Form, path: &Path) -> Result<(), String> {
     let bytes = std::fs::read(form::expand(&f.fields[0]))
@@ -579,7 +611,8 @@ impl Main {
             status: String::new(),
             last_input: Instant::now(),
             path,
-            wiped: false,
+            wiped: None,
+            leaving: None,
         });
         main.resort();
         Ok(main)
@@ -722,7 +755,13 @@ impl Main {
                     }
                 }
             }
-            Event::Disconnected => self.connected = false,
+            Event::Disconnected => {
+                self.connected = false;
+                // An older relay closes the connection on `Unregister`.
+                if self.leaving.as_ref().is_some_and(|l| l.unregistering) {
+                    self.popup = self.finish_wipe(NOT_REMOVED);
+                }
+            }
             Event::Frame(frame) => self.on_frame(frame),
         }
     }
@@ -769,19 +808,109 @@ impl Main {
                     let _ = self.relay.send(ClientFrame::Ack { relay_id });
                 }
             }
-            ServerFrame::Accepted { client_id } => self.set_status(client_id, Status::Sent),
+            ServerFrame::Accepted { client_id } => {
+                self.set_status(client_id, Status::Sent);
+                self.goodbye_done(client_id);
+            }
             ServerFrame::Error {
                 client_id: Some(id),
                 code,
-            } => self.set_status(id, Status::Failed(format!("{code:?}"))),
+            } => {
+                self.set_status(id, Status::Failed(why(code)));
+                self.goodbye_done(id);
+            }
+            ServerFrame::Error {
+                client_id: None, ..
+            } if self.leaving.as_ref().is_some_and(|l| l.unregistering) => {
+                self.popup = self.finish_wipe(NOT_REMOVED);
+            }
             ServerFrame::Error {
                 client_id: None,
                 code,
-            } => self.status = format!("relay: {code:?}"),
+            } => self.status = format!("relay: {}", why(code)),
+            ServerFrame::Unregistered => self.popup = self.finish_wipe(""),
             ServerFrame::Reported => {
                 self.status = "reported to the relay operator, and blocked".into()
             }
             ServerFrame::Challenge { .. } | ServerFrame::AuthOk => {}
+        }
+    }
+
+    /// ADR-009: goodbyes to every contact we talk to, then `Unregister`, then the wipe.
+    fn leave(&mut self, mut f: Form) -> Option<Popup> {
+        if f.fields[0].trim() != "WIPE" {
+            f.error = "type WIPE in capitals".into();
+            return Some(Popup::Form(f));
+        }
+        if !self.connected {
+            return Some(Popup::WipeAnyway("No connection to the relay.".into()));
+        }
+        let told: Vec<_> = self
+            .data
+            .contacts
+            .iter()
+            .filter(|c| !c.blocked && !c.left && !c.request_pending)
+            .map(|c| c.key)
+            .collect();
+        let mut waiting = Vec::new();
+        for key in told {
+            let talking =
+                self.core().has_session(&key) && self.core().is_request(&key) != Some(true);
+            if talking && let Ok(id) = self.transmit(&key, Body::Goodbye) {
+                waiting.push(id);
+            }
+        }
+        self.leaving = Some(Leaving {
+            waiting,
+            until: Instant::now() + LEAVE_TIMEOUT,
+            unregistering: false,
+        });
+        self.unregister_when_told();
+        Some(Popup::Leaving)
+    }
+
+    /// The relay answered `client_id`.
+    fn goodbye_done(&mut self, client_id: u64) {
+        if let Some(l) = &mut self.leaving {
+            l.waiting.retain(|w| *w != client_id);
+        }
+        self.unregister_when_told();
+    }
+
+    /// Once every goodbye is on the relay, ask it to forget us.
+    fn unregister_when_told(&mut self) {
+        let Some(l) = &mut self.leaving else { return };
+        if l.waiting.is_empty() && !l.unregistering {
+            l.unregistering = true;
+            let _ = self.relay.send(ClientFrame::Unregister);
+        }
+    }
+
+    fn leave_timeout(&mut self) {
+        let Some(l) = &self.leaving else { return };
+        if Instant::now() < l.until {
+            return;
+        }
+        self.popup = match l.unregistering {
+            true => self.finish_wipe(NOT_REMOVED),
+            false => {
+                self.leaving = None;
+                Some(Popup::WipeAnyway(
+                    "The relay did not answer in time; some contacts may already know.".into(),
+                ))
+            }
+        };
+    }
+
+    /// Erases the device; `note` goes on the first-run screen. `Some` popup if it failed.
+    fn finish_wipe(&mut self, note: &str) -> Option<Popup> {
+        self.leaving = None;
+        match data::wipe(&self.path) {
+            Ok(()) => {
+                self.wiped = Some(note.into());
+                None
+            }
+            Err(e) => Some(Popup::Notice(format!("wipe failed: {e}"))),
         }
     }
 
@@ -896,6 +1025,12 @@ impl Main {
                 self.system(i, text);
             }
             Body::ContactAccept { .. } => self.system(i, "accepted your request"),
+            Body::Goodbye if got.request => {}
+            Body::Goodbye => {
+                self.system(i, "deleted their account; this chat is read-only now");
+                self.data.contacts[i].left = true;
+                self.alerts.push((sender, false));
+            }
         }
         if i != self.selected {
             self.data.contacts[i].unread += 1;
@@ -1166,6 +1301,10 @@ impl Main {
             self.input = text;
             return self.status = "contact is blocked (Ctrl+B to unblock)".into();
         }
+        if c.left {
+            self.input = text;
+            return self.status = "this contact left".into();
+        }
         let (key, expires_in, i) = (c.key, c.expires_in, self.selected);
         let at = now();
         self.data.contacts[i].messages.push(Msg {
@@ -1188,6 +1327,11 @@ impl Main {
     fn on_popup_key(&mut self, popup: Popup, k: KeyEvent, settings: &mut Settings) {
         let keep = match popup {
             Popup::Notice(_) => None,
+            Popup::Leaving => Some(Popup::Leaving),
+            Popup::WipeAnyway(_) => match k.code {
+                KeyCode::Char('y') => self.finish_wipe(""),
+                _ => None,
+            },
             Popup::Pager { .. } if k.code == KeyCode::Esc => None,
             Popup::Pager {
                 doc, mut filter, ..
@@ -1234,6 +1378,7 @@ impl Main {
             Popup::Form(mut f) => match f.on_key(k) {
                 Action::Stay => Some(Popup::Form(f)),
                 Action::Cancel => None,
+                Action::Submit if f.kind == Kind::Wipe => self.leave(f),
                 Action::Submit => match self.submit(&f) {
                     Ok(done) => Some(Popup::Notice(done)),
                     Err(e) => {
@@ -1428,15 +1573,7 @@ impl Main {
                 }
                 Ok("Password changed.".into())
             }
-            Kind::Wipe => {
-                if f.fields[0].trim() != "WIPE" {
-                    return Err("type WIPE in capitals".into());
-                }
-                data::wipe(&self.path).map_err(|e| e.to_string())?;
-                self.wiped = true;
-                Ok(String::new())
-            }
-            Kind::Setup | Kind::Restore => Ok(String::new()),
+            Kind::Setup | Kind::Restore | Kind::Wipe => Ok(String::new()),
         }
     }
 

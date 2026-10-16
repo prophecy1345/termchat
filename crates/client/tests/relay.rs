@@ -319,6 +319,92 @@ async fn silent_client_times_out() {
 }
 
 #[tokio::test]
+async fn goodbye_then_unregister_forgets_the_key() {
+    let url = start_relay(Limits::default()).await;
+    let (a, b) = pair();
+    let mut bob = Peer::new(&url, b);
+    bob.connected().await;
+    bob.publish_keys().await;
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    let (alice_key, bob_key) = (alice.key(), bob.key());
+    alice.start_session(bob_key).await;
+    alice.send_text(bob_key, 1, "secret hi").await;
+    assert_eq!(bob.recv_text(true).await, "secret hi");
+
+    // Bob wipes: goodbye first, then Unregister (ADR-009).
+    let envelope = bob
+        .core
+        .lock()
+        .unwrap()
+        .encrypt(&alice_key, Body::Goodbye)
+        .unwrap();
+    bob.relay
+        .send(ClientFrame::Send {
+            client_id: 1,
+            envelope,
+        })
+        .unwrap();
+    assert_eq!(bob.frame().await, ServerFrame::Accepted { client_id: 1 });
+    bob.relay.send(ClientFrame::Unregister).unwrap();
+    assert_eq!(bob.frame().await, ServerFrame::Unregistered);
+
+    let ServerFrame::Deliver {
+        sender, envelope, ..
+    } = alice.frame().await
+    else {
+        panic!("no goodbye")
+    };
+    let got = alice
+        .core
+        .lock()
+        .unwrap()
+        .decrypt(&sender, &envelope)
+        .unwrap();
+    assert_eq!(got.body, Body::Goodbye);
+
+    // The relay no longer knows Bob.
+    alice
+        .relay
+        .send(ClientFrame::ClaimKey { target: bob_key })
+        .unwrap();
+    assert_eq!(
+        alice.frame().await,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::UnknownRecipient
+        }
+    );
+    let envelope = alice
+        .core
+        .lock()
+        .unwrap()
+        .encrypt(
+            &bob_key,
+            Body::Text {
+                sent_at: 0,
+                expires_in: None,
+                text: "anyone?".into(),
+            },
+        )
+        .unwrap();
+    alice
+        .relay
+        .send(ClientFrame::Send {
+            client_id: 2,
+            envelope,
+        })
+        .unwrap();
+    assert_eq!(
+        alice.frame().await,
+        ServerFrame::Error {
+            client_id: Some(2),
+            code: ErrorCode::UnknownRecipient
+        }
+    );
+}
+
+#[tokio::test]
 async fn send_rate_limit_and_unknown_recipient() {
     let limits = Limits {
         sends_per_key: Rate {

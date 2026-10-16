@@ -53,7 +53,7 @@ Ctrl+W       delete word         Ctrl+U       delete to start
 Mouse        click a contact, right-click for its actions;
              drag the list edge to resize; Shift+drag selects text
 
-  ● unread   ? request   ! not verified   × blocked
+  ● unread   ? request   ! not verified   × blocked   - left
   … sending   ✓ on relay   ✗ failed
 
 Need help now? You are not alone.
@@ -494,6 +494,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             let request = m.core().is_request(&c.key) == Some(true);
             let (mark, colour) = match () {
                 _ if c.blocked => ("×", t.red),
+                _ if c.left => ("-", t.overlay0),
                 _ if request => ("?", t.yellow),
                 _ if c.unread > 0 => ("●", t.accent),
                 _ if !c.verified => ("!", t.peach),
@@ -1167,6 +1168,18 @@ fn popup_pane(
                 76,
                 true,
             );
+        }
+        Popup::Leaving => {
+            let lines = plain("Telling your contacts and the relay…");
+            window(f, t, h, "wipe everything", lines, &[], 50, false);
+        }
+        Popup::WipeAnyway(why) => {
+            let lines = plain(&format!("{why}\nWipe without telling your contacts?"));
+            let buttons = [
+                ("y wipe", true, key(KeyCode::Char('y'))),
+                ("esc cancel", false, esc),
+            ];
+            window(f, t, h, "wipe everything", lines, &buttons, 60, true);
         }
         Popup::Delete => {
             let lines = plain("Delete this contact and the chat?");

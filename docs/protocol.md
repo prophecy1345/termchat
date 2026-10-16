@@ -100,6 +100,8 @@ R -> C  Deliver { relay_id: u64, sender: ed25519, envelope: Envelope }
 C -> R  Ack { relay_id }
 C -> R  Report { sender: ed25519, text: String }   // ADR-006, text up to 16000 bytes
 R -> C  Reported                                  // the same answer on every path
+C -> R  Unregister                                // ADR-009: forget my key, prekeys and queue
+R -> C  Unregistered                              // then the relay closes the connection
 ```
 
 - The relay keeps an envelope in the recipient's queue until the recipient sends
@@ -111,6 +113,10 @@ R -> C  Reported                                  // the same answer on every pa
   client does not trust this field: the real sender is confirmed by decrypting
   and checking the inner message (section 7).
 - `Ack` lets the relay delete the envelope.
+- `Unregister` is sent by a wipe after the goodbyes (ADR-009). The relay deletes
+  the account row with its prekeys and incoming queue (bans stay), answers
+  `Unregistered` and closes the connection. Afterwards `ClaimKey` and `Send` to
+  that key answer `UnknownRecipient`.
 
 ## 6. Envelope
 
@@ -142,6 +148,7 @@ Body =
     ContactRequest { identity: Identity, nickname: String, note: String }  // first message to a stranger
   | ContactAccept { nickname: String }
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
+  | Goodbye                                                                // ADR-009: the sender wiped their account
 ```
 
 Limits: `text` up to 16000 bytes, `nickname` up to 64 bytes, `note` up to 256

@@ -98,7 +98,7 @@ impl Kind {
                 "The data stays as it is; only the key slot changes.\nIf you set a duress password, keep the new one far from it:\na typo that hits the duress password erases everything.   Ctrl+G: generate"
             }
             Self::Wipe => {
-                "Erases keys, contacts and history from this device. No undo.\nWithout a backup your identity is gone for good."
+                "Erases keys, contacts and history from this device. No undo.\nWithout a backup your identity is gone for good. Your contacts\nare told you left, and the relay forgets your key."
             }
         }
     }

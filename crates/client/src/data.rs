@@ -53,6 +53,9 @@ pub struct Contact {
     pub unread: usize,
     /// When the contact was added; orders the list until there are messages.
     pub added_at: u64,
+    /// They wiped their account and said goodbye; the chat is read-only (ADR-009).
+    #[serde(default)]
+    pub left: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

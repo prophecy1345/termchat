@@ -17,7 +17,7 @@ Status: accepted (M0, 2026-10-15). Русская версия: [threat-model.ru
 | Party | What it sees |
 |---|---|
 | Internet provider, Wi-Fi, the network | That the client talks to a relay, when, and how much. Not the contents or the recipients: everything is inside TLS. |
-| Relay operator (or whoever seizes the server) | Users' public keys; who writes to whom and when (the relay knows the sender from the authenticated connection); message size rounded up to a bucket; IP addresses of live connections (not written to disk by default); the queue of undelivered ciphertext. The `Auth` signature is non-repudiable: an operator who keeps it can prove to others that a key connected at a given time. The stock relay does not keep it. |
+| Relay operator (or whoever seizes the server) | Users' public keys; who writes to whom and when (the relay knows the sender from the authenticated connection); message size rounded up to a bucket; IP addresses of live connections (not written to disk by default); the queue of undelivered ciphertext. The `Auth` signature is non-repudiable: an operator who keeps it can prove to others that a key connected at a given time. The stock relay does not keep it. When someone wipes their account (not with the duress password), that the key left and to whom it wrote last (ADR-009). |
 | A contact | The conversation with them. |
 | A stranger who knows a public key | Can send a contact request. Can try to spam or to exhaust prekeys. Can learn whether that key is registered on a given relay: `ClaimKey` and `Send` to an unknown key answer `UnknownRecipient`. Keys are random, so this tells nothing about anyone the stranger does not already know. |
 
