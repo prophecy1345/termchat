@@ -1,4 +1,4 @@
-//! Two clients talking in-process, including negative cases (PLAN.md, M1).
+//! Two clients talking in-process, including negative cases.
 #![allow(clippy::unwrap_used)] // test-only file; helpers are not #[test] fns
 
 use termchat_core::proto::{Body, Envelope};

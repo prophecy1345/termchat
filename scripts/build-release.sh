@@ -1,5 +1,5 @@
 #!/bin/sh
-# Reproducible release build (PLAN.md, M6). Same toolchain (rust-toolchain.toml),
+# Reproducible release build. Same toolchain (rust-toolchain.toml),
 # same Cargo.lock, and paths remapped so the checkout location and the user's
 # home do not end up in the binary. Usage: scripts/build-release.sh [target]
 set -eu

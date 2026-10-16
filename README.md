@@ -392,7 +392,7 @@ Not message contents, not nicknames, not IP history.
   [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
   [007 abuse resistance](docs/adr/007-abuse-resistance.md),
   [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md)
-- [PLAN.md](PLAN.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Licence
 

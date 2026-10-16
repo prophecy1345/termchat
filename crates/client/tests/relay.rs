@@ -1,4 +1,4 @@
-//! Two clients talking through a real relay on localhost (PLAN.md, M2).
+//! Two clients talking through a real relay on localhost.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test-only file
 
 use std::sync::{Arc, Mutex};

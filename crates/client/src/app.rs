@@ -24,7 +24,7 @@ use crate::settings::{self, Settings};
 use crate::ui::Hits;
 use crate::{Dial, Event, Relay, theme};
 
-/// PLAN.md, M3.
+/// Idle time before the client locks itself.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
 /// ADR-007: what a not-yet-accepted request may leave behind.
 const MAX_HIDDEN: usize = 5;
@@ -401,7 +401,7 @@ impl App {
         }
     }
 
-    /// Saves and drops every key and message from memory (PLAN.md, M3).
+    /// Saves and drops every key and message from memory.
     pub fn lock(&mut self) {
         if let Screen::Main(m) = &mut self.screen {
             m.persist();
