@@ -1,9 +1,7 @@
 name: Pages
 
-# The website in site/, published to GitHub Pages
-# (https://prophecy1345.github.io/termchat/). Pages needs a public repository
-# on the free plan, so the jobs skip while it is private; once public, enable
-# Settings → Pages → Source: GitHub Actions and push (or run this by hand).
+# The website in site/, published to GitHub Pages at https://termchat.app/
+# (custom domain set in Settings → Pages; DNS at Cloudflare, DNS only).
 
 on:
   push:

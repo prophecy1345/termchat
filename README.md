@@ -8,6 +8,7 @@ A private, text-only messenger for the terminal. End-to-end encrypted with
 [vodozemac](https://github.com/matrix-org/vodozemac) (Olm: X3DH-style handshake and
 Double Ratchet, the design behind Signal and Matrix). Optional Tor. No accounts,
 phone numbers, emails or names: you are a key pair and a nickname you choose.
+Website: [termchat.app](https://termchat.app).
 
 **Status: not audited.** The cryptography comes from vodozemac, which was audited in
 2022; termchat's own code has had no external review. Treat it as experimental.

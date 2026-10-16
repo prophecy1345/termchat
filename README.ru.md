@@ -8,6 +8,7 @@ English: [README.md](README.md).
 [vodozemac](https://github.com/matrix-org/vodozemac) (Olm: рукопожатие в стиле X3DH и
 Double Ratchet, та же схема, что в Signal и Matrix). Tor по желанию. Никаких аккаунтов,
 телефонов, email и имён: вы — это пара ключей и ник, который выбираете сами.
+Сайт: [termchat.app](https://termchat.app/ru/).
 
 **Статус: без аудита.** Криптография взята из vodozemac, который прошёл аудит в 2022
 году; собственный код termchat внешней проверки не проходил. Считайте проект
