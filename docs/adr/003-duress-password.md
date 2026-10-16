@@ -1,71 +1,108 @@
-# ADR-003: пароль под принуждением (duress password)
+# ADR-003: duress password
 
-Статус: принято. Дата: 2026-10-15.
+Status: accepted. Date: 2026-10-15. Русская версия: [003-duress-password.ru.md](003-duress-password.ru.md).
 
-## Контекст
+## Context
 
-У пользователя изъяли устройство и требуют пароль. Нужен второй пароль, ввод которого необратимо уничтожает данные, а приложение после этого выглядит как только что установленное.
+A user's device is seized and a password is demanded. We want a second password
+that irreversibly destroys the data, after which the app looks freshly
+installed.
 
-## Решение
+## Decision
 
-### Формат файла: ключ данных и два слота
+### File format: a data key and two slots
 
 ```
 Header {
     version: u16,
-    argon2: { m_kib: u32, t: u32, p: u32 },  // общие для обоих слотов
-    slots: [Slot; 2],          // всегда два, порядок случайный
+    argon2: { m_kib: u32, t: u32, p: u32 },  // shared by both slots
+    slots: [Slot; 2],          // always two, in random order
 }
 Slot {
-    salt: [u8; 16],            // для Argon2id
+    salt: [u8; 16],            // for Argon2id
     nonce: [u8; 24],
-    wrapped: [u8; 48],         // XChaCha20Poly1305(KEK, 32 байта) + тег 16 байт
+    wrapped: [u8; 48],         // XChaCha20Poly1305(KEK, 32 bytes) + 16-byte tag
 }
-Body: XChaCha20Poly1305(DEK, данные)
+Body: XChaCha20Poly1305(DEK, data)
 ```
 
-- Данные шифруются случайным ключом **DEK**, а не ключом из пароля.
-- **Слот основного пароля**: `wrapped` = DEK, зашифрованный ключом `KEK = Argon2id(пароль, salt)`.
-- **Слот duress-пароля**: `wrapped` = фиксированная 32-байтная метка `termchat-duress-marker-v1`, зашифрованная ключом из duress-пароля. Duress распознаётся только по этой метке. (Уточнено в M4: первоначальная идея «слот открылся, а тело не расшифровалось — значит duress» стёрла бы данные при повреждённом файле и верном основном пароле. Теперь это `CorruptState`, без стирания.)
-- **Duress не задан**: второй слот целиком заполнен случайными байтами. Отличить его от настоящего слота нельзя: шифртекст AEAD выглядит как случайные данные.
-- Смена пароля перешифровывает только слот, данные не трогаются.
+- Data is encrypted with a random key, the **DEK**, not with the password key.
+- **Main password slot:** `wrapped` = the DEK encrypted with
+  `KEK = Argon2id(password, salt)`.
+- **Duress password slot:** `wrapped` = a fixed 32-byte marker
+  `termchat-duress-marker-v1`, encrypted with the key from the duress password.
+  Duress is recognised only by this marker. (Refined in M4: the first idea, "a
+  slot opened but the body did not decrypt, so it is duress", would have erased
+  the data of a corrupted file opened with the right main password. That case is
+  now `CorruptState`, with no erasing.)
+- **No duress password set:** the second slot is filled with random bytes. It
+  cannot be told apart from a real slot: AEAD ciphertext looks random.
+- Changing a password re-encrypts only its slot; the data is not touched.
 
-### Проверка пароля
-- Argon2id считается **для обоих слотов всегда**, решение принимается только после обоих расчётов.
-- Тело файла расшифровывается ровно один раз на любом пути; если ни один слот не открылся, используется фиктивный ключ.
-- Остаточная разница (найдена тестом в M4): при успехе AEAD ещё прогоняет keystream ChaCha20 по телу, при неудаче останавливается на проверке тега. Разница пропорциональна размеру файла: единицы миллисекунд на мегабайт против ~1 секунды Argon2. Принимаем: после duress-пароля сразу начинается стирание, и разницу видно по поведению в любом случае.
-- Порядок слотов случайный, по позиции тоже не понять.
-- Цена: разблокировка в 2 раза дольше. При 64 MiB и 3 итерациях это доли секунды.
+### Checking a password
+- Argon2id is **always computed for both slots**; the decision is made only after
+  both.
+- The file body is decrypted exactly once on every path; if no slot opened, a
+  dummy key is used.
+- Remaining difference (found by a test in M4): on success the AEAD also runs the
+  ChaCha20 keystream over the body; on failure it stops at the tag check. The
+  difference grows with the file size: a few milliseconds per megabyte against
+  about a second of Argon2. Accepted: after the duress password erasing starts at
+  once, and that is visible from the behaviour anyway.
+- The slot order is random, so the position gives nothing away either.
+- Cost: unlocking takes twice as long. With 64 MiB and 3 iterations that is a
+  fraction of a second.
 
-### Уничтожение (crypto-erase)
-При вводе duress-пароля, до любого вывода на экран:
-1. Весь файл перезаписывается случайными байтами, затем `fsync`, затем удаляется.
-2. Остатки на SSD: контроллер может записать новые байты в другие блоки, а старые копии файла (в том числе от каждого сохранения) живут до TRIM. Прочитать их можно только с **основным** паролем, а duress-пароль его не открывает. Поэтому против принуждения к duress-паролю стирание работает. Если лаборатория снимет флеш-память и позже узнает основной пароль, данные можно восстановить. Защита — шифрование диска средствами ОС (FileVault, BitLocker, LUKS).
-3. Ключи стираются из памяти (`zeroize`).
-4. Клиент показывает экран первого запуска, без сообщений вроде «данные удалены» или «неверный пароль».
+### Destruction (crypto-erase)
+When the duress password is entered, before anything is shown:
+1. The whole file is overwritten with random bytes, `fsync`ed and deleted.
+2. Leftovers on SSDs: the controller may write the new bytes elsewhere, and old
+   copies of the file (from every save) live on until TRIM. They can be read only
+   with the **main** password, which the duress password does not reveal. So
+   against being forced to give the duress password, erasing works. A lab that
+   images the flash chips and later learns the main password could recover the
+   data. Protection: the OS's disk encryption (FileVault, BitLocker, LUKS).
+3. Keys are wiped from memory (`zeroize`).
+4. The client shows the first-run screen, with no "data erased" or "wrong
+   password" message.
 
-То же самое работает на экране автоблокировки.
+The same works on the auto-lock screen.
 
-### Настройка
-- Функция выключена по умолчанию. Включается в настройках.
-- При включении клиент показывает предупреждение (ниже) и требует подтверждение.
-- Duress-пароль должен заметно отличаться от основного: не префикс, не отличается одним символом. Иначе опечатка уничтожит данные. Проверяется расстоянием Левенштейна (не меньше 4) и `zxcvbn`.
+### Settings
+- Off by default; turned on in the settings.
+- When turning it on, the client shows the warning below and asks for
+  confirmation.
+- The duress password must differ clearly from the main one: not a prefix, not
+  one character apart, or a typo would destroy the data. Checked with Levenshtein
+  distance (at least 4) and `zxcvbn`.
 
-## Ограничения (написать в README и в предупреждении)
+## Limitations (stated in the README and in the warning)
 
-1. **Не защищает от снятия копии диска.** Если копию сделали до ввода пароля, основной пароль откроет копию. Защита работает, только если пароль вводят на самом устройстве.
-2. **Код открыт.** Противник знает о функции. Пустое приложение после ввода пароля может выдать, что пароль был ловушкой.
-3. **Юридический риск.** Во многих странах уничтожение данных после изъятия наказуемо как уничтожение доказательств или воспрепятствование. Пользователь решает сам.
-4. **Физический риск.** Обнаружив обман, противник может усилить давление.
-5. **Экспорт identity** (резервная копия) хранится отдельно и не уничтожается.
-6. **Relay и собеседники** не узнают о стирании. Сообщения, пришедшие позже, расшифровать некому.
+1. **No help against a copied disk.** If a copy was made before the password was
+   entered, the main password opens the copy. It works only when the password is
+   typed on the device itself.
+2. **The code is open.** An adversary knows about the feature. An empty app after
+   the password can reveal that it was a trap.
+3. **Legal risk.** In many countries destroying data after a seizure is
+   punishable as destroying evidence or obstruction. Users decide for themselves.
+4. **Physical risk.** Having found the deception, the adversary may increase the
+   pressure.
+5. **The identity export** (backup) is stored separately and is not destroyed.
+6. **The relay and contacts** do not learn about the erasing. Messages that
+   arrive later have no one to decrypt them.
 
-## Отвергнутые варианты
+## Rejected
 
-- **Decoy-профиль** (второй пароль открывает фальшивый профиль). Сильнее против принуждения, но в 3–4 раза сложнее: файл фиксированного размера, неотличимость настоящих данных от шума, «живой» фальшивый профиль. Можно вернуться к этому позже, формат с двумя слотами это допускает.
-- **Простое удаление файла без crypto-erase.** На SSD данные физически остаются.
+- **A decoy profile** (a second password opens a fake profile). Stronger against
+  coercion, but three to four times more complex: fixed-size files, real data
+  indistinguishable from noise, a "lived-in" fake profile. Possible later; the
+  two-slot format allows it.
+- **Plain deletion without crypto-erase.** On SSDs the data physically remains.
 
-## Последствия
+## Consequences
 
-- Меняется формат хранилища из ADR-002: вместо ключа из пароля используется DEK с двумя слотами. Разделы ADR-002 про хранение обновлены.
-- Реализация в M4. Тесты: оба пароля дают одинаковое время (в пределах погрешности); после duress-пароля основной пароль не открывает файл; файл без duress неотличим по структуре от файла с duress.
+- Changes the storage format of ADR-002: a DEK with two slots instead of a
+  password-derived key. ADR-002's storage sections were updated.
+- Implemented in M4. Tests: both passwords take the same time (within noise);
+  after the duress password the main password no longer opens the file; a file
+  without duress is structurally indistinguishable from one with it.

@@ -1,46 +1,74 @@
-# ADR-002: интеграция vodozemac
+# ADR-002: vodozemac integration
 
-Статус: принято. Дата: 2026-10-15.
+Status: accepted. Date: 2026-10-15. Русская версия: [002-vodozemac-integration.ru.md](002-vodozemac-integration.ru.md).
 
-## Контекст
+## Context
 
-vodozemac даёт `Account` (identity, one-time и fallback-ключи) и `Session` (Olm). Нужно решить, как мы публикуем ключи, ротируем их и храним состояние.
+vodozemac provides `Account` (identity, one-time and fallback keys) and
+`Session` (Olm). We need to decide how keys are published and rotated and how
+state is stored.
 
-## Решения
+## Decisions
 
-### Версия сессии: `SessionConfig::version_1`
-- `version_2` (MAC не обрезается) есть только под фичей `experimental-session-config`. Экспериментальные фичи в криптоядро не берём.
-- `version_1` обрезает MAC до 8 байт. Так работает весь Matrix, и именно этот вариант прошёл аудит.
-- Обе стороны используют только `version_1`. Переход на `version_2` — отдельный ADR, когда фичу стабилизируют.
+### Session version: `SessionConfig::version_1`
+- `version_2` (untruncated MAC) exists only behind the
+  `experimental-session-config` feature. Experimental features stay out of the
+  crypto core.
+- `version_1` truncates the MAC to 8 bytes. All of Matrix works this way, and it
+  is the variant that was audited.
+- Both sides use `version_1` only. Moving to `version_2` is a separate ADR once
+  the feature is stable.
 
 ### One-time keys
-- При первом запуске и при каждом подключении клиент держит на relay полный запас: `Account::max_number_of_one_time_keys()` (50 в vodozemac 0.11).
-- Relay сообщает остаток (`KeyCount`). Если остаток меньше половины запаса, клиент генерирует новые ключи, публикует и вызывает `mark_keys_as_published`.
-- Каждый ключ подписывается Ed25519 (`Account::sign`), формат подписи в `docs/protocol.md`, раздел 4.
+- On first run and on every connection the client keeps a full stock on the
+  relay: `Account::max_number_of_one_time_keys()` (50 in vodozemac 0.11).
+- The relay reports what is left (`KeyCount`). Below half of the stock, the
+  client generates new keys, publishes them and calls `mark_keys_as_published`.
+- Every key is signed with Ed25519 (`Account::sign`); the signature format is in
+  `docs/protocol.md`, section 4.
 
 ### Fallback key
-- Один активный fallback key на relay.
-- Когда приходит pre-key сообщение, созданное на fallback key, клиент генерирует новый (`generate_fallback_key`) и публикует его.
-- Старый fallback key забывается (`forget_fallback_key`) через **TTL очереди relay + 1 день** после ротации (по умолчанию 15 дней): сообщения, отправленные на него офлайн, могут пролежать в очереди весь TTL. Срок вычисляется из настройки TTL, отдельной константы нет. Реализуется в M5 вместе с очередью; в M1 есть только ротация.
+- One active fallback key on the relay.
+- When a pre-key message built on the fallback key arrives, the client generates
+  a new one (`generate_fallback_key`) and publishes it.
+- The old fallback key is forgotten (`forget_fallback_key`) **relay queue TTL + 1
+  day** after the rotation (15 days by default): messages sent to it while the
+  owner was offline can wait in the queue for the whole TTL. The delay is derived
+  from the TTL setting, not a separate constant.
 
-### Одна сессия на пару контактов
-- Для каждого контакта хранится список сессий Olm, активная — последняя успешная.
-- Обычное сообщение пробуем расшифровать сессиями этого контакта по очереди.
-- Pre-key сообщение: сначала ищем существующую сессию с тем же `session_id()`, иначе создаём входящую сессию (`create_inbound_session`).
-- Старые сессии хранятся до 5 штук на контакт.
+### One session per contact pair
+- Each contact keeps a list of Olm sessions; the active one is the last that
+  worked.
+- A normal message is tried against that contact's sessions in turn.
+- A pre-key message: first look for an existing session with the same
+  `session_id()`, otherwise create an inbound session (`create_inbound_session`).
+- Up to 5 old sessions are kept per contact.
 
-### Хранение состояния
-- `Account::pickle()` и `Session::pickle()` сериализуются вместе с контактами в один файл через `serde_json`: pickle vodozemac использует внутренне тегированные enum, а postcard их не поддерживает. `serde_json` уже в дереве зависимостей через vodozemac.
-- Файл целиком шифруется `XChaCha20Poly1305` случайным ключом данных (DEK). DEK хранится в заголовке, зашифрованный ключом из пароля (Argon2id). Заголовок всегда содержит два слота: для основного и для duress-пароля (подробно в ADR-003).
-- libolm-формат pickle (`to_libolm_pickle`) не используем: он требует уникальный ключ на каждый pickle, а внешнее шифрование файла это уже решает.
-- Core только возвращает зашифрованные байты, запись на диск делает клиент (правило «core без IO»).
-- Запись атомарная: временный файл, `fsync`, `rename`.
-- Состояние нужно сохранять **после каждого** шифрования и расшифровки: ratchet продвигается, и откат к старому состоянию ломает сессию или позволяет повтор.
+### Storing state
+- `Account::pickle()` and `Session::pickle()` are serialized together with the
+  contacts into one file with `serde_json`: vodozemac pickles use internally
+  tagged enums, which postcard does not support. `serde_json` is already in the
+  tree through vodozemac.
+- The whole file is encrypted with `XChaCha20Poly1305` under a random data key
+  (DEK). The DEK sits in the header, encrypted with a key derived from the
+  password (Argon2id). The header always has two slots: for the main and the
+  duress password (see ADR-003).
+- The libolm pickle format (`to_libolm_pickle`) is not used: it needs a unique key
+  per pickle, which the outer file encryption already provides.
+- The core only returns encrypted bytes; the client writes them to disk (the
+  "core without IO" rule).
+- Writes are atomic: temporary file, `fsync`, `rename`.
+- State must be saved **after every** encryption and decryption: the ratchet
+  moves, and rolling back breaks the session or allows a replay.
 
-### Параметры Argon2id
-- 64 MiB памяти, 3 итерации, 1 поток (рекомендация RFC 9106 для систем с ограниченной памятью).
-- Параметры записываются в заголовок файла, одинаковые для обоих слотов (ADR-003). Их можно поднять позже без смены формата.
-- Из-за двух слотов разблокировка считает Argon2id дважды. Ожидаемо около 1 секунды на Raspberry Pi 4; замерить в M4 и снизить, если выйдет заметно дольше.
+### Argon2id parameters
+- 64 MiB of memory, 3 iterations, 1 lane (the RFC 9106 recommendation for
+  memory-constrained systems).
+- The parameters are stored in the file header, the same for both slots
+  (ADR-003). They can be raised later without a format change.
+- Because of the two slots, unlocking runs Argon2id twice. Expected about one
+  second on a Raspberry Pi 4.
 
-## Открытые вопросы
-- Сохранять файл после каждого сообщения может быть медленно при большой истории. Тогда история и состояние ключей разносятся по разным файлам (решение в M4).
+## Open questions
+- Saving the file after every message may get slow with a long history. Then
+  history and key state would move to separate files.

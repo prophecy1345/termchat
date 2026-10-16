@@ -1,84 +1,84 @@
-# ADR-008: настройки интерфейса, звук и уведомления
+# ADR-008: interface settings, sound and notifications
 
-Статус: **принято** (владелец, 2026-10-16). Дата: 2026-10-16.
+Status: **accepted** (maintainer, 2026-10-16). Date: 2026-10-16. Русская версия: [008-ui-settings-and-notifications.ru.md](008-ui-settings-and-notifications.ru.md).
 
-## Контекст
+## Context
 
-Интерфейс клиента переделывается по образцу herdr: темы, мышь, меню,
-боковая панель с непрочитанными, звук и всплывающие уведомления. Часть этого
-выходит за пределы зашифрованного файла состояния или за пределы самого
-терминала. Это меняет то, что видно на диске и в системе. Поэтому по
-правилу 2 нужно решение владельца.
+The client's interface was rebuilt after herdr: themes, mouse, menus, a contact
+list with unread counts, sound and pop-up notifications. Some of this reaches
+beyond the encrypted state file or beyond the terminal itself, which changes
+what is visible on disk and in the system. So under rule 2 it needs the
+maintainer's decision.
 
-## 1. Настройки интерфейса лежат в открытом файле
+## 1. Interface settings live in a plain file
 
-**Предложение.** Файл `~/.termchat/settings.json` (права 0600, запись через
-`data::write_atomic`). В нём только:
+**Proposal.** `~/.termchat/settings.json` (mode 0600, written with
+`data::write_atomic`). It holds only:
 
-- тема;
-- звук вкл./выкл.;
-- уведомления ОС вкл./выкл.;
-- ширина боковой панели;
-- мышь вкл./выкл.
+- the theme;
+- sound on/off;
+- system notifications on/off;
+- the contact list width;
+- mouse on/off.
 
-Никаких ключей, имён, контактов, времени и счётчиков. Битый или чужой файл
-читается как настройки по умолчанию.
+No keys, names, contacts, times or counters. A broken or foreign file reads as
+the defaults.
 
-**Зачем открытый.** Экран разблокировки и первого запуска должен быть в
-выбранной теме, а до ввода пароля зашифрованные данные недоступны.
+**Why plain.** The unlock and first-run screens should use the chosen theme, and
+before the password is typed the encrypted data is not available.
 
-**Цена.** Файл показывает, что termchat установлен. Это и так видно по
-`~/.termchat/state`. Выбор темы ничего не говорит о собеседниках.
+**Cost.** The file shows that termchat is installed, which `~/.termchat/state`
+shows anyway. A theme choice says nothing about contacts.
 
-**Стирание.** `data::wipe` (кнопка wipe и пароль под принуждением, ADR-003)
-стирает и этот файл. После стирания каталог выглядит как после чистой
-установки.
+**Erasing.** `data::wipe` (the wipe action and the duress password, ADR-003)
+erases this file too. After erasing, the folder looks like a fresh install.
 
-## 2. Число непрочитанных хранится в зашифрованном файле
+## 2. Unread counts are stored in the encrypted file
 
-Сейчас счётчик `Contact::unread` теряется при выходе. Он будет сохраняться
-вместе с остальными данными внутри зашифрованного файла. На relay и в
-открытые файлы он не попадает.
+The `Contact::unread` counter used to be lost on exit. It is now saved with the
+rest of the data inside the encrypted file. It never reaches the relay or any
+plain file.
 
-## 3. Звук
+## 3. Sound
 
-Звук играет внешний системный плеер в фоне:
+An external system player plays the sound in the background:
 
 - macOS: `afplay /System/Library/Sounds/Glass.aiff`;
-- Linux: `canberra-gtk-play -i message-new-instant`, иначе `paplay` со
-  стандартным звуком freedesktop;
+- Linux: `canberra-gtk-play -i message-new-instant`, otherwise `paplay` with the
+  standard freedesktop sound;
 - Windows: `powershell -NoProfile -Command [System.Media.SystemSounds]::Asterisk.Play()`;
-- если плеера нет, терминальный звонок `\x07`.
+- with no player, the terminal bell `\x07`.
 
-Аргументы фиксированы в коде. Ни текст сообщения, ни имя собеседника, ни
-другой внешний ввод в команду не попадают. Не чаще одного раза в 2 секунды,
-чтобы поток сообщений не превращался в шум. По умолчанию включён, отключается
-в настройках.
+The arguments are fixed in the code. No message text, contact name or other
+outside input goes into the command. At most once every 2 seconds, so a burst of
+messages does not turn into noise. On by default, can be turned off in the
+settings.
 
-**Отвергнуто.** Встроенный звуковой файл (лицензия на звук, размер
-бинарника) и аудиобиблиотека (новая зависимость ради одного звука).
+**Rejected.** A bundled sound file (licensing, binary size) and an audio library
+(a new dependency for one sound).
 
-## 4. Уведомления
+## 4. Notifications
 
-- **Внутри termchat** всплывающее окно справа снизу на 5 секунд: имя
-  контакта и «new message» или «contact request». Текст сообщения не
-  показывается. Не появляется, если этот чат открыт и окно терминала в фокусе.
-- **Уведомления ОС** через терминал (OSC 9, OSC 777). По умолчанию
-  **выключены**. Включённые показывают только фиксированный текст
-  «termchat: new message», без имени и текста. Причина: ОС хранит историю
-  уведомлений вне termchat (macOS — в открытой базе в профиле пользователя),
-  и она переживает стирание данных termchat.
-- **Заголовок окна** терминала: `termchat` или `termchat (N)`, где N — общее
-  число непрочитанных. Имён нет: заголовок видят панель задач, переключатель
-  окон и запись экрана.
+- **Inside termchat:** a card in the bottom-right corner for 5 seconds with the
+  contact's name and "new message" or "contact request". The message text is not
+  shown. It does not appear if that chat is open and the terminal window has
+  focus.
+- **System notifications** through the terminal (OSC 9; OSC 99 in kitty). **Off**
+  by default. When on, they show only the fixed text "termchat: new message",
+  with no name or text. Reason: the operating system keeps a notification
+  history outside termchat (macOS in a plain database in the user's profile), and
+  it survives erasing termchat's data.
+- **The terminal window title:** `termchat` or `termchat (N)`, where N is the
+  total unread count. No names: the title is visible to the task bar, the window
+  switcher and screen recordings.
 
-## 5. Мышь
+## 5. Mouse
 
-Захват мыши включён по умолчанию, как в herdr. Пока он включён, обычное
-выделение текста мышью перехватывается; в большинстве терминалов выделение
-работает с зажатым Shift. Захват отключается в настройках.
+Mouse capture is on by default, as in herdr. While it is on, ordinary text
+selection with the mouse is captured; in most terminals selection works with
+Shift held. Capture can be turned off in the settings.
 
-## Что не меняется
+## What does not change
 
-Протокол, relay, формат зашифрованного файла (кроме сохранения `unread`),
-криптография. Содержимое сообщений по-прежнему не сканируется (ADR-006).
+The protocol, the relay, the encrypted file format (apart from saving `unread`)
+and the cryptography. Message contents are still never scanned (ADR-006).

@@ -2,6 +2,8 @@
 
 # termchat
 
+По-русски: [README.ru.md](README.ru.md).
+
 A private, text-only messenger for the terminal. End-to-end encrypted with
 [vodozemac](https://github.com/matrix-org/vodozemac) (Olm: X3DH-style handshake and
 Double Ratchet, the design behind Signal and Matrix). Optional Tor. No accounts,
@@ -78,7 +80,7 @@ termchat runs in a terminal window. Use the keyboard or the mouse; press **?** (
 **F1**) at any time for the list of keys, and **Ctrl+P** for the menu, which also
 holds this guide.
 
-По-русски: [docs/manual.ru.md](docs/manual.ru.md).
+По-русски: [README.ru.md](README.ru.md).
 
 ### 1. Install
 

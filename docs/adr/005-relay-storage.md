@@ -1,66 +1,87 @@
-# ADR-005: хранилище relay
+# ADR-005: relay storage
 
-Статус: принято, реализовано в M5. Дата: 2026-10-15.
+Status: accepted, implemented in M5. Date: 2026-10-15. Русская версия: [005-relay-storage.ru.md](005-relay-storage.ru.md).
 
-## Контекст
+## Context
 
-Сейчас всё состояние relay живёт в памяти. После перезапуска пропадают:
-- недоставленные конверты (офлайн-доставка ломается);
-- prekeys (новые сессии с офлайн-пользователем невозможны, пока он не подключится);
-- баны (забаненный ключ снова может войти, ADR-006).
+All relay state lived in memory. A restart lost:
+- undelivered envelopes (offline delivery breaks);
+- prekeys (no new sessions with an offline user until they reconnect);
+- bans (a banned key can come back, ADR-006).
 
-Нужно хранить это на диске, не превращая relay в архив метаданных.
+This has to go to disk without turning the relay into a metadata archive.
 
-## Решение
+## Decision
 
-### Движок: SQLite (`rusqlite`, фича `bundled`)
-- Один файл `termchat-relay.db` (флаг `--db`), режим WAL. Relay ставит `umask 077` при старте, поэтому база, её `-wal`/`-shm` и журнал жалоб создаются с правами `0600` (WAL создаётся позже базы и иначе получил бы права по umask).
-- Версия схемы в `PRAGMA user_version`, миграции при старте.
-- Оператор может смотреть баны и очередь обычным `sqlite3`.
-- Отвергнуто: `redb`. Это чистый Rust, без компиляции C, но менее проверен временем, и инспектировать его нечем.
+### Engine: SQLite (`rusqlite`, `bundled` feature)
+- One file, `termchat-relay.db` (`--db`), in WAL mode. The relay sets
+  `umask 077` at start, so the database, its `-wal`/`-shm` files and the report
+  log are created with mode `0600` (the WAL file is created after the database
+  and would otherwise follow the umask).
+- Schema version in `PRAGMA user_version`, migrations at start.
+- Operators can inspect bans and the queue with plain `sqlite3`.
+- Rejected: `redb`. Pure Rust with no C to compile, but less proven, and there is
+  nothing to inspect it with.
 
-### Что хранится на диске
+### What is stored on disk
 
-| Таблица | Поля | Срок |
+| Table | Fields | Lifetime |
 |---|---|---|
-| `accounts` | ed25519, created_at, last_seen, banned | 90 дней без подключений → удаляется вместе с ключами и очередью |
-| `prekeys` | ed25519, key, signature, is_fallback | пока не выданы |
-| `queue` | id, recipient, sender, envelope, created_at | до `Ack` или TTL 14 дней |
+| `accounts` | ed25519, created_at, last_seen, banned | deleted with its keys and queue after 90 days without a connection |
+| `prekeys` | ed25519, key, signature, is_fallback | until handed out |
+| `queue` | id, recipient, sender, envelope, created_at | until `Ack` or a TTL of 14 days |
 
-### Что НЕ хранится на диске (только в памяти, теряется при перезапуске)
-- **Кто кому писал** (граф для лимита новых собеседников и проверки жалоб). На диске это был бы граф общения, который достаётся любому, кто изъял сервер. Цена: после перезапуска лимит новых собеседников начинается заново, а жалоба засчитывается, только если переписка была уже после перезапуска.
-- Счётчики жалоб до бана. На диск попадает только итог: бан.
-- Лимиты частоты, онлайн-соединения, IP.
+### What is NOT stored on disk (memory only, lost on restart)
+- **Who wrote to whom** (the graph behind the new-recipient limit and report
+  checks). On disk it would be a social graph handed to anyone who seizes the
+  server. Cost: after a restart the new-recipient limit starts over, and a report
+  counts only for conversations after the restart.
+- Report counters before a ban. Only the outcome, the ban, goes to disk.
+- Rate limits, live connections, IP addresses.
 
-Граф общения на диске всё равно есть, но только внутри очереди: `sender` и `recipient` недоставленных конвертов, не дольше 14 дней. Это нужно для доставки. Доставленные конверты удаляются сразу после `Ack`.
+A social graph does exist on disk, but only inside the queue: `sender` and
+`recipient` of undelivered envelopes, for at most 14 days. Delivery needs it.
+Delivered envelopes are deleted right after `Ack`.
 
-### Квоты и очистка
-- На получателя: 1000 конвертов и 10 MiB (как сейчас).
-- На весь relay: `--max-queue` (по умолчанию 10 GiB). Сверх лимита — `QueueFull`.
-- Раз в 10 минут: удалить конверты старше 14 дней и аккаунты без подключений 90 дней.
-- После удаления — `PRAGMA incremental_vacuum`, чтобы освобождённые страницы не хранили старый шифртекст дольше нужного. Остатки на SSD возможны (см. ADR-003), но там только шифртекст.
+### Quotas and cleanup
+- Per recipient: 1000 envelopes and 10 MiB.
+- Per relay: `--max-queue` (10 GiB by default). Past it, `QueueFull`.
+- Every 10 minutes: delete envelopes older than 14 days and accounts unseen for
+  90 days.
+- After deleting, `PRAGMA incremental_vacuum`, so freed pages do not hold old
+  ciphertext longer than needed. Leftovers on SSDs are possible (see ADR-003),
+  but they are ciphertext only.
 
-### Конкурентный доступ
-Одно соединение SQLite под тем же глобальным замком, что и состояние в памяти. Все запросы короткие (по ключу или id). Если relay станет загруженным — пул соединений и замки по ключам.
+### Concurrency
+One SQLite connection under the same global lock as the in-memory state. All
+queries are short (by key or id). If a relay gets busy: a connection pool and
+per-key locks.
 
-### Удаление старого fallback key (ADR-002)
-Клиент запоминает время ротации fallback key в своих данных и вызывает `forget_fallback_key` через TTL + 1 день (15 дней). Это тот же срок, что живёт конверт в очереди, так что сообщение на старый ключ успеет прийти.
+### Dropping the old fallback key (ADR-002)
+The client stores when it rotated the fallback key and calls
+`forget_fallback_key` TTL + 1 day (15 days) later. That is as long as an envelope
+can live in the queue, so a message to the old key still arrives in time.
 
-## Что видно при изъятии диска relay
+## What a seized relay disk shows
 
-- публичные ключи пользователей, время регистрации и последнего подключения;
-- публичные prekeys;
-- недоставленный шифртекст с отправителем, получателем и временем, не старше 14 дней;
-- список забаненных ключей.
+- users' public keys, registration and last-seen times;
+- public prekeys;
+- undelivered ciphertext with sender, recipient and time, at most 14 days old;
+- the list of banned keys.
 
-Ни содержимого, ни ников, ни IP, ни истории доставленных сообщений. Добавить в `docs/threat-model.md`.
+No contents, nicknames, IP addresses or history of delivered messages. Recorded
+in `docs/threat-model.md`.
 
-## Последствия
+## Consequences
 
-- Новая зависимость `rusqlite` (bundled SQLite компилируется из C). Лицензии MIT и public domain, `cargo deny` их пропустит.
-- `relay` перестаёт быть «без состояния»: нужна инструкция по бэкапу и удалению `termchat-relay.db` (M6).
-- Тест: конверт, отправленный офлайн-получателю, доставляется после перезапуска relay; бан переживает перезапуск; просроченные конверты и аккаунты удаляются.
+- A new dependency, `rusqlite` (bundled SQLite is compiled from C). Licences MIT
+  and public domain, accepted by `cargo deny`.
+- The relay is no longer stateless: `docs/self-host.md` explains how to back up
+  and delete `termchat-relay.db`.
+- Tests: an envelope sent to an offline recipient is delivered after a relay
+  restart; a ban survives a restart; expired envelopes and accounts are deleted.
 
-## Решения по открытым вопросам
-- 90 дней до удаления неактивного аккаунта, глобальный лимит 10 GiB — приняты как значения по умолчанию (`Limits`).
-- Забаненные аккаунты не удаляются по сроку неактивности.
+## Answers to the open questions
+- 90 days before an inactive account is deleted and a 10 GiB global limit are
+  the defaults (`Limits`).
+- Banned accounts are not deleted for inactivity.

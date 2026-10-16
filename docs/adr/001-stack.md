@@ -1,42 +1,60 @@
-# ADR-001: язык, криптоядро, сериализация, лицензия
+# ADR-001: language, crypto core, serialization, licence
 
-Статус: принято. Дата: 2026-10-15.
+Status: accepted. Date: 2026-10-15. Русская версия: [001-stack.ru.md](001-stack.ru.md).
 
-## Контекст
+## Context
 
-Нужен приватный текстовый мессенджер с E2EE, офлайн-доставкой через публичный relay и ядром, которое позже подключится к Swift и Kotlin. Своя криптография запрещена.
+We need a private, text-only messenger with end-to-end encryption, offline
+delivery through a public relay, and a core that can later be bound to Swift
+and Kotlin. Home-made cryptography is not allowed.
 
-## Решения
+## Decisions
 
 ### Rust 1.99, edition 2024
-- Безопасность памяти без GC, один статический бинарник для relay, UniFFI для мобильных платформ.
-- Версия зафиксирована в `rust-toolchain.toml`, `rust-version = "1.99"` в workspace.
+- Memory safety without a GC, one static binary for the relay, UniFFI for mobile
+  platforms.
+- Pinned in `rust-toolchain.toml`, `rust-version = "1.99"` in the workspace.
 
-### vodozemac 0.11 для E2EE
-- Rust-реализация Olm (3DH + Double Ratchet) и Megolm от Matrix, лицензия Apache-2.0. Прошла внешний аудит (Least Authority, 2022).
-- Из коробки: one-time и fallback-ключи (сессия устанавливается, пока получатель офлайн), forward secrecy, post-compromise security, сериализуемое состояние (`pickle`). Megolm пригодится для групп.
-- Отвергнуто:
-  - `snow` (Noise): только интерактивное рукопожатие, офлайн-доставку пришлось бы строить самим из примитивов;
-  - `libsignal`: AGPL, нет на crates.io, тяжёлый и заточен под сервер Signal.
-- Риск: аудит относится к версии 2022 года, новые версии не аудировались целиком. Принимаем: это всё равно лучше любого своего кода.
+### vodozemac 0.11 for end-to-end encryption
+- Matrix's Rust implementation of Olm (3DH + Double Ratchet) and Megolm, licensed
+  Apache-2.0. Externally audited (Least Authority, 2022).
+- Out of the box: one-time and fallback keys (a session can start while the
+  recipient is offline), forward secrecy, post-compromise security, serializable
+  state (`pickle`). Megolm will help with groups.
+- Rejected:
+  - `snow` (Noise): interactive handshakes only; offline delivery would have to
+    be built from primitives;
+  - `libsignal`: AGPL, not on crates.io, heavy and tied to Signal's server.
+- Risk: the audit covers the 2022 version; newer versions were not audited as a
+  whole. Accepted: still far better than any code of our own.
 
-### postcard для сериализации
-- Компактный, без `std`-зависимостей, стабильный формат (1.x), MIT OR Apache-2.0.
-- Отвергнуто: `bincode` — RUSTSEC-2025-0141 «Bincode is unmaintained» (январь 2026), `cargo deny` будет его блокировать.
-- Лимиты размера проверяются до декодирования (длина WS-фрейма), а не после.
+### postcard for serialization
+- Compact, no `std` dependencies, stable format (1.x), MIT OR Apache-2.0.
+- Rejected: `bincode`, RUSTSEC-2025-0141 "Bincode is unmaintained" (January
+  2026); `cargo deny` would block it.
+- Size limits are checked before decoding (the WS frame length), not after.
 
 ### AGPL-3.0-or-later
-- Любой, кто запускает изменённый relay как сервис, обязан открыть код. Это защищает пользователей публичных relay.
-- Зависимости должны быть совместимы с AGPL: разрешённый список лицензий в `deny.toml`.
+- Anyone who runs a modified relay as a service must publish the code. This
+  protects the users of public relays.
+- Dependencies must be AGPL-compatible: the allowed licences are listed in
+  `deny.toml`.
 
-### Строгие lints для всего workspace
-- `unsafe_code = "forbid"` во всех крейтах (строже, чем требовал исходный план: там только `core` и `proto`). Если `unsafe` понадобится в `relay` или `client`, это обсуждается отдельно.
-- `clippy::unwrap_used` и `clippy::expect_used` запрещены вне тестов (правило 8).
+### Strict lints across the workspace
+- `unsafe_code = "forbid"` in every crate (stricter than the original plan, which
+  asked it only for `core` and `proto`). If `unsafe` is ever needed in `relay` or
+  `client`, that is a separate discussion.
+- `clippy::unwrap_used` and `clippy::expect_used` are denied outside tests.
 
-### Имена пакетов
-`termchat-proto`, `termchat-core`, `termchat-relay`, `termchat`. Пакет нельзя назвать `core`: имя конфликтует со встроенным крейтом Rust. Папки в `crates/` остаются короткими.
+### Package names
+`termchat-proto`, `termchat-core`, `termchat-relay`, `termchat`. A package cannot
+be called `core`: it clashes with Rust's built-in crate. The folders in
+`crates/` keep the short names.
 
-## Последствия
+## Consequences
 
-- Криптопротокол целиком определяется vodozemac. Наш код отвечает за транспорт, хранение и проверки привязки ключей (`docs/protocol.md`, раздел 7).
-- Обновления vodozemac проверяются по changelog: смена формата pickle требует миграции хранилища.
+- The cryptographic protocol is defined entirely by vodozemac. Our code is
+  responsible for transport, storage and key-binding checks
+  (`docs/protocol.md`, section 7).
+- vodozemac updates are reviewed against the changelog: a change in the pickle
+  format requires a storage migration.

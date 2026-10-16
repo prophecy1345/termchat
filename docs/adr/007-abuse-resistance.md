@@ -1,145 +1,153 @@
-# ADR-007: устойчивость к злоупотреблениям после аудита
+# ADR-007: abuse resistance after the audit
 
-Статус: **принято** с поправками ниже (владелец поручил решение исполнителю, 2026-10-15). Дата: 2026-10-15.
+Status: **accepted** with the amendments below (the maintainer delegated the
+decision, 2026-10-15). Date: 2026-10-15. Русская версия: [007-abuse-resistance.ru.md](007-abuse-resistance.ru.md).
 
-## Контекст
+## Context
 
-Внутренний аудит кода M0–M6 не нашёл дыр в криптографии, но показал, что
-несколько механизмов защиты публичного relay работают не так, как описано в
-плане проекта и ADR-006. Каждый пункт ниже меняет протокол, лимиты или семантику
-безопасности, поэтому по правилу 2 требует решения владельца. Чистые баги
-(ack без сохранения, вставка как нажатия клавиш, таймаут записи и т. п.)
-исправлены отдельно без ADR.
+An internal review of the M0–M6 code found no holes in the cryptography, but
+showed that several defences of a public relay did not work as the project plan
+and ADR-006 described. Every item below changes the protocol, limits or security
+semantics, so under rule 2 it needs the maintainer's decision. Plain bugs (ack
+before saving, paste acting as key presses, a write timeout and so on) were fixed
+separately, without an ADR.
 
-## 1. Очередь получателя заполняется любым незнакомцем
+## 1. Any stranger can fill a recipient's queue
 
-**Проблема.** `Send` проверяет только существование получателя и лимиты
-отправителя. Квота очереди (1000 конвертов, 10 MiB) общая на получателя.
-Один чужой ключ со скоростью 0.5 сообщ/с заполняет её за ~35 минут: все
-остальные получают `QueueFull`, а жертва при подключении скачивает 10 MiB
-мусора. Блокировка на стороне клиента не помогает: relay о ней не знает.
+**Problem.** `Send` checks only that the recipient exists and the sender's rate
+limits. The queue quota (1000 envelopes, 10 MiB) is shared per recipient. One
+foreign key at 0.5 messages per second fills it in about 35 minutes: everyone
+else gets `QueueFull`, and the victim downloads 10 MiB of junk on connect.
+Blocking in the client does not help: the relay does not know about it.
 
-**Предложение.** Relay уже помнит (в памяти), кому каждый ключ писал
-(`Account::recipients`). Пара считается **взаимной**, если получатель хоть раз
-писал отправителю с момента запуска relay. Для невзаимных пар вводится
-суб-квота: не больше **20 конвертов и 256 KiB** от одного отправителя в
-очереди одного получателя. Сверх неё — `QueueFull` только этому отправителю.
-Взаимные пары ограничены общей квотой, как сейчас.
+**Proposal.** The relay already remembers (in memory) whom each key wrote to
+(`Account::recipients`). A pair is **mutual** if the recipient has written to the
+sender at least once since the relay started. Non-mutual pairs get a sub-quota:
+at most **20 envelopes and 256 KiB** from one sender in one recipient's queue.
+Past it, `QueueFull` for that sender only. Mutual pairs are limited by the
+overall quota, as before.
 
-Для этого в `queue_stats` добавляется подсчёт по `(recipient, sender)`:
-индекс `queue(recipient, sender)` уже покрывается существующими полями.
+This adds a count per `(recipient, sender)` to `queue_stats`; the existing
+fields already cover a `queue(recipient, sender)` index.
 
-**Цена.** После перезапуска relay все пары невзаимны, пока получатель не
-напишет снова: до этого момента даже друг ограничен 20 конвертами офлайн.
-Приемлемо: 20 сообщений хватает, чтобы заметить и ответить.
+**Cost.** After a relay restart every pair is non-mutual until the recipient
+writes again: until then even a friend is limited to 20 envelopes while you are
+offline. Acceptable: 20 messages are enough to notice and reply.
 
-**Отвергнуто.** Хранить граф взаимности на диске (ADR-005 запрещает граф
-общения на диске). Квота по IP (не работает через Tor и CGNAT).
+**Rejected.** Keeping the mutuality graph on disk (ADR-005 forbids a social graph
+on disk). A per-IP quota (does not work through Tor or CGNAT).
 
-## 2. «Запросы контакта» не ограничивают поток сообщений
+## 2. "Contact requests" do not limit the flow of messages
 
-**Проблема.** После первого `ContactRequest` контакт создаётся в core с
-`is_request = true`, но все последующие `Text` от него расшифровываются и
-показываются в чате наравне с принятыми контактами. Экран «запросы»
-фактически не изолирует незнакомца. Кроме того, отклонение (Ctrl+D)
-удаляет контакт, и незнакомец может прислать новый запрос: отказ не
-запоминается.
+**Problem.** After the first `ContactRequest` the core creates the contact with
+`is_request = true`, but every later `Text` from it is decrypted and shown in
+the chat like those of accepted contacts. The "requests" view does not isolate
+a stranger. Also, rejecting (Ctrl+D) deletes the contact, and the stranger can
+send a new request: the refusal is not remembered.
 
-**Предложение.**
-- В `Client::decrypt`, пока `is_request == true`, принимаются только
-  `ContactRequest` (повтор обновляет `note` и `nickname`). `Text` и
-  `ContactAccept` расшифровываются (ratchet должен продвинуться), но
-  возвращают `Error::NotAccepted`, клиент их не показывает и не хранит,
-  только увеличивает счётчик «N сообщений ждут принятия».
-- Кап на число ожидающих запросов: **50**. Сверх него `ContactRequest`
-  расшифровывается (отказаться до расшифровки нельзя: prekey уже потрачен),
-  но контакт и сессия не создаются. Это ограничивает рост файла состояния.
-- Локальный список отклонённых ключей (`Data::rejected: Vec<Ed25519Key>`,
-  кап 1000). Ctrl+D на запросе добавляет в него ключ; сообщения от таких
-  ключей не расшифровываются вовсе (как `blocked`), relay получает `Ack`.
-  Пользователь может снять отказ, добавив приглашение этого человека.
+**Proposal.**
+- In `Client::decrypt`, while `is_request == true`, only `ContactRequest` is
+  accepted (a repeat updates `note` and `nickname`). `Text` and `ContactAccept`
+  are decrypted (the ratchet must move) but return `Error::NotAccepted`; the
+  client neither shows nor keeps them, it only counts "N messages wait for
+  acceptance".
+- A cap on pending requests: **50**. Past it a `ContactRequest` is decrypted (it
+  cannot be refused before decryption: the prekey is already spent), but no
+  contact or session is created. This bounds the growth of the state file.
+- A local list of rejected keys (`Data::rejected: Vec<Ed25519Key>`, capped at
+  1000). Ctrl+D on a request adds the key; messages from such keys are not
+  decrypted at all (like `blocked`) and the relay gets an `Ack`. The user can take
+  the refusal back by adding that person's invite.
 
-**Отвергнуто.** Передавать список отклонённых на relay: это раскрывает граф.
+**Rejected.** Sending the rejected list to the relay: it reveals the graph.
 
-## 3. Бан через три подставных ключа
+## 3. A ban through three throwaway keys
 
-**Проблема.** По ADR-006 жалоба засчитывается, если ключ хоть раз писал
-жалующемуся. Добавление контакта по приглашению (Ctrl+A) само отправляет
-`ContactRequest`. Значит, человек, добавивший три «публичных» приглашения
-(например, из поста «добавляйте меня»), может быть забанен их владельцами
-без единого сообщения с его стороны.
+**Problem.** Under ADR-006 a report counts if the key ever wrote to the reporter.
+Adding a contact from an invite (Ctrl+A) sends a `ContactRequest` by itself. So
+someone who added three "public" invites (say, from a "add me" post) could be
+banned by their owners without sending a single message.
 
-**Варианты.**
-- A. Считать жалобу, только если жалующийся **принял** контакт: relay этого
-  не видит, но видит ответный трафик. Условие: отправитель писал жалующемуся
-  **не меньше 3 конвертов** (один `ContactRequest` не считается).
-- B. Порог K = 5 вместо 3.
-- C. Жалобы от ключей моложе 7 дней весят вдвое меньше (нужен `created_at`,
-  он уже есть в `accounts`).
+**Options.**
+- A. Count a report only if the reporter **accepted** the contact: the relay
+  cannot see that, but it sees traffic in return. Condition: the sender wrote to
+  the reporter **at least 3 envelopes** (one `ContactRequest` does not count).
+- B. Threshold K = 5 instead of 3.
+- C. Reports from keys younger than 7 days weigh half (needs `created_at`, which
+  `accounts` already has).
 
-**Предложение.** A + C. Это оставляет бан автоматическим для настоящего спама
-(спамер шлёт много сообщений многим) и делает сговор дороже: три ключа
-недельной давности, которым жертва написала хотя бы по три сообщения.
+**Proposal.** A + C. Bans stay automatic for real spam (a spammer sends many
+messages to many people), and collusion gets more expensive: three week-old keys
+to which the victim wrote at least three messages each.
 
-## 4. Потеря «живой» доставки при переполненном канале
+## 4. Live delivery lost on a full channel
 
-**Проблема.** Если канал к онлайн-клиенту полон (256 фреймов), конверт
-остаётся в очереди, но клиент узнает о нём только при следующем
-переподключении, которое сам не инициирует.
+**Problem.** If the channel to an online client is full (256 frames), the
+envelope stays in the queue, but the client learns of it only on its next
+reconnect, which it does not start by itself.
 
-**Предложение.** При неудачном `try_send` relay закрывает соединение этого
-получателя. Клиент переподключается через 1–2 секунды и получает всю очередь
-штатным путём. Изменений формата нет. Альтернатива (`ServerFrame::More`)
-требует нового фрейма и логики на клиенте ради редкого случая.
+**Proposal.** When `try_send` fails, the relay closes that recipient's
+connection. The client reconnects within 1–2 seconds and receives the whole
+queue the normal way. No format change. The alternative (`ServerFrame::More`)
+needs a new frame and client logic for a rare case.
 
-## 5. Подмена имени контакта
+## 5. Contact name spoofing
 
-**Проблема.** Ник выбирает собеседник. Незнакомец присылает запрос с ником
-«Alice» и в списке отличается от настоящей Alice только маркером `?`/`!`.
-Любой контакт может переименоваться в любой момент повторным
+**Problem.** The nickname is chosen by the other person. A stranger sends a
+request named "Alice", and in the list differs from the real Alice only by the
+`?`/`!` mark. Any contact can rename themselves at any time with another
 `ContactAccept`.
 
-**Предложение.**
-- Для непроверенных контактов (`verified == false`) рядом с ником всегда
-  показывать первые 5 цифр отпечатка: `Alice·48213`.
-- Если ник совпадает с ником другого контакта или с собственным ником,
-  показывать отпечаток и у проверенного.
-- `ContactAccept` обновляет ник только один раз (пока `nickname == None`);
-  позже имя меняется только локально (Ctrl+R).
+**Proposal.**
+- For unverified contacts (`verified == false`) always show the first 5 digits of
+  the fingerprint next to the nickname: `Alice·48213`.
+- If a nickname matches another contact's or our own, show the fingerprint for a
+  verified contact too.
+- `ContactAccept` updates the nickname only once (while `nickname == None`);
+  after that the name changes only locally (Ctrl+R).
 
-## 6. Смена основного пароля
+## 6. Changing the main password
 
-**Проблема.** Единственный способ сменить пароль — wipe и восстановление из
-копии. Формат хранилища (ADR-003) допускает перешифровку слота без смены DEK.
+**Problem.** The only way to change the password was to wipe and restore from a
+backup. The storage format (ADR-003) allows re-encrypting a slot without
+changing the DEK.
 
-**Предложение.** `store::rekey(key: &mut FileKey, new_password)` переписывает
-слот `real` под новый KEK с новой солью; duress-слот не трогается. В клиенте:
-Ctrl+P → p, форма «текущий пароль, новый, повтор», проверки те же, что при
-первом запуске, плюс расстояние ≥ 4 от duress-пароля, если он задан.
+**Proposal.** `store::rekey(key: &mut FileKey, new_password)` rewrites the `real`
+slot under a new KEK with a new salt; the duress slot is untouched. In the
+client: a "current password, new, repeat" form with the same checks as on first
+run, plus a distance of at least 4 from the duress password if one is set.
 
-## Последствия
+## Consequences
 
-- Протокол (`docs/protocol.md`): раздел 11 (суб-квота невзаимных пар), раздел 7
-  (поведение до принятия запроса). Версия протокола не меняется: формат
-  фреймов прежний, меняется только поведение.
-- ADR-006: условие засчитывания жалобы (п. 3).
-- Тесты: заполнение очереди незнакомцем упирается в суб-квоту, друг — нет;
-  текст до принятия не показывается; отклонённый ключ не возвращается;
-  три свежих ключа не банят; подмена ника видна; смена пароля открывает файл
-  новым паролем, duress работает по-прежнему.
+- Protocol (`docs/protocol.md`): section 11 (non-mutual sub-quota), section 7
+  (behaviour before a request is accepted). The protocol version does not
+  change: the frame format is the same, only behaviour changes.
+- ADR-006: the condition for a report to count (item 3).
+- Tests: a stranger filling the queue hits the sub-quota, a friend does not; text
+  before acceptance is not shown; a rejected key does not come back; three fresh
+  keys cannot ban; name spoofing is visible; a password change opens the file
+  with the new password and duress still works.
 
-## Решения
+## Decisions
 
-1. **Суб-квота невзаимных пар:** 20 конвертов и 256 KiB, как предложено.
-2. **Запросы:** кап 50 ожидающих запросов и список отклонённых (кап 1000), как предложено. **Поправка:** `Text` до принятия не выбрасываются, а хранятся скрытыми, не больше 5 на запрос, и появляются в чате после принятия. Иначе теряется первое «привет», которое приходит сразу после запроса. Незнакомец всё равно не может засыпать экран: остальные сообщения сверх 5 только считаются. Изоляцию делает клиент: core возвращает `Received::request = true`, и клиент не показывает такие сообщения до принятия.
-3. **Жалобы:** вариант A + C. Relay считает конверты в паре (в памяти); жалоба засчитывается при ≥ 3 конвертах от отправителя к жалующемуся; ключ жалующегося моложе 7 дней весит 0.5; бан при сумме весов ≥ 3.
-4. **Переполненный канал:** relay рвёт соединение получателя, отдельного фрейма нет.
-5. **Ник:** как предложено. Повторный `ContactRequest` обновляет ник, пока контакт ещё запрос; после принятия ник из сети больше не меняется.
-6. **Смена пароля:** **поправка** — проверить «расстояние ≥ 4 от duress-пароля» нельзя: клиент не знает duress-пароль, только его слот. Вместо этого новый пароль не должен открывать duress-слот (иначе он и есть duress-пароль), а форма предупреждает, что опечатка рядом с duress-паролем может всё стереть.
-
-## Открытые вопросы (закрыты решениями выше)
-
-
-1. Значения суб-квоты (20 / 256 KiB) и капа запросов (50).
-2. Вариант для п. 3: A + C, или только B.
-3. Нужен ли в п. 4 отдельный фрейм вместо разрыва соединения.
+1. **Non-mutual sub-quota:** 20 envelopes and 256 KiB, as proposed.
+2. **Requests:** a cap of 50 pending requests and a rejected list (capped at
+   1000), as proposed. **Amendment:** `Text` before acceptance is not thrown away
+   but kept hidden, at most 5 per request, and shown in the chat on acceptance.
+   Otherwise the first "hi" that follows a request right away would be lost. A
+   stranger still cannot flood the screen: anything past 5 is only counted. The
+   client does the isolation: the core returns `Received::request = true` and the
+   client hides such messages until acceptance.
+3. **Reports:** option A + C. The relay counts envelopes per pair (in memory); a
+   report counts with at least 3 envelopes from the sender to the reporter; a
+   reporter key younger than 7 days weighs 0.5; a ban at a total weight of 3.
+4. **Full channel:** the relay drops the recipient's connection; no separate
+   frame.
+5. **Nickname:** as proposed. A repeated `ContactRequest` updates the nickname
+   while the contact is still a request; after acceptance the nickname no longer
+   changes from the network.
+6. **Password change:** **amendment**: "distance of at least 4 from the duress
+   password" cannot be checked, since the client does not know the duress
+   password, only its slot. Instead, the new password must not open the duress
+   slot (otherwise it is the duress password), and the form warns that a typo
+   close to the duress password could erase everything.

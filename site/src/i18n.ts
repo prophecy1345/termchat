@@ -1,5 +1,5 @@
 // Every word on the page, in both languages. Keep in step with README.md and
-// docs/manual.ru.md: the site must not promise more than they do.
+// README.ru.md: the site must not promise more than they do.
 
 export const REPO = "https://github.com/prophecy1345/termchat";
 const RAW = "https://raw.githubusercontent.com/prophecy1345/termchat/main";
@@ -19,6 +19,13 @@ const en = {
   description:
     "An end-to-end encrypted, text-only messenger for the terminal. No accounts, no phone numbers, optional Tor.",
   other: { href: "/ru/", label: "RU" },
+  // Documents in this language, relative to the repository root.
+  docs: {
+    threatModel: "docs/threat-model.md",
+    selfHost: "docs/self-host.md",
+    verify: "README.md#verify-a-release",
+    use: "README.md#acceptable-use",
+  },
   nav: { features: "Features", protection: "Protection", install: "Install" },
   tagline: "Private messages, right in your terminal.",
   lead: "End-to-end encrypted, text only, no accounts. You are a key pair and a nickname you choose; the server only ever sees ciphertext.",
@@ -111,6 +118,12 @@ const ru: typeof en = {
   description:
     "Мессенджер для терминала со сквозным шифрованием и только текстом. Без аккаунтов и номеров телефона, Tor по желанию.",
   other: { href: "/", label: "EN" },
+  docs: {
+    threatModel: "docs/threat-model.ru.md",
+    selfHost: "docs/self-host.ru.md",
+    verify: "README.ru.md#проверка-релиза",
+    use: "README.ru.md#правила-использования",
+  },
   nav: { features: "Возможности", protection: "Защита", install: "Установка" },
   tagline: "Приватная переписка прямо в терминале.",
   lead: "Сквозное шифрование, только текст, никаких аккаунтов. Вы — это пара ключей и ник, который выбираете сами; сервер видит только шифртекст.",

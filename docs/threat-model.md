@@ -1,63 +1,114 @@
-# Модель угроз termchat
+# termchat threat model
 
-Статус: принято (M0, 2026-10-15).
+Status: accepted (M0, 2026-10-15). Русская версия: [threat-model.ru.md](threat-model.ru.md).
 
-## Что защищаем
+## What we protect
 
-- **Содержимое сообщений.** Его знают только отправитель и получатель.
-- **Ключи identity.** Секретные ключи не покидают устройство, кроме зашифрованного паролем экспорта.
-- **Личность пользователя.** Персональных данных проект не собирает: ни имени, ни телефона, ни email. Никнейм виден только собеседникам, relay его не знает.
-- **Целостность и подлинность.** Получатель уверен, от кого сообщение и что оно не изменено, не повторено и не переставлено.
+- **Message contents.** Only the sender and the recipient know them.
+- **Identity keys.** Secret keys never leave the device, except in a
+  password-encrypted export.
+- **The person.** The project collects no personal data: no name, phone number
+  or email. The nickname is visible only to contacts; the relay never learns it.
+- **Integrity and authenticity.** The recipient knows who sent a message and
+  that it was not altered, replayed or reordered.
 
-## Участники и что они видят
+## Who sees what
 
-| Участник | Что видит |
+| Party | What it sees |
 |---|---|
-| Провайдер, Wi-Fi, сеть | Что клиент подключён к relay, время и объём трафика. Содержимое и адресатов не видит: всё внутри TLS. |
-| Оператор relay (или тот, кто изъял сервер) | Публичные ключи пользователей; кто кому пишет и когда (relay знает отправителя по аутентифицированному соединению); размер сообщения с точностью до бакета; IP-адреса подключений в момент работы (на диск не пишутся по умолчанию); очередь недоставленного шифртекста (с M5). Подпись `Auth` неотрицаема: сохранив её, оператор может доказать третьим лицам, что ключ подключался к relay в это время. Штатный relay подписи не хранит. |
-| Собеседник | Содержимое переписки с ним. |
-| Незнакомец, знающий публичный ключ | Может прислать запрос контакта. Может пытаться спамить или исчерпать prekeys. |
+| Internet provider, Wi-Fi, the network | That the client talks to a relay, when, and how much. Not the contents or the recipients: everything is inside TLS. |
+| Relay operator (or whoever seizes the server) | Users' public keys; who writes to whom and when (the relay knows the sender from the authenticated connection); message size rounded up to a bucket; IP addresses of live connections (not written to disk by default); the queue of undelivered ciphertext. The `Auth` signature is non-repudiable: an operator who keeps it can prove to others that a key connected at a given time. The stock relay does not keep it. |
+| A contact | The conversation with them. |
+| A stranger who knows a public key | Can send a contact request. Can try to spam or to exhaust prekeys. |
 
-## Что лежит на диске relay (ADR-005)
+## What is on the relay's disk (ADR-005)
 
-Публичные ключи, время регистрации и последнего подключения; публичные prekeys; недоставленный шифртекст с отправителем, получателем и временем (не старше 14 дней, удаляется сразу после доставки); список забаненных ключей; журнал жалоб (только то, что получатели сами раскрыли). Ни содержимого сообщений, ни ников, ни IP, ни истории доставленных сообщений, ни графа «кто кому писал» сверх очереди.
+Public keys, registration and last-seen times; public prekeys; undelivered
+ciphertext with sender, recipient and time (at most 14 days old, deleted as soon
+as it is delivered); banned keys; the report log (only what recipients chose to
+disclose). No message contents, nicknames, IP addresses, history of delivered
+messages, or "who wrote to whom" beyond the queue.
 
-## Защищаемся от
+## Protected against
 
-1. **Пассивного перехвата** трафика: TLS до relay и E2EE (Olm) между клиентами.
-2. **Компрометации relay**: relay хранит и пересылает только шифртекст.
-3. **MITM при первом контакте**: ручная сверка отпечатка. Пока отпечаток не сверен, клиент показывает контакт как непроверенный.
-4. **Утечки долгоживущего ключа**: Double Ratchet даёт forward secrecy (старые сообщения не расшифровать) и post-compromise security (после восстановления сессия снова безопасна).
-5. **Подделки, повтора, перестановки** сообщений: аутентифицированное шифрование и состояние ratchet в Olm.
-6. **Регистрации под чужим ключом**: relay требует подпись nonce ключом Ed25519.
-7. **Спама**: первое сообщение от незнакомца попадает в «запросы». На relay лимиты частоты по ключу и IP и лимит новых собеседников в сутки.
-8. **Исчерпания one-time prekeys**: fallback key и лимит выдачи ключей на запрашивающего.
-9. **Переполнения очередей**: квота и TTL на получателя.
-10. **Пересылки чужого шифртекста** (misattribution): внутри зашифрованного сообщения лежат ключи отправителя и получателя, клиент их проверяет.
-11. **Раскрытия IP пользователя relay'ю и провайдеру** (опционально, ADR-004): клиент подключается к onion-адресу relay через встроенный Arti и никогда не уходит в обход Tor, даже если Tor не поднялся. Без Tor relay видит IP.
-12. **Подменённого релиза или зависимости** (supply chain): подписанные релизы, воспроизводимые сборки (любой может пересобрать и сравнить хеш), `cargo vet` и `cargo deny` для зависимостей.
+1. **Passive interception:** TLS to the relay and end-to-end encryption (Olm)
+   between clients.
+2. **A compromised relay:** it stores and forwards ciphertext only.
+3. **A man in the middle at first contact:** manual comparison of the safety
+   number. Until it is compared, the client marks the contact as not verified.
+4. **A long-term key leak:** the Double Ratchet gives forward secrecy (old
+   messages stay unreadable) and post-compromise security (the session heals).
+5. **Forged, replayed or reordered messages:** authenticated encryption and the
+   Olm ratchet state.
+6. **Registering under someone else's key:** the relay demands a signature over
+   a nonce with the Ed25519 key.
+7. **Spam:** a stranger's first message lands in "requests". The relay rate-limits
+   by key and IP and limits new recipients per day.
+8. **Exhausting one-time prekeys:** a fallback key and a per-requester limit.
+9. **Queue flooding:** a quota and a TTL per recipient.
+10. **Forwarding someone else's ciphertext** (misattribution): the encrypted
+    message carries the sender's and recipient's keys and the client checks them.
+11. **Revealing the user's IP to the relay and the provider** (optional,
+    ADR-004): the client reaches the relay's onion address through built-in Arti
+    and never falls back to a direct connection, even if Tor fails to start.
+    Without Tor the relay sees the IP.
+12. **A tampered release or dependency** (supply chain): attested releases,
+    reproducible builds (anyone can rebuild and compare hashes), `cargo vet` and
+    `cargo deny` for dependencies.
 
-## Частично защищаемся
+## Partly protected
 
-- **Метаданные.** Размер скрыт padding'ом до бакетов, но relay видит граф общения и время. Sealed sender отложен; формат конверта не содержит поля отправителя, чтобы его можно было добавить без смены формата.
-- **Факт начала новой сессии.** Pre-key сообщение Olm длиннее обычного, relay может это заметить.
-- **Физический доступ к разблокированному устройству.** Автоблокировка после простоя (по умолчанию 5 минут) и клавиша мгновенной блокировки: ключи стираются из памяти, нужен пароль. Исчезающие сообщения и режим «не хранить историю» ограничивают, что можно прочитать. Не спасает, если устройство взяли в первые минуты.
-- **Отказ relay пересылать сообщения.** Помешать нельзя, но можно заметить: у сообщений сквозная нумерация внутри шифртекста, пропуск номера клиент показывает как «сообщения пропали». Перейти на другой relay можно новым приглашением.
-- **Потеря устройства.** Зашифрованный экспорт identity, клиент напоминает сделать его при первом запуске. Без экспорта identity не восстановить. После восстановления собеседники видят предупреждение о новой сессии.
-- **Принуждение выдать пароль.** Duress-пароль (ADR-003) необратимо уничтожает ключ данных и показывает экран первого запуска. Не помогает, если копию диска сняли до ввода пароля. Код открыт, поэтому противник знает о функции. Уничтожение данных после изъятия может быть преступлением и вызвать усиление давления.
-- **Следы интерфейса вне шифрования (ADR-008).** Файл настроек (тема, звук, мышь) лежит открыто и говорит только, что termchat установлен; стирается вместе с данными. Заголовок окна показывает лишь число непрочитанных. Уведомление ОС выключено по умолчанию и всегда содержит один фиксированный текст, потому что ОС хранит историю уведомлений вне termchat. Карточка в углу экрана показывает имя отправителя тому, кто видит экран.
-- **Слабый пароль локального хранилища.** Клиент оценивает стойкость (`zxcvbn`) и отклоняет слабые пароли, предлагает сгенерированную фразу из 6 слов. Argon2id замедляет перебор. Не спасает от пароля, записанного рядом с компьютером.
+- **Metadata.** Size is hidden by padding to buckets, but the relay sees the
+  social graph and timing. Sealed sender is postponed; the envelope has no
+  sender field so it can be added without a format change.
+- **The start of a new session.** An Olm pre-key message is longer than a normal
+  one; the relay can notice.
+- **Physical access to an unlocked device.** Auto-lock after idle time (5
+  minutes by default) and a lock key: keys are wiped from memory and the
+  password is needed. Disappearing messages and "no history" chats limit what
+  can be read. No help if the device is taken within those minutes.
+- **A relay that drops messages.** It cannot be prevented, but it is noticed:
+  messages carry a sequence number inside the ciphertext, and a gap shows as
+  "messages missing". Moving to another relay takes a new invite.
+- **A lost device.** Encrypted identity export; the client reminds you on first
+  run. Without it the identity cannot be recovered. After a restore, contacts
+  see a new-session warning.
+- **Being forced to give a password.** The duress password (ADR-003)
+  irreversibly destroys the data key and shows the first-run screen. No help if
+  the disk was copied before. The code is open, so an adversary knows about the
+  feature. Destroying data after a seizure can be a crime and can increase the
+  pressure.
+- **Interface traces outside encryption (ADR-008).** The settings file (theme,
+  sound, mouse) is plain and says only that termchat is installed; it is wiped
+  with the data. The window title shows only the unread count. The system
+  notification is off by default and always carries one fixed text, because the
+  operating system keeps a notification history outside termchat. The card in
+  the corner shows the sender's name to whoever sees the screen.
+- **A weak storage password.** The client rates strength (`zxcvbn`), rejects weak
+  passwords and offers a generated six-word phrase. Argon2id slows brute force.
+  No help against a password written next to the computer.
 
-## Не защищаемся
+## Not protected
 
-- **Вредоносное ПО на устройстве**, keylogger, скомпрометированный терминал или ОС. Программа с правами пользователя читает память и нажатия клавиш. Снижаем ущерб: на диске всё зашифровано, пока клиент закрыт; core dump отключён; TUI работает в alternate screen и не оставляет переписку в scrollback. Но логирование терминала (`script`, логи tmux) и запись экрана перехватят текст.
-- **Глобальный наблюдатель**, сопоставляющий время трафика. Tor от этого не защищает, нужен mixnet с фоновым трафиком.
-- **Ключи в swap и файле гибернации.** Блокировка памяти (`mlock`) требует `unsafe`, которого нет в проекте. Защита: шифрование диска средствами ОС (FileVault, BitLocker, LUKS).
-- **Windows.** Запрет core dump и права `0600` на файл состояния реализованы только для Unix. На Windows файл защищён паролем, но доступен другим процессам того же пользователя как любой файл в профиле.
+- **Malware on the device**, a keylogger, a compromised terminal or OS. A program
+  running as the user can read memory and keystrokes. We limit the damage: on
+  disk everything is encrypted while the client is closed; core dumps are off;
+  the TUI uses the alternate screen and leaves no conversation in scrollback.
+  But terminal logging (`script`, tmux logs) and screen recording capture text.
+- **A global observer** correlating traffic timing. Tor does not stop that; it
+  needs a mixnet with cover traffic.
+- **Keys in swap and hibernation files.** Locking memory (`mlock`) needs
+  `unsafe`, which the project forbids. Use the OS's disk encryption (FileVault,
+  BitLocker, LUKS).
+- **Windows.** Core-dump suppression and `0600` permissions on the state file
+  exist only on Unix. On Windows the file is protected by the password but is
+  readable by other processes of the same user, like any file in the profile.
 
-## Допущения
+## Assumptions
 
-- Криптография vodozemac и RustCrypto корректна. vodozemac прошёл внешний аудит, наш код — нет.
-- Пользователь сверяет отпечаток по независимому каналу (лично, по телефону).
-- Шифрование диска средствами ОС включено (иначе ключи могут осесть в swap).
-- Системный генератор случайных чисел надёжен.
+- The cryptography of vodozemac and RustCrypto is correct. vodozemac had an
+  external audit; our code has not.
+- Users compare the safety number over an independent channel (in person, by
+  phone).
+- The OS's disk encryption is on (otherwise keys may end up in swap).
+- The system's random number generator is sound.

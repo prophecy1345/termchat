@@ -1,5 +1,7 @@
 # Running your own relay
 
+Русская версия: [self-host.ru.md](self-host.ru.md).
+
 A relay forwards encrypted envelopes. It never sees message contents, nicknames
 or contact lists. See [threat-model.md](threat-model.md) for what it does see.
 

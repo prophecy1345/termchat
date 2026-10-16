@@ -1,64 +1,107 @@
-# ADR-006: злоупотребления, блокировка и жалобы
+# ADR-006: abuse, blocking and reports
 
-Статус: принято, вариант A, реализовано. Дата: 2026-10-15.
+Status: accepted, option A, implemented. Date: 2026-10-15. Русская версия: [006-abuse-and-reports.ru.md](006-abuse-and-reports.ru.md).
 
-## Контекст
+## Context
 
-termchat создан для приватного общения, а не для преступлений: торговли людьми, оружием, наркотиками, подготовки насилия, склонения к самоубийству. Вопрос: как помешать такому использованию, не сломав приватность всех остальных.
+termchat exists for private conversation, not for crime: trafficking in people,
+weapons or drugs, planning violence, pushing someone to suicide. The question is
+how to hinder such use without breaking everyone else's privacy.
 
-## Отвергнуто: фильтр тем в сообщениях
+## Rejected: a topic filter on messages
 
-Ни на relay, ни в клиенте сообщения не сканируются. Причины:
+Messages are not scanned, neither on the relay nor in the client. Why:
 
-1. **Relay видит только шифртекст**, проверять текст может только клиент. А клиент открыт (AGPL): сборка без фильтра занимает минуты. Фильтр остановит только законопослушных.
-2. **Обход тривиален**: кодовые слова, опечатки, транслит, другой язык. Словари и ML-классификаторы проигрывают подбору формулировок.
-3. **Ложные срабатывания бьют по уязвимым**: человек, который пишет другу о мыслях о самоубийстве, жертва, которая просит помощи, журналист, медик. Заблокированное сообщение человека в кризисе — прямой вред.
-4. **Механизм сканирования — это бэкдор**: список тем можно потребовать расширить на политику. Это противоречит модели угроз.
-5. **Готовые решения не подходят**: PhotoDNA и Thorn Safer работают с изображениями, облачные модерации (Perspective, OpenAI Moderation) требуют отправить текст наружу. Apple отказалась от сканирования на устройстве в 2022 году, законопроект ЕС «Chat Control» годами блокируется по тем же причинам.
+1. **The relay sees only ciphertext;** only the client could check text. The
+   client is open source (AGPL): a build without the filter takes minutes. A
+   filter would stop only the law-abiding.
+2. **Evasion is trivial:** code words, typos, transliteration, another language.
+   Word lists and ML classifiers lose to rephrasing.
+3. **False positives hurt the vulnerable:** someone writing to a friend about
+   suicidal thoughts, a victim asking for help, a journalist, a doctor. Blocking
+   the message of a person in crisis does direct harm.
+4. **A scanning mechanism is a backdoor:** its topic list can be ordered to grow
+   to politics. That contradicts the threat model.
+5. **Ready-made tools do not fit:** PhotoDNA and Thorn Safer work on images;
+   cloud moderation (Perspective, OpenAI Moderation) needs the text sent out.
+   Apple dropped on-device scanning in 2022, and the EU "Chat Control" proposal
+   has been blocked for years for the same reasons.
 
-## Принято: дизайн без охвата
+## Accepted: a design without reach
 
-Торговле и вербовке нужны охват и поиск. Мы их не даём (правило 15 в `CONTRIBUTING.md`):
-- нет поиска пользователей и каталога ников, связь только по приглашению;
-- нет публичных каналов, рассылок и публичных групп; группы, если появятся, только маленькие и по приглашению;
-- незнакомцы попадают в «запросы», на relay лимит новых собеседников в сутки;
-- только текст.
+Trafficking and recruitment need reach and search. We do not provide them
+(rule 15 in `CONTRIBUTING.md`):
+- no user search and no nickname directory; contact only by invite;
+- no public channels, broadcasts or public groups; groups, if they come, only
+  small and by invite;
+- strangers land in "requests"; the relay limits new recipients per day;
+- text only.
 
-## Принято и сделано: блокировка (M4)
+## Accepted and done: blocking (M4)
 
-Ctrl+B в клиенте. Сообщения от заблокированного ключа подтверждаются relay'ю и выбрасываются **без расшифровки**, писать ему нельзя. Блокировка локальная: relay о ней не знает (иначе он узнал бы ещё кусок социального графа).
+Ctrl+B in the client. Messages from a blocked key are acknowledged to the relay
+and thrown away **without decryption**, and the user cannot write to it.
+Blocking is local: the relay does not know (otherwise it would learn another
+piece of the social graph).
 
-## Предложено: жалоба оператору relay
+## Proposed: reporting to the relay operator
 
-Получатель может по своей воле переслать оператору relay сообщение и ключ отправителя. Оператор может забанить ключ на своём relay. Сканирования нет: читает только тот, кому написали и кто сам решил пожаловаться.
+A recipient may choose to forward a message and the sender's key to the relay
+operator. The operator may ban the key on their relay. No scanning: only the
+person who was written to, and who decided to report, reads anything.
 
-### Вариант A (принят): жалоба без криптографического доказательства
+### Option A (accepted): a report without cryptographic proof
 
-- `ClientFrame::Report { sender, text }` — открытый текст, который получатель сам решил раскрыть. Клиент предупреждает: «оператор relay прочитает это сообщение».
-- Relay проверяет правдоподобие по метаданным, которые у него и так есть: отправитель действительно слал конверты этому получателю за последние N дней.
-- Автоматический бан ключа только после жалоб от **K разных** получателей (предложение: K = 3), у которых действительно была переписка с этим ключом. Меньше — запись в журнал оператора для ручного разбора.
-- Бан: relay отказывает ключу в `Auth`. Новый ключ упирается в лимит регистраций по IP.
-- Журнал жалоб — отдельный файл на relay, только для оператора, удаляется после разбора. Хранит ключи и раскрытый текст, без IP.
-- Риск: получатель может выдумать текст. Защита — порог K и проверка по метаданным. Бан на одном relay не мешает уйти на другой.
+- `ClientFrame::Report { sender, text }`: plaintext the recipient chose to
+  disclose. The client warns: "the relay operator will read this message".
+- The relay checks plausibility against metadata it already has: the sender
+  really did send envelopes to this recipient in the last N days.
+- A key is banned automatically only after reports from **K different**
+  recipients (proposed: K = 3) who really corresponded with it. Fewer reports go
+  to the operator's log for manual review.
+- A ban: the relay refuses the key at `Auth`. A new key runs into the per-IP
+  registration limit.
+- The report log is a separate file on the relay, for the operator only, deleted
+  after review. It holds keys and the disclosed text, no IP addresses.
+- Risk: a recipient can make up text. Defence: the threshold K and the metadata
+  check. A ban on one relay does not stop anyone from moving to another.
 
-### Вариант B: криптографическое доказательство (message franking)
+### Option B: cryptographic proof (message franking)
 
-Facebook Messenger добавляет в каждое сообщение обязательство (commitment), которое relay подписывает при пересылке. Тогда получатель может доказать, что текст прислал именно этот отправитель. В vodozemac этого нет, а собирать такую схему из примитивов поверх Olm значит **писать свой криптопротокол**, что запрещено правилом 1. Вернуться, если появится проверенная библиотека.
+Facebook Messenger adds a commitment to every message, which the server signs
+when forwarding, so a recipient can prove that this sender sent this text.
+vodozemac has nothing like it, and building such a scheme from primitives on top
+of Olm means **writing our own crypto protocol**, which rule 1 forbids. Revisit
+if a vetted library appears.
 
-## Принято и сделано: помощь в кризисе
+## Accepted and done: help in a crisis
 
-В справке клиента (`?`) есть раздел с международным справочником телефонов доверия (findahelpline.com), экстренными номерами и горячими линиями. Это только текст, никакого анализа сообщений.
+The client's help (`?`) has a section with the international directory of
+helplines (findahelpline.com), emergency numbers and hotlines. Text only, no
+analysis of messages.
 
-## Принято: честные правила
+## Accepted: honest rules
 
-README описывает назначение, запрет незаконного использования и что оператор relay может и не может выдать (публичные ключи, время, очередь шифртекста; без содержимого, без истории IP).
+The README describes the purpose, forbids illegal use, and says what a relay
+operator can and cannot hand over (public keys, times, the ciphertext queue; no
+contents, no IP history).
 
-## Решения по варианту A
+## Decisions on option A
 
-- **K = 3**, автоматический бан включён (`Limits::report_threshold`). Уточнено в ADR-007: жалоба считается только при ≥ 3 конвертах от отправителя к жалующемуся, ключ жалующегося моложе 7 дней весит 0.5.
-- **Проверка правдоподобия:** жалоба засчитывается, только если отправитель хоть раз слал конверты жалующемуся за время работы relay. Окна N нет: эти данные пока живут в памяти и пропадают при перезапуске. В M5 вместе с SQLite появится окно и сохранение банов.
-- Не больше 10 жалоб в сутки от одного ключа. Ответ `Reported` одинаковый на любом пути, чтобы по нему нельзя было узнать, засчитана ли жалоба и забанен ли ключ.
-- **Журнал** (`--reports`, по умолчанию `termchat-reports.log`, права `0600`): одна JSON-строка на жалобу — время, ключ отправителя, забанен ли он, раскрытый текст. Ни ключа жалующегося, ни IP.
-- **Клиент:** Ctrl+X показывает ровно тот текст, что уйдёт оператору (последние 5 полученных сообщений), с предупреждением. По `y` жалоба отправляется, а контакт блокируется.
-- **Бан:** relay рвёт соединение ключа и отказывает ему в `Auth` (`ErrorCode::Banned`).
-- **Ограничение:** до M5 баны тоже живут только в памяти.
+- **K = 3**, automatic bans on (`Limits::report_threshold`). Refined in ADR-007:
+  a report counts only with at least 3 envelopes from the sender to the reporter,
+  and a reporter key younger than 7 days weighs 0.5.
+- **Plausibility check:** a report counts only if the sender sent envelopes to
+  the reporter at least once while the relay has been running. There is no window
+  N: this data lives in memory and is lost on restart (ADR-005 keeps it that way).
+- At most 10 reports per day from one key. The `Reported` answer is the same on
+  every path, so it does not reveal whether the report counted or the key was
+  banned.
+- **Log** (`--reports`, `termchat-reports.log` by default, mode `0600`): one JSON
+  line per report: time, sender key, whether it was banned, the disclosed text.
+  No reporter key, no IP.
+- **Client:** Ctrl+X shows exactly the text that will go to the operator (the last
+  5 messages received), with a warning. On `y` the report is sent and the contact
+  is blocked.
+- **Ban:** the relay drops the key's connection and refuses it at `Auth`
+  (`ErrorCode::Banned`). Bans are stored on disk (ADR-005).

@@ -121,7 +121,7 @@ const csp =
             </article>
           ))}
         </div>
-        <p class="more"><a href={blob("docs/threat-model.md")}>{t.threatModel} →</a></p>
+        <p class="more"><a href={blob(t.docs.threatModel)}>{t.threatModel} →</a></p>
       </section>
 
       <section>
@@ -160,13 +160,13 @@ const csp =
           </div>
         </div>
         <p class="sub">{t.install.then}</p>
-        <p class="more"><a href={`${REPO}#verify-a-release`}>{t.install.verify} →</a></p>
+        <p class="more"><a href={blob(t.docs.verify)}>{t.install.verify} →</a></p>
       </section>
 
       <section>
         <h2>{t.relayTitle}</h2>
         <p class="sub">{t.relay}</p>
-        <p class="more"><a href={blob("docs/self-host.md")}>{t.relayLink} →</a></p>
+        <p class="more"><a href={blob(t.docs.selfHost)}>{t.relayLink} →</a></p>
       </section>
     </main>
 
@@ -174,7 +174,7 @@ const csp =
       <p>
         <a href={blob("LICENSE")}>{t.footer.licence}</a> ·
         <a href={REPO}>GitHub</a> ·
-        <a href={`${REPO}#acceptable-use`}>{t.footer.use}</a> ·
+        <a href={blob(t.docs.use)}>{t.footer.use}</a> ·
         <a href="https://findahelpline.com">{t.footer.help}</a> ·
         <a href={url(t.other.href)}>{t.other.label}</a>
       </p>

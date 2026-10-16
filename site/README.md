@@ -12,7 +12,7 @@ npm run preview   # serve dist/
 ```
 
 - All text lives in `src/i18n.ts`, both languages side by side. Keep it in step
-  with the README and `docs/manual.ru.md`.
+  with `README.md` and `README.ru.md` in the repository root.
 - Background animation: `src/scripts/cipher.ts`. It stops when the tab is
   hidden and shows one still frame with `prefers-reduced-motion`.
 - Logo: sources in `docs/logo/`; `public/` holds the favicon, `logo.svg` and `apple-touch-icon.png`.
