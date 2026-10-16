@@ -7,6 +7,7 @@ pub mod app;
 pub mod data;
 pub mod form;
 pub mod input;
+pub mod notify;
 pub mod password;
 pub mod settings;
 pub mod theme;

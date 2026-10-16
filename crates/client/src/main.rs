@@ -4,8 +4,8 @@ use std::io::stdout;
 use std::time::Duration;
 
 use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event as TermEvent, EventStream, KeyEventKind,
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, Event as TermEvent, EventStream, KeyEventKind,
 };
 use crossterm::terminal::SetTitle;
 use futures_util::StreamExt;
@@ -24,10 +24,16 @@ async fn main() -> std::io::Result<()> {
     let mut terminal = ratatui::init();
     // Pasted text arrives as one event instead of key presses: otherwise control
     // bytes inside a pasted string would fire hotkeys (delete, report, wipe).
-    let _ = crossterm::execute!(stdout(), EnableBracketedPaste);
+    // Focus changes tell whether a new message needs a notification (ADR-008).
+    let _ = crossterm::execute!(stdout(), EnableBracketedPaste, EnableFocusChange);
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = crossterm::execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
+        let _ = crossterm::execute!(
+            stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture,
+            DisableFocusChange
+        );
         hook(info);
     }));
     let result = run(&mut terminal, App::new(path)).await;
@@ -35,6 +41,7 @@ async fn main() -> std::io::Result<()> {
         stdout(),
         DisableBracketedPaste,
         DisableMouseCapture,
+        DisableFocusChange,
         SetTitle("")
     );
     ratatui::restore();
@@ -65,6 +72,8 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
                 Some(Ok(TermEvent::Key(k))) if k.kind == KeyEventKind::Press => app.on_key(k),
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
                 Some(Ok(TermEvent::Mouse(e))) => app.on_mouse(e),
+                Some(Ok(TermEvent::FocusGained)) => app.focused = Some(true),
+                Some(Ok(TermEvent::FocusLost)) => app.focused = Some(false),
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e),
                 None => return Ok(()),

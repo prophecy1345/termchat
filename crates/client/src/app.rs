@@ -18,6 +18,7 @@ use tokio::sync::mpsc::Receiver;
 use crate::data::{self, Contact, Data, Msg, Status};
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
+use crate::notify;
 use crate::password;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
@@ -41,6 +42,11 @@ pub struct App {
     pub hits: RefCell<Hits>,
     /// The contact list edge is being dragged.
     drag: bool,
+    /// Whether the terminal window has focus; `None` until it says.
+    pub focused: Option<bool>,
+    /// New-message cards, oldest first.
+    pub toasts: Vec<Toast>,
+    last_sound: Option<Instant>,
     pub quit: bool,
 }
 
@@ -97,6 +103,20 @@ pub const TABS: [&str; 4] = ["theme", "notifications", "interface", "security"];
 pub const ROW_KEY: u8 = 100;
 pub const TAB_KEY: u8 = 200;
 
+/// A new-message card in the corner. Shows a name, never the text (ADR-008).
+pub struct Toast {
+    pub key: Ed25519Key,
+    pub text: String,
+    pub until: Instant,
+}
+
+const MAX_TOASTS: usize = 4;
+const TOAST_FOR: Duration = Duration::from_secs(5);
+/// A burst of messages makes one sound, not many.
+const SOUND_GAP: Duration = Duration::from_secs(2);
+/// A click on card `i` is `F(TOAST_KEY + i)`.
+pub const TOAST_KEY: u8 = 150;
+
 pub struct Main {
     pub core: Arc<Mutex<Client>>,
     key: FileKey,
@@ -109,6 +129,8 @@ pub struct Main {
     pub scroll: usize,
     pub input: Input,
     pub popup: Option<Popup>,
+    /// New messages (`false`) and requests (`true`) to tell the user about.
+    pub alerts: Vec<(Ed25519Key, bool)>,
     pub status: String,
     pub last_input: Instant,
     path: PathBuf,
@@ -134,6 +156,9 @@ impl App {
             settings: Settings::load(&settings::path(&path)),
             hits: RefCell::default(),
             drag: false,
+            focused: None,
+            toasts: Vec::new(),
+            last_sound: None,
             path,
             quit: false,
         }
@@ -154,6 +179,7 @@ impl App {
     /// After a wipe the device must look freshly installed, theme included.
     fn wiped(&mut self) {
         self.settings = Settings::default();
+        self.toasts.clear();
         self.screen = Screen::Setup(Form::new(Kind::Setup));
     }
 
@@ -168,13 +194,46 @@ impl App {
     }
 
     pub fn on_relay(&mut self, ev: Event) {
-        if let Screen::Main(m) = &mut self.screen {
-            m.on_relay(ev);
-            m.resort();
+        let Screen::Main(m) = &mut self.screen else {
+            return;
+        };
+        m.on_relay(ev);
+        m.resort();
+        for (key, request) in std::mem::take(&mut m.alerts) {
+            // Already in front of the user's eyes.
+            let open = m.current().is_some_and(|c| c.key == key);
+            if open && self.focused != Some(false) {
+                continue;
+            }
+            let Some(c) = m.index(&key).map(|i| &m.data.contacts[i]) else {
+                continue;
+            };
+            let what = if request {
+                "contact request"
+            } else {
+                "new message"
+            };
+            if self.toasts.len() >= MAX_TOASTS {
+                self.toasts.remove(0);
+            }
+            self.toasts.push(Toast {
+                key,
+                text: format!("{what} · {}", crate::ui::name(m, c)),
+                until: Instant::now() + TOAST_FOR,
+            });
+            let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
+            if self.settings.sound && !quiet {
+                self.last_sound = Some(Instant::now());
+                notify::sound();
+            }
+            if self.settings.notify && self.focused != Some(true) {
+                notify::system();
+            }
         }
     }
 
     pub fn on_tick(&mut self) {
+        self.toasts.retain(|t| t.until > Instant::now());
         if let Screen::Main(m) = &mut self.screen {
             if m.last_input.elapsed() >= AUTOLOCK {
                 self.lock();
@@ -237,6 +296,17 @@ impl App {
                 };
                 if ctrl && k.code == KeyCode::Char('k') {
                     self.lock();
+                } else if let KeyCode::F(f) = k.code
+                    && (TOAST_KEY..TOAST_KEY + 10).contains(&f)
+                {
+                    // A click on a card opens that chat.
+                    let i = usize::from(f - TOAST_KEY);
+                    if i < self.toasts.len() {
+                        let toast = self.toasts.remove(i);
+                        if let Some(at) = m.index(&toast.key) {
+                            m.select(at);
+                        }
+                    }
                 } else if let Some(by) = by.filter(|_| pager || m.popup.is_none()) {
                     scroll(m, by, &hits);
                 } else {
@@ -336,6 +406,8 @@ impl App {
         if let Screen::Main(m) = &mut self.screen {
             m.persist();
         }
+        // They carry names.
+        self.toasts.clear();
         self.screen = Screen::Unlock(Unlock::default());
     }
 }
@@ -494,6 +566,7 @@ impl Main {
             scroll: 0,
             input: Input::default(),
             popup: data::permission_warning(&path).map(Popup::Notice),
+            alerts: Vec::new(),
             status: String::new(),
             last_input: Instant::now(),
             path,
@@ -794,9 +867,14 @@ impl Main {
                     expires_at: expires_in.map(|s| at + u64::from(s)),
                     status: Status::Received,
                 });
+                self.alerts.push((sender, false));
             }
             Body::ContactRequest { note, .. } => {
-                let text = match self.core().is_request(&sender) {
+                let request = self.core().is_request(&sender);
+                if request == Some(true) {
+                    self.alerts.push((sender, true));
+                }
+                let text = match request {
                     Some(true) => format!(
                         "contact request{}  —  Ctrl+Y accept, Ctrl+D reject",
                         match note.is_empty() {

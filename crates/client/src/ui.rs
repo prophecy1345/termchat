@@ -14,7 +14,9 @@ use ratatui::widgets::{
 };
 use termchat_core::{fingerprint, safety_number};
 
-use crate::app::{App, Doc, Main, Popup, ROW_KEY, Screen, TAB_KEY, TABS, Unlock, now};
+use crate::app::{
+    App, Doc, Main, Popup, ROW_KEY, Screen, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock, now,
+};
 use crate::data::{Contact, Status};
 use crate::form::Form;
 use crate::input::Input;
@@ -142,7 +144,46 @@ pub fn render(f: &mut Frame, app: &App) {
     match &app.screen {
         Screen::Setup(s) => form(f, t, &mut h, s),
         Screen::Unlock(u) => unlock(f, t, &mut h, u),
-        Screen::Main(m) => main(f, t, &mut h, m, &app.settings),
+        Screen::Main(m) => {
+            main(f, t, &mut h, m, &app.settings);
+            toasts(f, t, &mut h, &app.toasts, m.popup.is_none());
+        }
+    }
+}
+
+/// New-message cards stacked in the bottom-right corner, newest lowest.
+/// Clickable only when no window is open, so a click cannot switch the
+/// contact under a window (delete, report) that acts on it.
+fn toasts(f: &mut Frame, t: &Palette, h: &mut Hits, toasts: &[Toast], clickable: bool) {
+    let area = f.area();
+    let w = area.width.min(44);
+    let mut y = area.bottom().saturating_sub(2);
+    for (i, toast) in (0..TOAST_KEY).zip(toasts).rev() {
+        if y < area.y + 3 {
+            break;
+        }
+        y -= 3;
+        let card = Rect::new(area.right().saturating_sub(w + 1), y, w, 3);
+        f.render_widget(Clear, card);
+        let line = Line::from(vec![
+            Span::styled("● ", Style::new().fg(t.accent)),
+            Span::styled(
+                fit(&toast.text, usize::from(w).saturating_sub(6)),
+                Style::new().fg(t.text).add_modifier(Modifier::BOLD),
+            ),
+        ]);
+        f.render_widget(
+            Paragraph::new(line).block(
+                Block::bordered()
+                    .border_style(Style::new().fg(t.overlay0))
+                    .padding(Padding::horizontal(1))
+                    .style(Style::new().bg(t.panel_bg)),
+            ),
+            card,
+        );
+        if clickable {
+            h.keys.push((card, key(KeyCode::F(TOAST_KEY + i))));
+        }
     }
 }
 
