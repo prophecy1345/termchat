@@ -1,0 +1,11 @@
+---
+// A shell command with a copy button (src/scripts/copy.ts).
+interface Props {
+  text: string;
+  copy: string;
+  done: string;
+}
+const { text, copy, done } = Astro.props;
+---
+
+<div class="cmd"><code>{text}</code><button type="button" data-copy={text} data-done={done}>{copy}</button></div>

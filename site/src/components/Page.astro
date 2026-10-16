@@ -1,0 +1,182 @@
+---
+import "../styles/site.css";
+import { REPO, commands, texts, type Lang } from "../i18n";
+import Cmd from "./Cmd.astro";
+
+interface Props {
+  lang: Lang;
+}
+const t = texts[Astro.props.lang];
+const blob = (path: string) => `${REPO}/blob/main/${path}`;
+const groups = [
+  ["ok", t.protected],
+  ["part", t.partly],
+  ["no", t.notProtected],
+] as const;
+const csp =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'";
+---
+
+<!doctype html>
+<html lang={t.lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content={csp} />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#11111b" />
+    <title>{t.title}</title>
+    <meta name="description" content={t.description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" hreflang="en" href="/" />
+    <link rel="alternate" hreflang="ru" href="/ru/" />
+  </head>
+  <body>
+    <canvas id="cipher" aria-hidden="true"></canvas>
+    <div class="scanlines" aria-hidden="true"></div>
+
+    <header class="top">
+      <a class="brand" href={t.lang === "en" ? "/" : "/ru/"}><span class="prompt">&gt;_</span> termchat</a>
+      <nav>
+        <a href="#features">{t.nav.features}</a>
+        <a href="#protection">{t.nav.protection}</a>
+        <a href="#install">{t.nav.install}</a>
+        <a href={REPO}>GitHub</a>
+        <a class="lang" href={t.other.href} hreflang={t.other.href === "/" ? "en" : "ru"}>{t.other.label}</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="badge">{t.status}</p>
+        <h1 class="glow" data-decrypt aria-label="termchat">termchat</h1>
+        <p class="tagline">{t.tagline}</p>
+        <p class="lead">{t.lead}</p>
+        <div class="cta">
+          <a class="button primary" href="#install">{t.cta.install}</a>
+          <a class="button" href={`${REPO}/releases/latest`}>{t.cta.download}</a>
+          <a class="button" href={REPO}>{t.cta.github}</a>
+        </div>
+
+        <div class="terminal" role="img" aria-label="termchat in a terminal window">
+          <div class="term-bar"><i></i><i></i><i></i><span>termchat</span></div>
+          <div class="term-body">
+            <div class="term-side">
+              <p class="dim strong">contacts</p>
+              <p class="row active"><b class="peach">!</b> alice·36335</p>
+              <p class="row"><b class="mauve">●</b> bob<span class="count">2</span></p>
+              <p class="row"><b class="yellow">?</b> carol·58121</p>
+              <p class="foot dim"><span>+ add</span><span>≡ menu</span></p>
+            </div>
+            <div class="term-chat">
+              <p class="term-head"><b>alice·36335</b> <span class="peach">! not verified (Ctrl+F)</span></p>
+              <div class="msgs">
+                <p><b class="mauve">alice·36335</b> <span class="dim">2m</span></p>
+                <p>did the invite work?</p>
+                <p class="gap"><b class="blue">you</b> <span class="dim">now</span></p>
+                <p>yes, comparing safety numbers now <span class="dim">✓</span></p>
+              </div>
+              <p class="term-input"><b class="blue">›</b> <span class="typing">see you at 8</span><span class="caret"></span></p>
+            </div>
+          </div>
+          <p class="term-status"><span class="green">● online via Tor</span> <span class="dim">you</span><span class="hints"><b>^P</b> menu <b>?</b> keys <b>^K</b> lock</span></p>
+        </div>
+        <div class="grid" aria-hidden="true"></div>
+      </section>
+
+      <section>
+        <h2>{t.whatTitle}</h2>
+        <div class="cards three">
+          {t.what.map(([title, text]) => (
+            <article class="card"><h3>{title}</h3><p>{text}</p></article>
+          ))}
+        </div>
+      </section>
+
+      <section id="features">
+        <h2>{t.featuresTitle}</h2>
+        <div class="cards">
+          {t.features.map(([title, text]) => (
+            <article class="card"><h3>{title}</h3><p>{text}</p></article>
+          ))}
+        </div>
+      </section>
+
+      <section id="protection">
+        <h2>{t.protectionTitle}</h2>
+        <p class="sub">{t.protectionLead}</p>
+        <div class="cards three">
+          {groups.map(([kind, g]) => (
+            <article class={`card list ${kind}`}>
+              <h3>{g.title}</h3>
+              <ul>{g.items.map((item) => <li>{item}</li>)}</ul>
+            </article>
+          ))}
+        </div>
+        <p class="more"><a href={blob("docs/threat-model.md")}>{t.threatModel} →</a></p>
+      </section>
+
+      <section>
+        <h2>{t.howTitle}</h2>
+        <ol class="steps">
+          {t.how.map(([title, text], i) => (
+            <li><span class="num">0{i + 1}</span><h3>{title}</h3><p>{text}</p></li>
+          ))}
+        </ol>
+      </section>
+
+      <section id="install">
+        <h2>{t.installTitle}</h2>
+        <div class="tabs">
+          <input type="radio" name="os" id="os-unix" checked />
+          <label for="os-unix">{t.installTabs.unix}</label>
+          <input type="radio" name="os" id="os-win" />
+          <label for="os-win">{t.installTabs.windows}</label>
+          <input type="radio" name="os" id="os-manual" />
+          <label for="os-manual">{t.installTabs.manual}</label>
+
+          <div class="panel" data-for="os-unix">
+            <p>{t.install.brew}</p>
+            <Cmd text={commands.brew} copy={t.copy} done={t.copied} />
+            <p>{t.install.sh}</p>
+            <Cmd text={commands.sh} copy={t.copy} done={t.copied} />
+          </div>
+          <div class="panel" data-for="os-win">
+            <p>{t.install.ps}</p>
+            <Cmd text={commands.ps} copy={t.copy} done={t.copied} />
+            <p>{t.install.zip}</p>
+          </div>
+          <div class="panel" data-for="os-manual">
+            <p>{t.install.manual}</p>
+            <p><a class="button" href={`${REPO}/releases/latest`}>{t.install.releases}</a></p>
+          </div>
+        </div>
+        <p class="sub">{t.install.then}</p>
+        <p class="more"><a href={`${REPO}#verify-a-release`}>{t.install.verify} →</a></p>
+      </section>
+
+      <section>
+        <h2>{t.relayTitle}</h2>
+        <p class="sub">{t.relay}</p>
+        <p class="more"><a href={blob("docs/self-host.md")}>{t.relayLink} →</a></p>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        <a href={blob("LICENSE")}>{t.footer.licence}</a> ·
+        <a href={REPO}>GitHub</a> ·
+        <a href={`${REPO}#acceptable-use`}>{t.footer.use}</a> ·
+        <a href="https://findahelpline.com">{t.footer.help}</a> ·
+        <a href={t.other.href}>{t.other.label}</a>
+      </p>
+      <p class="dim">{t.footer.note}</p>
+    </footer>
+
+    <script>
+      import "../scripts/cipher";
+      import "../scripts/copy";
+    </script>
+  </body>
+</html>
