@@ -332,7 +332,7 @@ termchat — для приватного общения. Он **не** пред�
   [005 хранилище relay](docs/adr/005-relay-storage.ru.md), [006 злоупотребления](docs/adr/006-abuse-and-reports.ru.md),
   [007 устойчивость к злоупотреблениям](docs/adr/007-abuse-resistance.ru.md),
   [008 интерфейс и уведомления](docs/adr/008-ui-settings-and-notifications.ru.md)
-- [Как участвовать](CONTRIBUTING.md) (на английском)
+- [Как участвовать](CONTRIBUTING.md) · [Как сообщить об уязвимости](SECURITY.md) (на английском)
 
 ## Лицензия
 
