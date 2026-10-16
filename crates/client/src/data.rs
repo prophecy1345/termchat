@@ -145,10 +145,16 @@ impl Contact {
     }
 }
 
+/// Tor state and directory cache (ADR-004); holds no secrets, but shows that
+/// termchat was used over Tor.
+pub fn tor_dir(state: &Path) -> PathBuf {
+    state.with_file_name("arti")
+}
+
 /// Crypto-erase (ADR-003): random bytes over the whole file, fsync, delete.
-/// The interface settings go too, so nothing is left behind (ADR-008).
-/// Without the header the body is noise. On SSDs old blocks may survive until
-/// TRIM; see the ADR for what that means.
+/// The interface settings and the Tor directory go too, so nothing is left
+/// behind (ADR-004, ADR-008). Without the header the body is noise. On SSDs
+/// old blocks may survive until TRIM; see the ADR for what that means.
 pub fn wipe(path: &Path) -> io::Result<()> {
     let settings = crate::settings::path(path);
     for p in [path.to_path_buf(), path.with_extension("tmp"), settings] {
@@ -162,7 +168,16 @@ pub fn wipe(path: &Path) -> io::Result<()> {
         file.sync_all()?;
         fs::remove_file(&p)?;
     }
-    Ok(())
+    remove_tor_dir(path)
+}
+
+/// Also run on a first-run screen: Arti may still have been flushing its state
+/// while the wipe ran, and a fresh install has nothing to keep there anyway.
+pub fn remove_tor_dir(state: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(tor_dir(state)) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    }
 }
 
 /// A warning if other users could read the state file or its folder.
@@ -202,9 +217,13 @@ mod tests {
             assert!(permission_warning(&path).is_some());
         }
         write_atomic(&crate::settings::path(&path), b"{}").unwrap();
+        write_atomic(&tor_dir(&path).join("state").join("guards"), b"[]").unwrap();
         wipe(&path).unwrap();
         assert!(!path.exists() && !path.with_extension("tmp").exists());
         assert!(!crate::settings::path(&path).exists());
+        assert!(!tor_dir(&path).exists());
+        // Nothing to remove is not an error.
+        remove_tor_dir(&path).unwrap();
         let _ = fs::remove_dir(&dir);
     }
 

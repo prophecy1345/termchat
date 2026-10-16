@@ -63,7 +63,12 @@ When the duress password is entered, before anything is shown:
    images the flash chips and later learns the main password could recover the
    data. Protection: the OS's disk encryption (FileVault, BitLocker, LUKS).
 3. Keys are wiped from memory (`zeroize`).
-4. The client shows the first-run screen, with no "data erased" or "wrong
+4. The interface settings file and the Tor directory (`arti/`, ADR-004) are
+   deleted too: the first holds nothing secret, the second shows that termchat
+   was used over Tor. Arti may still flush its state while the wipe runs, so
+   the client deletes the directory again whenever it shows the first-run
+   screen; a fresh install has nothing there.
+5. The client shows the first-run screen, with no "data erased" or "wrong
    password" message.
 
 The same works on the auto-lock screen.

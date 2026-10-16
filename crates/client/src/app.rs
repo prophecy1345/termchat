@@ -14,6 +14,7 @@ use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
 };
 use tokio::sync::mpsc::Receiver;
+use tokio_tungstenite::tungstenite::http::Uri;
 
 use crate::data::{self, Contact, Data, Msg, Status};
 use crate::form::{self, Action, Form, Kind};
@@ -149,7 +150,10 @@ impl App {
     pub fn new(path: PathBuf) -> Self {
         let screen = match path.exists() {
             true => Screen::Unlock(Unlock::default()),
-            false => Screen::Setup(Form::new(Kind::Setup)),
+            false => {
+                let _ = data::remove_tor_dir(&path);
+                Screen::Setup(Form::new(Kind::Setup))
+            }
         };
         Self {
             screen,
@@ -419,10 +423,9 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
     }
     let onion = f.fields[1].trim();
     let onion = (!onion.is_empty()).then(|| onion.to_string());
-    if onion
-        .as_ref()
-        .is_some_and(|o| !(o.starts_with("ws://") && o.trim_end_matches('/').ends_with(".onion")))
-    {
+    if onion.as_ref().is_some_and(|o| {
+        !(o.starts_with("ws://") && ws_host(o).is_some_and(|h| h.ends_with(".onion")))
+    }) {
         return Err("onion URL looks like ws://xxxx.onion/".into());
     }
     let tor = match f.fields[2].trim().to_lowercase().as_str() {
@@ -462,18 +465,24 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
 /// network; it is only fine where TLS adds nothing: the same machine or an
 /// onion service, which authenticates and encrypts on its own.
 fn relay_url_ok(url: &str) -> bool {
-    if url.starts_with("wss://") {
-        return true;
-    }
-    let Some(rest) = url.strip_prefix("ws://") else {
+    let Some(host) = ws_host(url) else {
         return false;
     };
-    let authority = rest.split('/').next().unwrap_or_default();
-    let host = authority
-        .strip_prefix('[')
-        .and_then(|h| h.split(']').next())
-        .unwrap_or_else(|| authority.rsplit_once(':').map_or(authority, |(h, _)| h));
-    matches!(host, "localhost" | "127.0.0.1" | "::1") || host.ends_with(".onion")
+    url.starts_with("wss://")
+        || matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1")
+        || host.ends_with(".onion")
+}
+
+/// The host the transport will actually connect to. Parsed the same way as in
+/// `Relay::connect`, so userinfo, a query or a fragment cannot smuggle a
+/// different host past the checks above.
+fn ws_host(url: &str) -> Option<String> {
+    let uri: Uri = url.parse().ok()?;
+    if !matches!(uri.scheme_str(), Some("ws" | "wss")) {
+        return None;
+    }
+    let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
+    Some(host.to_owned())
 }
 
 /// A backup is a state file without sessions or messages: restoring is a copy.
@@ -541,7 +550,7 @@ fn link(
             .auth_signature(host, nonce)
     });
     let (url, dial) = match (&data.onion_url, data.tor) {
-        (Some(onion), true) => (onion.as_str(), Dial::Tor(path.with_file_name("arti"))),
+        (Some(onion), true) => (onion.as_str(), Dial::Tor(data::tor_dir(path))),
         (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
         (_, false) => (data.relay_url.as_str(), Dial::Direct),
     };
@@ -1534,8 +1543,19 @@ mod tests {
             "ws://localhost.evil.org/",
             "http://localhost/",
             "",
+            // The host after `@`, `?` or `#` is what the transport connects to.
+            "ws://localhost:8080@evil.org/",
+            "ws://[::1]@evil.org/",
+            "ws://evil.org#.onion",
+            "ws://evil.org?x=.onion",
+            "ws://evil.org/.onion",
         ] {
             assert!(!relay_url_ok(bad), "{bad}");
         }
+        assert_eq!(ws_host("ws://x.onion/.onion/").as_deref(), Some("x.onion"));
+        assert_eq!(
+            ws_host("ws://evil.org/x.onion").as_deref(),
+            Some("evil.org")
+        );
     }
 }
