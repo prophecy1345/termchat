@@ -810,19 +810,14 @@ impl Main {
             }
             ServerFrame::Accepted { client_id } => {
                 self.set_status(client_id, Status::Sent);
-                self.goodbye_done(client_id);
+                self.goodbye_done(Some(client_id));
             }
             ServerFrame::Error {
                 client_id: Some(id),
                 code,
             } => {
                 self.set_status(id, Status::Failed(why(code)));
-                self.goodbye_done(id);
-            }
-            ServerFrame::Error {
-                client_id: None, ..
-            } if self.leaving.as_ref().is_some_and(|l| l.unregistering) => {
-                self.popup = self.finish_wipe(NOT_REMOVED);
+                self.goodbye_done(Some(id));
             }
             ServerFrame::Error {
                 client_id: None,
@@ -865,21 +860,14 @@ impl Main {
             until: Instant::now() + LEAVE_TIMEOUT,
             unregistering: false,
         });
-        self.unregister_when_told();
+        self.goodbye_done(None);
         Some(Popup::Leaving)
     }
 
-    /// The relay answered `client_id`.
-    fn goodbye_done(&mut self, client_id: u64) {
-        if let Some(l) = &mut self.leaving {
-            l.waiting.retain(|w| *w != client_id);
-        }
-        self.unregister_when_told();
-    }
-
-    /// Once every goodbye is on the relay, ask it to forget us.
-    fn unregister_when_told(&mut self) {
+    /// The relay answered `client_id`; once every goodbye is in, ask it to forget us.
+    fn goodbye_done(&mut self, client_id: Option<u64>) {
         let Some(l) = &mut self.leaving else { return };
+        l.waiting.retain(|w| Some(*w) != client_id);
         if l.waiting.is_empty() && !l.unregistering {
             l.unregistering = true;
             let _ = self.relay.send(ClientFrame::Unregister);
