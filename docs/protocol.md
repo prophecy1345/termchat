@@ -246,6 +246,7 @@ fingerprint as one specific person: ~2^99 tries.
 | `Send` per key | token bucket: 30 in a burst, then 1 every 2 seconds |
 | New recipients per key | 20 per day |
 | Connections per IP | 50 (CGNAT: many people behind one IP) |
+| Any frame after `Auth`, per key | token bucket: 2000 in a burst (a whole queue acknowledged after a reconnect), then 20 per second; past it the connection is closed |
 | New registrations per IP | 20 per hour (over onion: a shared budget of 200 per hour, ADR-004) |
 | One-time keys per key | the client keeps 50 on the relay (`Account::max_number_of_one_time_keys()`), the relay stores at most the 100 newest |
 | `PublishKeys` per key | 30 per hour |

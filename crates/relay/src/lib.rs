@@ -44,6 +44,10 @@ pub struct Limits {
     /// A client that stops reading must not pin a task and its buffers forever.
     pub send_timeout: Duration,
     pub connections_per_ip: usize,
+    /// Every frame after `Auth`, whatever it is. `Ack` has no limit of its own,
+    /// yet each one is a database write; the burst must cover a whole queue
+    /// (`queue_envelopes`) being acknowledged after a reconnect.
+    pub frames_per_key: Rate,
     pub registrations_per_ip: Rate,
     /// All onion connections arrive from 127.0.0.1, so they share one budget (ADR-004).
     pub onion_connections: usize,
@@ -101,6 +105,10 @@ impl Default for Limits {
             idle_timeout: Duration::from_secs(60),
             send_timeout: Duration::from_secs(30),
             connections_per_ip: 50,
+            frames_per_key: Rate {
+                burst: 2000.0,
+                per_sec: 20.0,
+            },
             registrations_per_ip: Rate::per(20.0, HOUR),
             onion_connections: 2000,
             onion_registrations: Rate::per(200.0, HOUR),
@@ -219,6 +227,7 @@ struct Account {
     recipients: HashMap<Ed25519Key, u32>,
     /// People this key wrote to who reported it.
     reporters: HashMap<Ed25519Key, f64>,
+    frames: Bucket,
     sends: Bucket,
     new_recipients: Bucket,
     publishes: Bucket,
@@ -232,6 +241,7 @@ impl Account {
         Self {
             recipients: HashMap::new(),
             reporters: HashMap::new(),
+            frames: Bucket::full(l.frames_per_key, now),
             sends: Bucket::full(l.sends_per_key, now),
             new_recipients: Bucket::full(l.new_recipients_per_key, now),
             publishes: Bucket::full(l.publishes_per_key, now),
@@ -533,6 +543,10 @@ fn handle(
         .mem
         .entry(me)
         .or_insert_with(|| Account::new(limits, now));
+    // Flooding frames closes the connection; the bucket is still empty after a reconnect.
+    if !account.frames.take(limits.frames_per_key, now) {
+        return Err(ErrorCode::RateLimited);
+    }
 
     Ok(match frame {
         ClientFrame::Hello { .. } | ClientFrame::Auth { .. } => return Err(ErrorCode::Malformed),

@@ -380,6 +380,42 @@ async fn send_rate_limit_and_unknown_recipient() {
 }
 
 #[tokio::test]
+async fn frame_flood_closes_the_connection() {
+    let limits = Limits {
+        frames_per_key: Rate {
+            burst: 3.0,
+            per_sec: 0.0,
+        },
+        ..Limits::default()
+    };
+    let url = start_relay(limits).await;
+    let client = Mutex::new(Client::default());
+    let mut ws = raw(&url).await;
+    assert_eq!(auth(&mut ws, &client).await, ServerFrame::AuthOk);
+    // The handshake's KeyCount is not a client frame.
+    assert!(matches!(
+        raw_recv(&mut ws).await,
+        ServerFrame::KeyCount { .. }
+    ));
+    // Acks have no limit of their own, but every frame counts.
+    for id in 0..3 {
+        raw_send(&mut ws, ClientFrame::Ack { relay_id: id }).await;
+    }
+    raw_send(&mut ws, ClientFrame::Ack { relay_id: 3 }).await;
+    assert_eq!(
+        raw_recv(&mut ws).await,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::RateLimited
+        }
+    );
+    assert!(matches!(
+        tokio::time::timeout(WAIT, ws.next()).await.unwrap(),
+        None | Some(Ok(Message::Close(_))) | Some(Err(_))
+    ));
+}
+
+#[tokio::test]
 async fn publish_keys_is_rate_limited() {
     let limits = Limits {
         publishes_per_key: Rate {

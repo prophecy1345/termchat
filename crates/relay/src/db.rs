@@ -62,8 +62,12 @@ impl Db {
             None => Connection::open_in_memory()?,
         };
         // auto_vacuum must be set before the first table exists.
+        // synchronous = NORMAL: in WAL mode an fsync per checkpoint, not per
+        // transaction, so a client cannot turn every frame into a disk flush
+        // under the global lock (ADR-005). A power cut may lose the last
+        // transactions; the file itself stays consistent.
         conn.execute_batch(
-            "PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;",
+            "PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
         let queue_bytes: i64 =

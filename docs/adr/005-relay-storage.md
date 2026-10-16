@@ -57,6 +57,17 @@ One SQLite connection under the same global lock as the in-memory state. All
 queries are short (by key or id). If a relay gets busy: a connection pool and
 per-key locks.
 
+### Durability: `PRAGMA synchronous = NORMAL`
+With the default `FULL`, every autocommit (an `Ack` is a `DELETE`, a handshake
+an `UPDATE`) ends in an fsync, under the global lock. One registered client
+sending `Ack` frames in a loop would turn the relay into a queue of disk
+flushes for everyone. In WAL mode `NORMAL` syncs only at checkpoints and the
+file stays consistent after a crash or a power cut; what can be lost are the
+last transactions. For a relay that is the same as "the relay did not forward
+the message", which the threat model already accepts. On top of that the relay
+counts every frame after `Auth` against one per-key budget (protocol.md,
+section 11), so no frame type is free.
+
 ### Dropping the old fallback key (ADR-002)
 The client stores when it rotated the fallback key and calls
 `forget_fallback_key` TTL + 1 day (15 days) later. That is as long as an envelope
