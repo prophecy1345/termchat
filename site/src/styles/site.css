@@ -117,9 +117,17 @@ label:focus-within {
   gap: 0.5rem;
 }
 
+.title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.5rem, 2vw, 1.25rem);
+  font-size: clamp(2.8rem, 9vw, 5.5rem);
+}
+
 .mark {
-  display: block;
-  margin: 0 auto 1rem;
+  width: 1.15em;
+  height: 1.15em;
   filter: drop-shadow(0 0 24px rgb(203 166 247 / 0.25));
 }
 
@@ -192,7 +200,7 @@ h2::before {
 }
 
 .hero h1 {
-  font-size: clamp(2.8rem, 9vw, 5.5rem);
+  font-size: 1em;
   letter-spacing: -0.02em;
   background: linear-gradient(180deg, var(--text) 30%, var(--mauve) 75%, var(--pink));
   -webkit-background-clip: text;
