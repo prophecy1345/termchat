@@ -7,6 +7,8 @@ interface Props {
   lang: Lang;
 }
 const t = texts[Astro.props.lang];
+// The site may live under a sub-path (GitHub Pages: /termchat/).
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const blob = (path: string) => `${REPO}/blob/main/${path}`;
 const groups = [
   ["ok", t.protected],
@@ -28,24 +30,24 @@ const csp =
     <meta name="theme-color" content="#11111b" />
     <title>{t.title}</title>
     <meta name="description" content={t.description} />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="icon" href="/favicon.ico" sizes="32x32" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="alternate" hreflang="en" href="/" />
-    <link rel="alternate" hreflang="ru" href="/ru/" />
+    <link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
+    <link rel="icon" href={url("/favicon.ico")} sizes="32x32" />
+    <link rel="apple-touch-icon" href={url("/apple-touch-icon.png")} />
+    <link rel="alternate" hreflang="en" href={url("/")} />
+    <link rel="alternate" hreflang="ru" href={url("/ru/")} />
   </head>
   <body>
     <canvas id="cipher" aria-hidden="true"></canvas>
     <div class="scanlines" aria-hidden="true"></div>
 
     <header class="top">
-      <a class="brand" href={t.lang === "en" ? "/" : "/ru/"}><img src="/logo.svg" alt="" width="26" height="26" /> termchat</a>
+      <a class="brand" href={url(t.lang === "en" ? "/" : "/ru/")}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat</a>
       <nav>
         <a href="#features">{t.nav.features}</a>
         <a href="#protection">{t.nav.protection}</a>
         <a href="#install">{t.nav.install}</a>
         <a href={REPO}>GitHub</a>
-        <a class="lang" href={t.other.href} hreflang={t.other.href === "/" ? "en" : "ru"}>{t.other.label}</a>
+        <a class="lang" href={url(t.other.href)} hreflang={t.other.href === "/" ? "en" : "ru"}>{t.other.label}</a>
       </nav>
     </header>
 
@@ -53,7 +55,7 @@ const csp =
       <section class="hero">
         <p class="badge">{t.status}</p>
         <div class="title">
-          <img class="mark" src="/logo.svg" alt="" width="112" height="112" />
+          <img class="mark" src={url("/logo.svg")} alt="" width="112" height="112" />
           <h1 class="glow" data-decrypt aria-label="termchat">termchat</h1>
         </div>
         <p class="tagline">{t.tagline}</p>
@@ -174,7 +176,7 @@ const csp =
         <a href={REPO}>GitHub</a> ·
         <a href={`${REPO}#acceptable-use`}>{t.footer.use}</a> ·
         <a href="https://findahelpline.com">{t.footer.help}</a> ·
-        <a href={t.other.href}>{t.other.label}</a>
+        <a href={url(t.other.href)}>{t.other.label}</a>
       </p>
       <p class="dim">{t.footer.note}</p>
     </footer>

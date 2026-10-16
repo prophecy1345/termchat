@@ -17,17 +17,19 @@ npm run preview   # serve dist/
   hidden and shows one still frame with `prefers-reduced-motion`.
 - Logo: sources in `docs/logo/`; `public/` holds the favicon, `logo.svg` and `apple-touch-icon.png`.
 
-## Publishing (once the repository is public)
+## Publishing
 
-The output in `dist/` is plain HTML, CSS and one small script, so any static
-host works:
+`.github/workflows/pages.yml` builds the site and publishes it to GitHub Pages
+at https://prophecy1345.github.io/termchat/ on every push to `site/`. Pages
+needs a public repository on the free plan, so the workflow skips while the
+repository is private. When it goes public:
 
-- **GitHub Pages:** a workflow that runs `npm ci && npm run build` in `site/`
-  and uploads `site/dist` with `actions/upload-pages-artifact` and
-  `actions/deploy-pages`.
-- **nginx:** copy `dist/` to the server and serve it as a static root. Send the
-  same CSP as an HTTP header too, plus `X-Content-Type-Options: nosniff` and
-  `Referrer-Policy: no-referrer`.
+1. Settings → Pages → Source: **GitHub Actions**.
+2. Run the **Pages** workflow once (Actions → Pages → Run workflow).
+
+The build takes the sub-path from GitHub (`SITE_BASE=/termchat`); locally the
+site lives at `/`. With a custom domain later, add it in Settings → Pages and
+the sub-path goes away by itself.
 
 The GitHub links on the page point to the repository and only work once it is
 public.
