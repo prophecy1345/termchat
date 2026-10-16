@@ -4680,7 +4680,7 @@ dependencies = [
 
 [[package]]
 name = "termchat"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "arti-client",
  "base64 0.22.1",
@@ -4704,7 +4704,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -4720,7 +4720,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-proto"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64 0.22.1",
  "postcard",
@@ -4730,7 +4730,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-relay"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "axum",
