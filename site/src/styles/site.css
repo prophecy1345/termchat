@@ -613,6 +613,12 @@ footer p {
   margin: 0.25rem 0;
 }
 
+footer .about {
+  max-width: 44rem;
+  margin: 1rem auto 0.5rem;
+  color: var(--subtext);
+}
+
 @media (max-width: 40rem) {
   .top {
     flex-direction: column;

@@ -109,6 +109,8 @@ const en = {
     use: "Acceptable use",
     help: "Need help now? findahelpline.com",
     note: "No cookies, no analytics, no third-party requests.",
+    about:
+      "termchat is a free, non-commercial, open-source project created and maintained as a personal hobby. It has no advertising, subscriptions, paid features or commercial monetization. Anyone can run their own relay server.",
   },
 };
 
@@ -207,6 +209,8 @@ const ru: typeof en = {
     use: "Правила использования",
     help: "Нужна помощь? findahelpline.com",
     note: "Без cookies, аналитики и сторонних запросов.",
+    about:
+      "termchat — бесплатный некоммерческий проект с открытым кодом, который создаётся и поддерживается как личное хобби. В нём нет рекламы, подписок, платных функций и монетизации. Любой может запустить свой relay-сервер.",
   },
 };
 
