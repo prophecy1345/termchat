@@ -290,12 +290,13 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 
 | | |
 |---|---|
-| Напрямую | `wss://chat.46-224-214-19.sslip.io/` |
+| Напрямую | `wss://relay.termchat.app/` |
 | Через Tor | `ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/` |
 
 Он хранит только то, что перечислено в [docs/self-host.ru.md](docs/self-host.ru.md#что-хранит-relay),
 не ведёт журнал доступа и не стоит за Cloudflare или другим прокси, который
-расшифровывает TLS.
+расшифровывает TLS. Старый адрес `wss://chat.46-224-214-19.sslip.io/` ведёт на тот же relay
+и продолжает работать у тех, кто настроил клиент с ним.
 
 ## Свой relay
 

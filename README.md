@@ -360,11 +360,13 @@ removes the file too.
 
 | | |
 |---|---|
-| Direct | `wss://chat.46-224-214-19.sslip.io/` |
+| Direct | `wss://relay.termchat.app/` |
 | Tor | `ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/` |
 
 It stores only what [docs/self-host.md](docs/self-host.md#what-the-relay-stores) lists,
 keeps no access log, and is not behind Cloudflare or any other TLS-terminating proxy.
+The old address `wss://chat.46-224-214-19.sslip.io/` leads to the same relay and keeps
+working for clients set up with it.
 
 ## Run a relay
 
