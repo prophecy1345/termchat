@@ -13,12 +13,18 @@ use crate::theme::{self, Palette};
 #[serde(default)]
 pub struct Settings {
     pub theme: String,
+    /// Clicks and the wheel; off gives the terminal's own text selection back.
+    pub mouse: bool,
+    /// Contact list width, its edge included.
+    pub sidebar: u16,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: theme::THEMES[0].0.into(),
+            mouse: true,
+            sidebar: 28,
         }
     }
 }
@@ -57,6 +63,7 @@ mod tests {
         assert_eq!(Settings::load(&path), Settings::default());
         let s = Settings {
             theme: "nord".into(),
+            ..Settings::default()
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);

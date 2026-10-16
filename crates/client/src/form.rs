@@ -3,6 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use zeroize::Zeroizing;
 
+use crate::input::Input;
 use crate::password;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +24,7 @@ pub const DEFAULT_ONION: &str =
 
 pub struct Form {
     pub kind: Kind,
-    pub fields: Vec<Zeroizing<String>>,
+    pub fields: Vec<Input>,
     pub field: usize,
     pub error: String,
     /// A passphrase we generated, shown once so it can be written down.
@@ -114,17 +115,17 @@ impl Kind {
 
 impl Form {
     pub fn new(kind: Kind) -> Self {
-        let mut fields: Vec<_> = kind.labels().iter().map(|_| Zeroizing::default()).collect();
+        let mut fields: Vec<Input> = kind.labels().iter().map(|_| Input::default()).collect();
         if kind == Kind::Setup {
-            fields[0] = Zeroizing::new(DEFAULT_RELAY.into());
-            fields[1] = Zeroizing::new(DEFAULT_ONION.into());
-            fields[2] = Zeroizing::new("y".into());
+            fields[0] = DEFAULT_RELAY.into();
+            fields[1] = DEFAULT_ONION.into();
+            fields[2] = "y".into();
         }
         if kind == Kind::Backup {
             let default = std::env::home_dir()
                 .unwrap_or_default()
                 .join("termchat-backup");
-            fields[0] = Zeroizing::new(default.display().to_string());
+            fields[0] = default.display().to_string().as_str().into();
         }
         Self {
             kind,
@@ -145,24 +146,22 @@ impl Form {
             KeyCode::Char('g') if ctrl => {
                 if let Some(i) = self.kind.generated_field() {
                     let phrase = password::generate();
-                    self.fields[i] = phrase.clone();
-                    self.fields[i + 1] = phrase.clone();
+                    self.fields[i] = phrase.as_str().into();
+                    self.fields[i + 1] = phrase.as_str().into();
                     self.generated = Some(phrase);
                 }
             }
-            KeyCode::Char(c) if !ctrl => self.fields[self.field].push(c),
-            KeyCode::Backspace => {
-                self.fields[self.field].pop();
-            }
             KeyCode::Enter if self.field + 1 < n => self.field += 1,
             KeyCode::Enter => return Action::Submit,
-            _ => {}
+            _ => {
+                self.fields[self.field].on_key(k);
+            }
         }
         Action::Stay
     }
 
     pub fn paste(&mut self, text: &str) {
-        self.fields[self.field].push_str(text);
+        self.fields[self.field].insert(text);
     }
 
     /// Two password fields must match and be strong.
@@ -174,7 +173,7 @@ impl Form {
         if let Some(why) = password::weakness(pw, avoid) {
             return Err(why);
         }
-        Ok(pw.as_str())
+        Ok(pw)
     }
 }
 

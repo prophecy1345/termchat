@@ -1,10 +1,12 @@
 //! TUI state and event handling, without any drawing.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Position;
 use termchat_core::proto::{
     self, Body, ClientFrame, Ed25519Key, Invite, ServerFrame, check_nickname,
 };
@@ -12,12 +14,13 @@ use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
 };
 use tokio::sync::mpsc::Receiver;
-use zeroize::Zeroizing;
 
 use crate::data::{self, Contact, Data, Msg, Status};
 use crate::form::{self, Action, Form, Kind};
+use crate::input::Input;
 use crate::password;
 use crate::settings::{self, Settings};
+use crate::ui::Hits;
 use crate::{Dial, Event, Relay, theme};
 
 /// PLAN.md, M3.
@@ -34,6 +37,10 @@ pub struct App {
     pub screen: Screen,
     pub path: PathBuf,
     pub settings: Settings,
+    /// Where things were drawn last, for the mouse.
+    pub hits: RefCell<Hits>,
+    /// The contact list edge is being dragged.
+    drag: bool,
     pub quit: bool,
 }
 
@@ -46,20 +53,22 @@ pub enum Screen {
 
 #[derive(Default)]
 pub struct Unlock {
-    pub input: Zeroizing<String>,
+    pub input: Input,
     pub error: String,
 }
 
 pub enum Popup {
     Help,
     Notice(String),
-    /// Ctrl+P: backup, duress password, wipe.
-    Menu,
+    /// Ctrl+P, with the highlighted row.
+    Menu(usize),
+    /// Right click on a contact, with the highlighted row.
+    Actions(usize),
     Form(Form),
-    Add(String),
+    Add(Input),
     Invite(String),
     Verify,
-    Rename(String),
+    Rename(Input),
     Delete,
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
@@ -73,7 +82,9 @@ pub struct Main {
     pub events: Receiver<Event>,
     pub connected: bool,
     pub selected: usize,
-    pub input: String,
+    /// History rows scrolled up from the bottom.
+    pub scroll: usize,
+    pub input: Input,
     pub popup: Option<Popup>,
     pub status: String,
     pub last_input: Instant,
@@ -98,6 +109,8 @@ impl App {
         Self {
             screen,
             settings: Settings::load(&settings::path(&path)),
+            hits: RefCell::default(),
+            drag: false,
             path,
             quit: false,
         }
@@ -188,8 +201,18 @@ impl App {
             },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
+                let page =
+                    isize::try_from(self.hits.borrow().history.height.max(2) - 1).unwrap_or(1);
                 if ctrl && k.code == KeyCode::Char('k') {
                     self.lock();
+                } else if m.popup.is_none() && matches!(k.code, KeyCode::PageUp | KeyCode::PageDown)
+                {
+                    let by = if k.code == KeyCode::PageUp {
+                        page
+                    } else {
+                        -page
+                    };
+                    scroll(m, by, self.hits.borrow().max_scroll);
                 } else {
                     m.on_key(k, ctrl, &mut self.settings);
                     m.resort();
@@ -201,20 +224,79 @@ impl App {
         }
     }
 
+    /// Clicks act like the key a button shows, so the mouse adds no new paths.
+    pub fn on_mouse(&mut self, e: MouseEvent) {
+        let at = Position::new(e.column, e.row);
+        let hits = self.hits.borrow().clone();
+        if let Screen::Main(m) = &mut self.screen {
+            m.last_input = Instant::now();
+        }
+        let left = MouseEventKind::Down(MouseButton::Left);
+        if e.kind == left
+            && let Some((_, k)) = hits.keys.iter().find(|(r, _)| r.contains(at))
+        {
+            return self.on_key(*k);
+        }
+        if let Some(w) = hits.window {
+            if e.kind == left && !w.contains(at) {
+                self.on_key(KeyEvent::from(KeyCode::Esc));
+            }
+            return;
+        }
+        let Screen::Main(m) = &mut self.screen else {
+            return;
+        };
+        let row = |r: ratatui::layout::Rect| hits.list_offset + usize::from(at.y - r.y);
+        match e.kind {
+            MouseEventKind::Down(MouseButton::Left) if hits.list.contains(at) => {
+                m.select(row(hits.list))
+            }
+            MouseEventKind::Down(MouseButton::Right) if hits.list.contains(at) => {
+                m.select(row(hits.list));
+                if m.current().is_some() {
+                    m.popup = Some(Popup::Actions(0));
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) if hits.add.contains(at) => {
+                m.popup = Some(Popup::Add(Input::default()))
+            }
+            MouseEventKind::Down(MouseButton::Left) if hits.menu.contains(at) => {
+                m.popup = Some(Popup::Menu(0))
+            }
+            MouseEventKind::Down(MouseButton::Left) if hits.edge == Some(at.x) => self.drag = true,
+            MouseEventKind::Drag(MouseButton::Left) if self.drag => {
+                self.settings.sidebar = (e.column + 1).clamp(18, 40);
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.drag => {
+                self.drag = false;
+                if let Err(e) = self.settings.save(&settings::path(&self.path)) {
+                    m.status = format!("cannot save settings: {e}");
+                }
+            }
+            MouseEventKind::ScrollUp if hits.list.contains(at) => {
+                m.select(m.selected.saturating_sub(1))
+            }
+            MouseEventKind::ScrollDown if hits.list.contains(at) => m.select(m.selected + 1),
+            MouseEventKind::ScrollUp => scroll(m, 3, hits.max_scroll),
+            MouseEventKind::ScrollDown => scroll(m, -3, hits.max_scroll),
+            _ => {}
+        }
+    }
+
     /// Bracketed paste: the text goes into the active field as text only.
     /// Control characters are dropped so a pasted string cannot act as keys.
     pub fn on_paste(&mut self, text: &str) {
         let plain: String = text.chars().filter(|c| !c.is_control()).collect();
         match &mut self.screen {
             Screen::Setup(f) => f.paste(&plain),
-            Screen::Unlock(u) => u.input.push_str(&plain),
+            Screen::Unlock(u) => u.input.insert(&plain),
             Screen::Main(m) => {
                 m.last_input = Instant::now();
                 match &mut m.popup {
-                    Some(Popup::Add(s) | Popup::Rename(s)) => s.push_str(&plain),
+                    Some(Popup::Add(s) | Popup::Rename(s)) => s.insert(&plain),
                     Some(Popup::Form(f)) => f.paste(&plain),
                     Some(_) => {}
-                    None => m.input.push_str(&crate::ui::clean(text)),
+                    None => m.input.insert(&crate::ui::clean(text)),
                 }
             }
         }
@@ -227,19 +309,6 @@ impl App {
         }
         self.screen = Screen::Unlock(Unlock::default());
     }
-}
-
-/// Text input shared by forms and popups. `true` on Enter.
-fn edit(s: &mut String, k: KeyEvent) -> bool {
-    match k.code {
-        KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => s.push(c),
-        KeyCode::Backspace => {
-            s.pop();
-        }
-        KeyCode::Enter => return true,
-        _ => {}
-    }
-    false
 }
 
 fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
@@ -322,14 +391,14 @@ pub enum Unlocked {
 
 impl Unlock {
     fn on_key(&mut self, k: KeyEvent, path: &Path) -> Unlocked {
-        if !edit(&mut self.input, k) {
+        if !self.input.on_key(k) {
             return Unlocked::Stay;
         }
         // Argon2 blocks the UI thread for ~1 s; move to spawn_blocking if it bothers.
         let loaded = std::fs::read(path)
             .map_err(|e| format!("cannot read state: {e}"))
             .map(|bytes| Client::load(self.input.as_bytes(), &bytes));
-        self.input = Zeroizing::default();
+        self.input = Input::default();
         let result = match loaded {
             // ADR-003: erase first, say nothing.
             Ok(Err(CoreError::Duress)) => {
@@ -393,7 +462,8 @@ impl Main {
             events,
             connected: false,
             selected: 0,
-            input: String::new(),
+            scroll: 0,
+            input: Input::default(),
             popup: data::permission_warning(&path).map(Popup::Notice),
             status: String::new(),
             last_input: Instant::now(),
@@ -758,12 +828,12 @@ impl Main {
             (false, KeyCode::Char('?')) if self.input.is_empty() => self.popup = Some(Popup::Help),
             (false, KeyCode::Up) => self.select(self.selected.saturating_sub(1)),
             (false, KeyCode::Down) => self.select(self.selected + 1),
-            (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(String::new())),
-            (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu),
+            (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
+            (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu(0)),
             (true, KeyCode::Char('o')) => self.popup = Some(Popup::Invite(self.invite())),
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
             (true, KeyCode::Char('r')) if key.is_some() => {
-                self.popup = Some(Popup::Rename(String::new()))
+                self.popup = Some(Popup::Rename(Input::default()))
             }
             (true, KeyCode::Char('d')) if key.is_some() => self.popup = Some(Popup::Delete),
             (true, KeyCode::Char('y')) => {
@@ -822,7 +892,7 @@ impl Main {
                     self.persist();
                 }
             }
-            (false, _) if edit(&mut self.input, k) => self.send(),
+            _ if self.input.on_key(k) => self.send(),
             _ => {}
         }
     }
@@ -830,11 +900,57 @@ impl Main {
     fn select(&mut self, i: usize) {
         if i < self.data.contacts.len() {
             self.selected = i;
+            self.scroll = 0;
             self.data.contacts[i].unread = 0;
         }
     }
 
+    /// Ctrl+P menu: hotkey and label.
+    pub fn menu(&self, s: &Settings) -> Vec<(char, String)> {
+        let on = |b: bool| if b { "on" } else { "off" };
+        let nag = if self.data.backed_up { "" } else { "  ●" };
+        vec![
+            ('b', format!("back up your identity{nag}")),
+            ('p', "change password".into()),
+            ('d', "duress password".into()),
+            ('t', format!("Tor: {}", on(self.data.tor))),
+            ('c', format!("colour theme: {}", s.theme)),
+            ('m', format!("mouse: {}", on(s.mouse))),
+            ('w', "wipe everything from this device".into()),
+        ]
+    }
+
+    /// Right-click menu for the open contact: the Ctrl+key and its label.
+    pub fn actions(&self) -> Vec<(char, String)> {
+        let Some(c) = self.current() else {
+            return Vec::new();
+        };
+        let mut items = Vec::new();
+        if self.core().is_request(&c.key) == Some(true) {
+            items.push(('y', "accept request".to_string()));
+        }
+        let verified = if c.verified {
+            "verified"
+        } else {
+            "not verified"
+        };
+        items.extend([
+            ('r', "rename".into()),
+            ('f', format!("safety number ({verified})")),
+            ('t', "disappearing messages: next".into()),
+            (
+                'e',
+                format!("no history: {}", if c.no_history { "on" } else { "off" }),
+            ),
+            ('b', if c.blocked { "unblock" } else { "block" }.into()),
+            ('x', "report to the relay operator".into()),
+            ('d', "delete".into()),
+        ]);
+        items
+    }
+
     fn send(&mut self) {
+        self.scroll = 0;
         let text = std::mem::take(&mut self.input);
         let Some(c) = self.current() else {
             return self.status = "add a contact first (Ctrl+A)".into();
@@ -854,7 +970,7 @@ impl Main {
         let at = now();
         self.data.contacts[i].messages.push(Msg {
             mine: true,
-            text,
+            text: text.to_string(),
             at,
             expires_at: expires_in.map(|s| at + u64::from(s)),
             status: Status::Queued,
@@ -872,20 +988,36 @@ impl Main {
     fn on_popup_key(&mut self, popup: Popup, k: KeyEvent, settings: &mut Settings) {
         let keep = match popup {
             Popup::Help | Popup::Notice(_) => None,
-            Popup::Menu => match k.code {
-                KeyCode::Char('b') => Some(Popup::Form(Form::new(Kind::Backup))),
-                KeyCode::Char('d') => Some(Popup::Form(Form::new(Kind::Duress))),
-                KeyCode::Char('w') => Some(Popup::Form(Form::new(Kind::Wipe))),
-                KeyCode::Char('p') => Some(Popup::Form(Form::new(Kind::Password))),
-                KeyCode::Char('t') => Some(Popup::Notice(self.toggle_tor())),
-                KeyCode::Char('c') => {
-                    settings.theme = theme::next(&settings.theme).into();
+            Popup::Menu(at) => match pick(&self.menu(settings), at, k) {
+                Err(at) => Some(Popup::Menu(at)),
+                Ok(None) => None,
+                Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
+                Ok(Some('d')) => Some(Popup::Form(Form::new(Kind::Duress))),
+                Ok(Some('w')) => Some(Popup::Form(Form::new(Kind::Wipe))),
+                Ok(Some('p')) => Some(Popup::Form(Form::new(Kind::Password))),
+                Ok(Some('t')) => Some(Popup::Notice(self.toggle_tor())),
+                Ok(Some(c)) => {
+                    match c {
+                        'c' => settings.theme = theme::next(&settings.theme).into(),
+                        _ => settings.mouse = !settings.mouse,
+                    }
                     if let Err(e) = settings.save(&settings::path(&self.path)) {
                         self.status = format!("cannot save settings: {e}");
                     }
-                    Some(Popup::Menu)
+                    Some(Popup::Menu(at))
                 }
-                _ => None,
+            },
+            Popup::Actions(at) => match pick(&self.actions(), at, k) {
+                Err(at) => Some(Popup::Actions(at)),
+                Ok(None) => None,
+                // The same as pressing Ctrl+key in the chat.
+                Ok(Some(c)) => {
+                    return self.on_key(
+                        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                        true,
+                        settings,
+                    );
+                }
             },
             Popup::Form(mut f) => match f.on_key(k) {
                 Action::Stay => Some(Popup::Form(f)),
@@ -941,7 +1073,7 @@ impl Main {
                 }
                 None
             }
-            Popup::Add(mut s) if k.code != KeyCode::Esc => match edit(&mut s, k) {
+            Popup::Add(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
                     if let Err(e) = self.add(&s) {
                         self.status = e;
@@ -950,7 +1082,7 @@ impl Main {
                 }
                 false => Some(Popup::Add(s)),
             },
-            Popup::Rename(mut s) if k.code != KeyCode::Esc => match edit(&mut s, k) {
+            Popup::Rename(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
                     let name = s.trim();
                     if let Some(c) = self.data.contacts.get_mut(self.selected) {
@@ -1042,7 +1174,7 @@ impl Main {
                 ))
             }
             Kind::Duress => {
-                let (current, duress) = (f.fields[0].as_str(), f.fields[1].as_str());
+                let (current, duress) = (&*f.fields[0], &*f.fields[1]);
                 let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
                 if store::open(current.as_bytes(), &file).is_err() {
                     return Err("current password is wrong".into());
@@ -1063,7 +1195,7 @@ impl Main {
                 Ok("Duress password set. Entering it at unlock erases everything.".into())
             }
             Kind::Password => {
-                let current = f.fields[0].as_str();
+                let current = &*f.fields[0];
                 let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
                 if store::open(current.as_bytes(), &file).is_err() {
                     return Err("current password is wrong".into());
@@ -1133,6 +1265,24 @@ impl Main {
         self.persist();
         self.claim(key);
         Ok(())
+    }
+}
+
+/// History rows up (positive) or down, within the `max` there is.
+fn scroll(m: &mut Main, by: isize, max: usize) {
+    m.scroll = m.scroll.saturating_add_signed(by).min(max);
+}
+
+/// A menu: Up/Down move, Enter or a hotkey picks, any other key closes.
+/// `Err` keeps it open with the new highlighted row.
+fn pick(items: &[(char, String)], at: usize, k: KeyEvent) -> Result<Option<char>, usize> {
+    let n = items.len().max(1);
+    match k.code {
+        KeyCode::Up => Err((at + n - 1) % n),
+        KeyCode::Down => Err((at + 1) % n),
+        KeyCode::Enter => Ok(items.get(at).map(|i| i.0)),
+        KeyCode::Char(c) => Ok(items.iter().any(|i| i.0 == c).then_some(c)),
+        _ => Ok(None),
     }
 }
 

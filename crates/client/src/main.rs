@@ -4,7 +4,8 @@ use std::io::stdout;
 use std::time::Duration;
 
 use crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, Event as TermEvent, EventStream, KeyEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event as TermEvent, EventStream, KeyEventKind,
 };
 use crossterm::terminal::SetTitle;
 use futures_util::StreamExt;
@@ -26,11 +27,16 @@ async fn main() -> std::io::Result<()> {
     let _ = crossterm::execute!(stdout(), EnableBracketedPaste);
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = crossterm::execute!(stdout(), DisableBracketedPaste);
+        let _ = crossterm::execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
         hook(info);
     }));
     let result = run(&mut terminal, App::new(path)).await;
-    let _ = crossterm::execute!(stdout(), DisableBracketedPaste, SetTitle(""));
+    let _ = crossterm::execute!(
+        stdout(),
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        SetTitle("")
+    );
     ratatui::restore();
     result
 }
@@ -39,6 +45,7 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
     let mut keys = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut title = String::new();
+    let mut mouse = false;
     while !app.quit {
         terminal.draw(|f| ui::render(f, &app))?;
         let now = app.title();
@@ -46,10 +53,18 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
             let _ = crossterm::execute!(stdout(), SetTitle(&now));
             title = now;
         }
+        if app.settings.mouse != mouse {
+            mouse = app.settings.mouse;
+            let _ = match mouse {
+                true => crossterm::execute!(stdout(), EnableMouseCapture),
+                false => crossterm::execute!(stdout(), DisableMouseCapture),
+            };
+        }
         tokio::select! {
             ev = keys.next() => match ev {
                 Some(Ok(TermEvent::Key(k))) if k.kind == KeyEventKind::Press => app.on_key(k),
                 Some(Ok(TermEvent::Paste(text))) => app.on_paste(&text),
+                Some(Ok(TermEvent::Mouse(e))) => app.on_mouse(e),
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(e),
                 None => return Ok(()),
