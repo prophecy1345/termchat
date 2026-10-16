@@ -670,6 +670,14 @@ fn handle(
             db(relay.db.ack(&me, relay_id))?;
             vec![]
         }
+
+        // ADR-009. Dropping the sender ends the loop once the reply is out.
+        ClientFrame::Unregister => {
+            db(relay.db.unregister(&me))?;
+            relay.mem.remove(&me);
+            relay.online.remove(&me);
+            vec![ServerFrame::Unregistered]
+        }
     })
 }
 

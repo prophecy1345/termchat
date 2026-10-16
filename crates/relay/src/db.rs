@@ -262,6 +262,22 @@ impl Db {
         Ok(())
     }
 
+    /// Forgets a key with its prekeys and queue (ADR-009); bans are kept.
+    pub fn unregister(&mut self, key: &Ed25519Key) -> Result<()> {
+        let freed: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(size), 0) FROM queue WHERE recipient = ?",
+            [key],
+            |r| r.get(0),
+        )?;
+        let gone = self
+            .conn
+            .execute("DELETE FROM accounts WHERE key = ? AND banned = 0", [key])?;
+        if gone > 0 {
+            self.queue_bytes = self.queue_bytes.saturating_sub(freed as u64);
+        }
+        Ok(())
+    }
+
     /// Drops envelopes older than `queue_ttl` and accounts unseen for `account_ttl` (seconds),
     /// then gives the freed pages back so old ciphertext does not linger in the file.
     pub fn expire(&mut self, now: i64, queue_ttl: i64, account_ttl: i64) -> Result<()> {
@@ -386,5 +402,26 @@ mod tests {
         );
         assert_eq!(db.banned(&[3; 32]).unwrap(), Some(true), "bans are kept");
         assert_eq!(db.total_queue_bytes(), 0);
+    }
+
+    #[test]
+    fn unregister_removes_keys_and_queue_but_not_bans() {
+        let mut db = Db::open(None).unwrap();
+        for k in [1, 2, 3] {
+            db.register(&[k; 32], 0).unwrap();
+        }
+        db.publish(&[2; 32], &[key(1)], Some(&key(2)), 10).unwrap();
+        db.enqueue(&[2; 32], &[1; 32], &env(2), 0).unwrap();
+        db.enqueue(&[1; 32], &[2; 32], &env(2), 0).unwrap();
+        let one = db.total_queue_bytes() / 2;
+        db.unregister(&[2; 32]).unwrap();
+        assert_eq!(db.banned(&[2; 32]).unwrap(), None);
+        assert_eq!(db.claim(&[2; 32], true).unwrap(), None);
+        assert!(db.queued(&[2; 32]).unwrap().is_empty());
+        assert_eq!(db.queued(&[1; 32]).unwrap().len(), 1, "sent mail stays");
+        assert_eq!(db.total_queue_bytes(), one);
+        db.ban(&[3; 32]).unwrap();
+        db.unregister(&[3; 32]).unwrap();
+        assert_eq!(db.banned(&[3; 32]).unwrap(), Some(true));
     }
 }

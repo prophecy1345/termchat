@@ -107,6 +107,8 @@ pub enum ClientFrame {
         sender: Ed25519Key,
         text: String,
     },
+    /// Forget this key, its prekeys and its queue (ADR-009).
+    Unregister,
 }
 
 /// Relay to client.
@@ -139,6 +141,8 @@ pub enum ServerFrame {
         client_id: Option<u64>,
         code: ErrorCode,
     },
+    /// The key is gone from the relay; the connection closes next (ADR-009).
+    Unregistered,
 }
 
 /// protocol.md, section 12.
@@ -301,6 +305,8 @@ pub enum Body {
         expires_in: Option<u32>,
         text: String,
     },
+    /// The sender wiped their account and will not read anything (ADR-009).
+    Goodbye,
 }
 
 impl Inner {
@@ -463,6 +469,13 @@ mod tests {
             ..text(0)
         };
         assert_eq!(long_note.to_padded(), Err(Error::TooLarge));
+        let bye = Inner {
+            body: Body::Goodbye,
+            ..text(0)
+        };
+        let padded = bye.to_padded().unwrap();
+        assert_eq!(padded.len(), 512);
+        assert_eq!(Inner::from_padded(&padded).unwrap(), bye);
         let key = SignedKey {
             key: [4; 32],
             signature,
@@ -491,6 +504,13 @@ mod tests {
             envelope: env.clone(),
         };
         assert_eq!(ServerFrame::decode(&deliver.encode()).unwrap(), deliver);
+        let bye = ClientFrame::Unregister;
+        assert_eq!(ClientFrame::decode(&bye.encode()).unwrap(), bye);
+        let mut trailing = bye.encode();
+        trailing.push(0);
+        assert_eq!(ClientFrame::decode(&trailing), Err(Error::Malformed));
+        let gone = ServerFrame::Unregistered;
+        assert_eq!(ServerFrame::decode(&gone.encode()).unwrap(), gone);
 
         let old = ClientFrame::Send {
             client_id: 7,
