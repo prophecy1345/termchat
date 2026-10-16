@@ -13,6 +13,10 @@ Website: [termchat.app](https://termchat.app).
 **Status: not audited.** The cryptography comes from vodozemac, which was audited in
 2022; termchat's own code has had no external review. Treat it as experimental.
 
+termchat is a free, non-commercial, open-source project created and maintained as a
+personal hobby. It has no advertising, subscriptions, paid features or commercial
+monetization. Anyone can run their own relay server.
+
 ## What it protects, and what it does not
 
 The goal is not "impossible to break" but "breaking the server is pointless".
