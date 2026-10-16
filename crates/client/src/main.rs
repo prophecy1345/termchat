@@ -6,6 +6,7 @@ use std::time::Duration;
 use crossterm::event::{
     DisableBracketedPaste, EnableBracketedPaste, Event as TermEvent, EventStream, KeyEventKind,
 };
+use crossterm::terminal::SetTitle;
 use futures_util::StreamExt;
 use termchat::app::App;
 use termchat::{data, ui};
@@ -29,7 +30,7 @@ async fn main() -> std::io::Result<()> {
         hook(info);
     }));
     let result = run(&mut terminal, App::new(path)).await;
-    let _ = crossterm::execute!(stdout(), DisableBracketedPaste);
+    let _ = crossterm::execute!(stdout(), DisableBracketedPaste, SetTitle(""));
     ratatui::restore();
     result
 }
@@ -37,8 +38,14 @@ async fn main() -> std::io::Result<()> {
 async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::Result<()> {
     let mut keys = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut title = String::new();
     while !app.quit {
         terminal.draw(|f| ui::render(f, &app))?;
+        let now = app.title();
+        if now != title {
+            let _ = crossterm::execute!(stdout(), SetTitle(&now));
+            title = now;
+        }
         tokio::select! {
             ev = keys.next() => match ev {
                 Some(Ok(TermEvent::Key(k))) if k.kind == KeyEventKind::Press => app.on_key(k),

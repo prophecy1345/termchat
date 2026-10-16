@@ -50,8 +50,9 @@ pub struct Contact {
     /// Further texts from that request that were not kept.
     pub held_back: u32,
     pub messages: Vec<Msg>,
-    #[serde(skip)]
     pub unread: usize,
+    /// When the contact was added; orders the list until there are messages.
+    pub added_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,11 +135,23 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+impl Contact {
+    /// Latest activity, for "most recent first" in the list.
+    pub fn last_at(&self) -> u64 {
+        let last = |m: &[Msg]| m.last().map_or(0, |m| m.at);
+        self.added_at
+            .max(last(&self.messages))
+            .max(last(&self.hidden))
+    }
+}
+
 /// Crypto-erase (ADR-003): random bytes over the whole file, fsync, delete.
+/// The interface settings go too, so nothing is left behind (ADR-008).
 /// Without the header the body is noise. On SSDs old blocks may survive until
 /// TRIM; see the ADR for what that means.
 pub fn wipe(path: &Path) -> io::Result<()> {
-    for p in [path.to_path_buf(), path.with_extension("tmp")] {
+    let settings = crate::settings::path(path);
+    for p in [path.to_path_buf(), path.with_extension("tmp"), settings] {
         let Ok(len) = fs::metadata(&p).map(|m| m.len()) else {
             continue;
         };
@@ -188,9 +201,42 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
             assert!(permission_warning(&path).is_some());
         }
+        write_atomic(&crate::settings::path(&path), b"{}").unwrap();
         wipe(&path).unwrap();
         assert!(!path.exists() && !path.with_extension("tmp").exists());
+        assert!(!crate::settings::path(&path).exists());
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn last_at_orders_most_recent_first() {
+        let msg = |at| Msg {
+            mine: false,
+            text: String::new(),
+            at,
+            expires_at: None,
+            status: Status::Received,
+        };
+        let new = Contact {
+            key: [1; 32],
+            added_at: 50,
+            ..Default::default()
+        };
+        let mut old = Contact {
+            key: [2; 32],
+            added_at: 10,
+            ..Default::default()
+        };
+        old.messages.push(msg(20));
+        let mut talking = Contact {
+            key: [3; 32],
+            ..Default::default()
+        };
+        talking.hidden.push(msg(90));
+        let mut list = [old, new, talking];
+        list.sort_by_key(|c| std::cmp::Reverse(c.last_at()));
+        let keys: Vec<u8> = list.iter().map(|c| c.key[0]).collect();
+        assert_eq!(keys, [3, 1, 2]);
     }
 
     #[test]

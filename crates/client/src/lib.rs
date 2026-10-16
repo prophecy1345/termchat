@@ -7,6 +7,8 @@ pub mod app;
 pub mod data;
 pub mod form;
 pub mod password;
+pub mod settings;
+pub mod theme;
 pub mod ui;
 
 use std::collections::BTreeMap;

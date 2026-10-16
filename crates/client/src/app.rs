@@ -17,7 +17,8 @@ use zeroize::Zeroizing;
 use crate::data::{self, Contact, Data, Msg, Status};
 use crate::form::{self, Action, Form, Kind};
 use crate::password;
-use crate::{Dial, Event, Relay};
+use crate::settings::{self, Settings};
+use crate::{Dial, Event, Relay, theme};
 
 /// PLAN.md, M3.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
@@ -32,6 +33,7 @@ const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Som
 pub struct App {
     pub screen: Screen,
     pub path: PathBuf,
+    pub settings: Settings,
     pub quit: bool,
 }
 
@@ -95,9 +97,28 @@ impl App {
         };
         Self {
             screen,
+            settings: Settings::load(&settings::path(&path)),
             path,
             quit: false,
         }
+    }
+
+    /// The terminal window title: an unread count, never a name (ADR-008).
+    pub fn title(&self) -> String {
+        let unread: usize = match &self.screen {
+            Screen::Main(m) => m.data.contacts.iter().map(|c| c.unread).sum(),
+            _ => 0,
+        };
+        match unread {
+            0 => "termchat".into(),
+            n => format!("termchat ({n})"),
+        }
+    }
+
+    /// After a wipe the device must look freshly installed, theme included.
+    fn wiped(&mut self) {
+        self.settings = Settings::default();
+        self.screen = Screen::Setup(Form::new(Kind::Setup));
     }
 
     /// Next relay event while unlocked; never resolves otherwise.
@@ -113,6 +134,7 @@ impl App {
     pub fn on_relay(&mut self, ev: Event) {
         if let Screen::Main(m) = &mut self.screen {
             m.on_relay(ev);
+            m.resort();
         }
     }
 
@@ -162,16 +184,17 @@ impl App {
             Screen::Unlock(u) => match u.on_key(k, &self.path) {
                 Unlocked::Stay => {}
                 Unlocked::Open(main) => self.screen = Screen::Main(main),
-                Unlocked::Wiped => self.screen = Screen::Setup(Form::new(Kind::Setup)),
+                Unlocked::Wiped => self.wiped(),
             },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
                 if ctrl && k.code == KeyCode::Char('k') {
                     self.lock();
                 } else {
-                    m.on_key(k, ctrl);
+                    m.on_key(k, ctrl, &mut self.settings);
+                    m.resort();
                     if m.wiped {
-                        self.screen = Screen::Setup(Form::new(Kind::Setup));
+                        self.wiped();
                     }
                 }
             }
@@ -362,7 +385,7 @@ impl Main {
     fn open(core: Client, key: FileKey, data: Data, path: PathBuf) -> Result<Box<Self>, String> {
         let core = Arc::new(Mutex::new(core));
         let (relay, events) = link(&core, &data, &path)?;
-        Ok(Box::new(Self {
+        let mut main = Box::new(Self {
             core,
             key,
             data,
@@ -371,12 +394,25 @@ impl Main {
             connected: false,
             selected: 0,
             input: String::new(),
-            popup: None,
-            status: data::permission_warning(&path).unwrap_or_default(),
+            popup: data::permission_warning(&path).map(Popup::Notice),
+            status: String::new(),
             last_input: Instant::now(),
             path,
             wiped: false,
-        }))
+        });
+        main.resort();
+        Ok(main)
+    }
+
+    /// Most recent first; the open chat stays open while rows move.
+    fn resort(&mut self) {
+        let open = self.current().map(|c| c.key);
+        self.data
+            .contacts
+            .sort_by_key(|c| std::cmp::Reverse(c.last_at()));
+        if let Some(i) = open.and_then(|k| self.index(&k)) {
+            self.selected = i;
+        }
     }
 
     pub fn core(&self) -> MutexGuard<'_, Client> {
@@ -612,6 +648,7 @@ impl Main {
             None => {
                 self.data.contacts.push(Contact {
                     key: sender,
+                    added_at: now(),
                     ..Default::default()
                 });
                 self.data.contacts.len() - 1
@@ -709,9 +746,11 @@ impl Main {
         self.data.contacts.get(self.selected)
     }
 
-    fn on_key(&mut self, k: KeyEvent, ctrl: bool) {
+    fn on_key(&mut self, k: KeyEvent, ctrl: bool, settings: &mut Settings) {
+        // Seen by now; a new problem sets it again.
+        self.status.clear();
         if let Some(popup) = self.popup.take() {
-            return self.on_popup_key(popup, k);
+            return self.on_popup_key(popup, k, settings);
         }
         let key = self.current().map(|c| c.key);
         match (ctrl, k.code) {
@@ -830,7 +869,7 @@ impl Main {
         }
     }
 
-    fn on_popup_key(&mut self, popup: Popup, k: KeyEvent) {
+    fn on_popup_key(&mut self, popup: Popup, k: KeyEvent, settings: &mut Settings) {
         let keep = match popup {
             Popup::Help | Popup::Notice(_) => None,
             Popup::Menu => match k.code {
@@ -839,6 +878,13 @@ impl Main {
                 KeyCode::Char('w') => Some(Popup::Form(Form::new(Kind::Wipe))),
                 KeyCode::Char('p') => Some(Popup::Form(Form::new(Kind::Password))),
                 KeyCode::Char('t') => Some(Popup::Notice(self.toggle_tor())),
+                KeyCode::Char('c') => {
+                    settings.theme = theme::next(&settings.theme).into();
+                    if let Err(e) = settings.save(&settings::path(&self.path)) {
+                        self.status = format!("cannot save settings: {e}");
+                    }
+                    Some(Popup::Menu)
+                }
                 _ => None,
             },
             Popup::Form(mut f) => match f.on_key(k) {
@@ -1077,6 +1123,7 @@ impl Main {
                 self.data.contacts.push(Contact {
                     key,
                     request_pending: true,
+                    added_at: now(),
                     ..Default::default()
                 });
                 self.data.contacts.len() - 1
