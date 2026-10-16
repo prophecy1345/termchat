@@ -33,8 +33,13 @@ const csp =
     <link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
     <link rel="icon" href={url("/favicon.ico")} sizes="32x32" />
     <link rel="apple-touch-icon" href={url("/apple-touch-icon.png")} />
-    <link rel="alternate" hreflang="en" href={url("/")} />
-    <link rel="alternate" hreflang="ru" href={url("/ru/")} />
+    <link rel="canonical" href={new URL(url(t.lang === "en" ? "/" : "/ru/"), Astro.site)} />
+    <link rel="alternate" hreflang="en" href={new URL(url("/"), Astro.site)} />
+    <link rel="alternate" hreflang="ru" href={new URL(url("/ru/"), Astro.site)} />
+    <link rel="alternate" hreflang="x-default" href={new URL(url("/"), Astro.site)} />
+    <meta property="og:title" content={t.title} />
+    <meta property="og:description" content={t.description} />
+    <meta property="og:type" content="website" />
   </head>
   <body>
     <canvas id="cipher" aria-hidden="true"></canvas>
