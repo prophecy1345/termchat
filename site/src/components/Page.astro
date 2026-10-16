@@ -29,6 +29,8 @@ const csp =
     <title>{t.title}</title>
     <meta name="description" content={t.description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="alternate" hreflang="en" href="/" />
     <link rel="alternate" hreflang="ru" href="/ru/" />
   </head>
@@ -37,7 +39,7 @@ const csp =
     <div class="scanlines" aria-hidden="true"></div>
 
     <header class="top">
-      <a class="brand" href={t.lang === "en" ? "/" : "/ru/"}><span class="prompt">&gt;_</span> termchat</a>
+      <a class="brand" href={t.lang === "en" ? "/" : "/ru/"}><img src="/logo.svg" alt="" width="26" height="26" /> termchat</a>
       <nav>
         <a href="#features">{t.nav.features}</a>
         <a href="#protection">{t.nav.protection}</a>
@@ -49,6 +51,7 @@ const csp =
 
     <main>
       <section class="hero">
+        <img class="mark" src="/logo.svg" alt="" width="112" height="112" />
         <p class="badge">{t.status}</p>
         <h1 class="glow" data-decrypt aria-label="termchat">termchat</h1>
         <p class="tagline">{t.tagline}</p>

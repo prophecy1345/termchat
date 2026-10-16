@@ -47,6 +47,4 @@ Matrix/Element or Tor; text inside the favicon; more than three colours.
 
 ---
 
-Afterwards: export the chosen mark as SVG (or trace it), replace
-`site/public/favicon.svg`, and add `apple-touch-icon.png` (180×180) to
-`site/public/`.
+The result is in `docs/logo/` and `site/public/` (favicon, logo, apple-touch-icon).

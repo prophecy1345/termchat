@@ -15,7 +15,7 @@ npm run preview   # serve dist/
   with the README and `docs/manual.ru.md`.
 - Background animation: `src/scripts/cipher.ts`. It stops when the tab is
   hidden and shows one still frame with `prefers-reduced-motion`.
-- Logo: see `LOGO_PROMPT.md`; `public/favicon.svg` is a placeholder until then.
+- Logo: sources in `docs/logo/`; `public/` holds the favicon, `logo.svg` and `apple-touch-icon.png`.
 
 ## Publishing (once the repository is public)
 

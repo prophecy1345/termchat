@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo/termchat-mark-dark.svg" alt="termchat logo" width="128"></p>
+
 # termchat
 
 A private, text-only messenger for the terminal. End-to-end encrypted with

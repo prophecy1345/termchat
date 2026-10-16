@@ -112,10 +112,15 @@ label:focus-within {
 .brand {
   color: var(--text);
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.prompt {
-  color: var(--mauve);
+.mark {
+  display: block;
+  margin: 0 auto 1rem;
+  filter: drop-shadow(0 0 24px rgb(203 166 247 / 0.25));
 }
 
 nav {
