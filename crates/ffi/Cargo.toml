@@ -1,0 +1,31 @@
+[package]
+name = "termchat-ffi"
+description = "UniFFI bindings over termchat-engine for the Android app (ADR-011)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+# Generates the Kotlin side from the built library.
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[dependencies]
+termchat-core = { path = "../core" }
+termchat-engine = { path = "../engine", default-features = false }
+thiserror = "2.0.21"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "time"] }
+uniffi = "0.32.2"
+
+[features]
+# Only the bindings generator needs this; the library on the phone does not.
+bindgen = ["uniffi/cli"]
