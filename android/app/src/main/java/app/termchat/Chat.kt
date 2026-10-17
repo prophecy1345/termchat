@@ -172,6 +172,9 @@ private fun Drop(color: androidx.compose.ui.graphics.Color) {
 private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> Unit) {
     val a = m.account ?: return
     var input by remember { mutableStateOf("") }
+    // ADR-006: exactly the text shown is what goes to the operator, even if
+    // more arrives while the dialog is open.
+    val reportText = remember { if (which == "report") runCatching { a.reportText(c.index) }.getOrNull() else null }
     val (title, body, confirm) = when (which) {
         "verify" -> Triple(
             "Safety number",
@@ -182,7 +185,7 @@ private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> 
         "rename" -> Triple("Rename", "Only you see this name.", "Save")
         "report" -> Triple(
             "Report",
-            runCatching { a.reportText(c.index) }.getOrNull()?.let {
+            reportText?.let {
                 "The relay operator gets exactly this text, and the contact is blocked:\n\n$it"
             } ?: "Nothing from them to report.",
             "Report and block",
@@ -206,7 +209,7 @@ private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> 
                     when (which) {
                         "verify" -> a.setVerified(c.index, !c.verified)
                         "rename" -> a.rename(c.index, input)
-                        "report" -> a.reportText(c.index)?.let { a.report(c.index, it) }
+                        "report" -> reportText?.let { a.report(c.index, it) }
                         else -> { a.delete(c.index); m.screen = Screen.Chats }
                     }
                 }.onFailure { m.note = it.message ?: "$it" }

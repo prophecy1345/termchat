@@ -2,6 +2,17 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.1.14
+
+Android, after a security review:
+- Android no longer copies the app's data to a new phone (device-to-device
+  transfer); moving goes through termchat's own backup.
+- A report sends exactly the text shown, even if more arrives meanwhile.
+- Restoring from a read-only place works.
+- Passwords leave the settings screen's memory right after use.
+- A wipe also removes the settings file and the cache.
+- Message text is shown without characters that reorder it (bidi overrides).
+
 ## 0.1.13
 
 - **termchat for Android**, built on the same engine as the terminal client

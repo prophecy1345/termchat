@@ -8,6 +8,7 @@
     <application
         android:name=".TermchatApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="termchat"
         android:theme="@style/Theme.Termchat">

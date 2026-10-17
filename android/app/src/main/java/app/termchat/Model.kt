@@ -177,7 +177,10 @@ class Model(private val context: Context) : Listener {
         wipedNote = note
         wipes++
         screen = Screen.Start
-        prefs.edit().clear().apply()
+        context.cacheDir.deleteRecursively()
+        // Gone, not emptied: an empty settings file still says termchat was used.
+        prefs.edit().clear().commit()
+        context.deleteSharedPreferences("settings")
         Tc.use(DEFAULT_THEME)
         notify = false
         stay = false
@@ -201,6 +204,8 @@ class Model(private val context: Context) : Listener {
         for (line in list.readLines()) {
             runCatching { DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(line)) }
         }
+        // Overwritten first, like the engine's own files.
+        list.writeBytes(ByteArray(list.length().toInt()))
         list.delete()
     }
 }

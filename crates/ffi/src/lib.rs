@@ -345,7 +345,7 @@ impl Account {
                 .iter()
                 .map(|m| MessageView {
                     mine: m.mine,
-                    text: m.text.clone(),
+                    text: engine::clean_text(&m.text),
                     at: m.at,
                     system: m.status == Status::System,
                     status: match &m.status {

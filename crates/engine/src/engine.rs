@@ -144,6 +144,11 @@ pub fn clean(s: &str) -> String {
         .collect()
 }
 
+/// A message body, safe to show: like [`clean`], but line breaks stay.
+pub fn clean_text(s: &str) -> String {
+    s.split('\n').map(clean).collect::<Vec<_>>().join("\n")
+}
+
 fn why(code: ErrorCode) -> String {
     match code {
         ErrorCode::UnknownRecipient => "contact is no longer on the relay".into(),
@@ -1038,6 +1043,11 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_text_keeps_lines_but_not_bidi_overrides() {
+        assert_eq!(clean_text("a\u{202E}b\nc\u{0007}d"), "ab\ncd");
+    }
 
     #[test]
     fn plain_ws_only_for_local_or_onion() {

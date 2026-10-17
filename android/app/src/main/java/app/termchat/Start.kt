@@ -40,9 +40,13 @@ fun Start(m: Model) {
         uri ?: return@rememberLauncherForActivityResult
         val tmp = File(context.cacheDir, "restore")
         runCatching {
-            context.contentResolver.takePersistableUriPermission(
-                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
+            // Write lets a wipe delete this copy later (ADR-003); a read-only place
+            // still restores.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
             context.contentResolver.openInputStream(uri)!!.use { i -> tmp.outputStream().use { i.copyTo(it) } }
             restore(m.dir, tmp.absolutePath)
             m.rememberBackup(uri)

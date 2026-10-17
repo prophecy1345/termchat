@@ -150,6 +150,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             )
         }) { r ->
             tmp.delete()
+            f2 = ""; f3 = ""
             r.onSuccess {
                 m.rememberBackup(uri)
                 result = "Backup written. Move it off this phone: a wipe erases it only while it stays where you saved it."
@@ -283,7 +284,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
                             m.slow({
                                 if (duress) a.setDuress(cur, new.ifEmpty { null })
                                 else { a.changePassword(cur, new); "Password changed." }
-                            }) { r -> r.onSuccess { result = it; form = null }.onFailure { result = it.message ?: "$it" } }
+                            }) { r ->
+                        // The passwords leave the screen's memory at once.
+                        f1 = ""; f2 = ""; f3 = ""
+                        r.onSuccess { result = it; form = null }.onFailure { result = it.message ?: "$it" }
+                    }
                         }
                     }
                     else -> {

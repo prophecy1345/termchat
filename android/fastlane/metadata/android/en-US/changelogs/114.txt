@@ -1,0 +1,1 @@
+Security fixes: no device-to-device copy of app data, reports send exactly the text shown, restore from read-only places, passwords cleared after use, wipe removes settings and cache, bidi overrides removed from messages.
