@@ -70,6 +70,36 @@ jobs:
             termchat-*.tar.gz
             termchat-*.zip
 
+  # The Android app (ADR-011): signed with the release key from the secrets.
+  android:
+    needs: reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "ndk;30.0.16248370" >/dev/null
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install cargo-ndk@4.1.2 --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
+          KEYSTORE_B64: ${{ secrets.TERMCHAT_KEYSTORE_B64 }}
+          TERMCHAT_KEYSTORE_PASSWORD: ${{ secrets.TERMCHAT_KEYSTORE_PASSWORD }}
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          # A manual run without the secrets still builds, unsigned.
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export TERMCHAT_KEYSTORE="$RUNNER_TEMP/release.jks"
+          fi
+          android/build-rust.sh
+          (cd android && ./gradlew --no-daemon assembleRelease)
+          rm -f "$RUNNER_TEMP/release.jks"
+          cp android/app/build/outputs/apk/release/app-arm64-v8a-release*.apk "termchat-${{ github.ref_name }}-android-arm64.apk"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android
+          path: termchat-*.apk
+
   # Run both installers against the archives just built, served locally.
   installers:
     needs: build
@@ -114,7 +144,7 @@ jobs:
           & "$env:LOCALAPPDATA\Programs\termchat\termchat.exe" --version
 
   publish:
-    needs: [build, installers]
+    needs: [build, installers, android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -129,7 +159,7 @@ jobs:
         with:
           path: src
       - run: |
-          sha256sum termchat-*.tar.gz termchat-*.zip > SHA256SUMS
+          sha256sum termchat-*.tar.gz termchat-*.zip termchat-*.apk > SHA256SUMS
           src/scripts/homebrew-formula.sh "${{ github.ref_name }}" SHA256SUMS > termchat.rb
       # Signed (Sigstore) statement: these files came from this repo, this commit,
       # this workflow. Verify with: gh attestation verify <file> --repo <owner>/termchat
@@ -141,7 +171,8 @@ jobs:
           subject-path: |
             termchat-*.tar.gz
             termchat-*.zip
+            termchat-*.apk
             SHA256SUMS
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip SHA256SUMS termchat.rb --repo "${{ github.repository }}" --draft --generate-notes
+        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip termchat-*.apk SHA256SUMS termchat.rb --repo "${{ github.repository }}" --draft --generate-notes
