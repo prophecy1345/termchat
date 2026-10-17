@@ -1,6 +1,6 @@
 # ADR-012: waking the Android app for new messages
 
-Status: **accepted** (maintainer, 2026-10-17). Русская версия: [012-push.ru.md](012-push.ru.md).
+Status: **accepted** (maintainer, 2026-10-17; section 2 amended the same day). Русская версия: [012-push.ru.md](012-push.ru.md).
 
 ## Context
 
@@ -37,8 +37,11 @@ ntfy.sh). The app gets an endpoint URL from it.
   - at most once per key per 30 seconds;
   - with a 5-second timeout;
   - it does not retry.
-- **The app**, woken by the push, connects, takes the queue, shows a "New
-  message" notification (ADR-008) and disconnects.
+- **The app**, woken by the push, only shows a "New message" notification
+  (ADR-008). It does not connect: a locked or closed app has no keys in
+  memory, and signing in to the relay needs them. The messages arrive when
+  the user opens and unlocks it. (Amended 2026-10-17; the first version had
+  the app connect and fetch, which the password makes impossible.)
 
 ### 3. Endpoint rules (the relay must not be turned into a proxy)
 - Only `https://`, at most 512 bytes.
