@@ -832,10 +832,15 @@ impl Main {
     }
 
     /// ADR-009: goodbyes to every contact we talk to, then `Unregister`, then the wipe.
+    /// `MOVED` (section 6) only erases this device, silently.
     fn leave(&mut self, mut f: Form) -> Option<Popup> {
-        if f.fields[0].trim() != "WIPE" {
-            f.error = "type WIPE in capitals".into();
-            return Some(Popup::Form(f));
+        match f.fields[0].trim() {
+            "WIPE" => {}
+            "MOVED" => return self.finish_wipe(""),
+            _ => {
+                f.error = "type WIPE or MOVED in capitals".into();
+                return Some(Popup::Form(f));
+            }
         }
         if !self.connected {
             return Some(Popup::WipeAnyway("No connection to the relay.".into()));
