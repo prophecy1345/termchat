@@ -554,6 +554,7 @@ h2::before {
 
 #os-unix:checked ~ [data-for="os-unix"],
 #os-win:checked ~ [data-for="os-win"],
+#os-android:checked ~ [data-for="os-android"],
 #os-manual:checked ~ [data-for="os-manual"] {
   display: block;
 }

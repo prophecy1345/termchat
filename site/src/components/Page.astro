@@ -145,6 +145,8 @@ const csp =
           <label for="os-unix">{t.installTabs.unix}</label>
           <input type="radio" name="os" id="os-win" />
           <label for="os-win">{t.installTabs.windows}</label>
+          <input type="radio" name="os" id="os-android" />
+          <label for="os-android">{t.installTabs.android}</label>
           <input type="radio" name="os" id="os-manual" />
           <label for="os-manual">{t.installTabs.manual}</label>
 
@@ -158,6 +160,10 @@ const csp =
             <p>{t.install.ps}</p>
             <Cmd text={commands.ps} copy={t.copy} done={t.copied} />
             <p>{t.install.zip}</p>
+          </div>
+          <div class="panel" data-for="os-android">
+            <p>{t.install.android}</p>
+            <p><a class="button" href={`${REPO}/releases/latest`}>{t.install.releases}</a></p>
           </div>
           <div class="panel" data-for="os-manual">
             <p>{t.install.manual}</p>

@@ -74,6 +74,10 @@ Download the archive for your system from the
    ```
 
    The hashes must match `BINARIES.sha256` inside the archive.
+4. **Android APK:** steps 1 and 2 work for the `.apk` too. Its signing
+   certificate must be this one (`apksigner verify --print-certs <apk>`, or the
+   app's details in Android): SHA-256
+   `BC:6A:74:2E:73:CF:B7:55:CD:24:6B:C0:F2:73:DF:FF:71:8A:78:77:7D:4C:CB:41:9A:8D:D4:A6:4A:76:BA:5E`.
 
 Dependencies are checked with `cargo deny` (licences, known vulnerabilities) and
 `cargo vet` (imported audits from Mozilla, Google and others; the rest is listed as
@@ -110,6 +114,14 @@ irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install
 ```
 
 Then open a new terminal and run `termchat`.
+
+**Android** (8.0 and later, no Google services needed): download
+`termchat-<version>-android-arm64.apk` from the
+[releases](https://github.com/prophecy1345/termchat/releases) and open it;
+Android asks once to allow installs from your browser. The app shows a notice
+in the chat list when a newer version is out. An F-Droid build is on its way;
+APKs from F-Droid and from GitHub are signed with different keys, so stay with
+one source.
 
 **By hand.** Download the archive for your computer from the
 [releases](https://github.com/prophecy1345/termchat/releases):
