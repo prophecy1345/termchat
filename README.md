@@ -122,6 +122,17 @@ Android asks once to allow installs from your browser. The app shows a notice
 in the chat list when a newer version is out. An F-Droid build is on its way,
 with the same signature as the APK here.
 
+Messages arrive while the app is open. For new messages while it is closed, pick
+one in the app's settings:
+
+- **Wake-ups through UnifiedPush** (lighter on battery): install a distributor
+  such as [ntfy](https://ntfy.sh) from F-Droid or Google Play, turn its battery
+  optimisation off, then turn wake-ups on in termchat. The phone shows only
+  "New message". The relay keeps your push address, and the push server sees
+  when you get messages, not from whom.
+- **Stay connected in the background**: no extra app, but it costs battery,
+  shows a permanent notice and keeps your keys in memory.
+
 **By hand.** Download the archive for your computer from the
 [releases](https://github.com/prophecy1345/termchat/releases):
 
