@@ -1,0 +1,43 @@
+# Draft for fdroiddata (metadata/app.termchat.yml). F-Droid builds the app
+# from source; the maintainer submits it as a merge request to
+# https://gitlab.com/fdroid/fdroiddata. Texts and screenshots come from
+# android/fastlane in this repository.
+Categories:
+  - Internet
+License: AGPL-3.0-or-later
+SourceCode: https://github.com/prophecy1345/termchat
+IssueTracker: https://github.com/prophecy1345/termchat/issues
+Changelog: https://github.com/prophecy1345/termchat/blob/main/CHANGELOG.md
+
+AutoName: termchat
+
+RepoType: git
+Repo: https://github.com/prophecy1345/termchat.git
+
+Builds:
+  - versionName: 0.1.13
+    versionCode: 113
+    commit: v0.1.13
+    subdir: android/app
+    sudo:
+      - apt-get update
+      - apt-get install -y build-essential
+    gradle:
+      - yes
+    output: build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
+    srclibs:
+      - rustup@1.28.2
+    prebuild:
+      - $$rustup$$/rustup-init.sh -y --default-toolchain none --profile minimal
+      - source $HOME/.cargo/env
+      - rustup target add aarch64-linux-android x86_64-linux-android
+      - cargo install cargo-ndk@4.1.2 --locked
+    build:
+      - source $HOME/.cargo/env
+      - ANDROID_NDK_HOME=$$NDK$$ ../build-rust.sh
+    ndk: 30.0.16248370
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 0.1.13
+CurrentVersionCode: 113

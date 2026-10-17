@@ -1,0 +1,1 @@
+First Android release: chats, invites with QR codes, Tor, backups, passwords and the duress password, wipe, push wake-ups through UnifiedPush, and the colour themes of the terminal client.
