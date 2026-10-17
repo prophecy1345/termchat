@@ -3,10 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// One version for the whole project: the workspace's Cargo.toml.
-val cargoVersion = rootDir.resolve("../Cargo.toml").readLines()
-    .first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
-val (major, minor, patch) = cargoVersion.split('.').map { it.toInt() }
+// The release key stays outside the repository (ADR-011): a local path or CI
+// secrets, through the environment. F-Droid strips signing blocks and signs
+// nothing, so the config is made in one expression, only when a key is given.
+fun releaseKey(project: Project, path: String) =
+    (project.extensions.getByName("android") as com.android.build.api.dsl.ApplicationExtension)
+        .signingConfigs.create("release") {
+            storeFile = project.file(path)
+            storePassword = System.getenv("TERMCHAT_KEYSTORE_PASSWORD")
+            keyAlias = "termchat"
+            keyPassword = System.getenv("TERMCHAT_KEYSTORE_PASSWORD")
+        }
 
 android {
     namespace = "app.termchat"
@@ -15,26 +22,18 @@ android {
         applicationId = "app.termchat"
         minSdk = 26
         targetSdk = 37
-        versionName = cargoVersion
-        versionCode = major * 10000 + minor * 100 + patch
+        // Written out for F-Droid's update checker, which reads them here;
+        // checked against the workspace's Cargo.toml at the end of this file.
+        versionName = "0.2.1"
+        versionCode = 201
     }
     buildFeatures { compose = true }
-    // The release key stays outside the repository (ADR-011): a local path or
-    // CI secrets, through the environment.
-    signingConfigs {
-        create("release") {
-            storeFile = System.getenv("TERMCHAT_KEYSTORE")?.let { file(it) }
-            storePassword = System.getenv("TERMCHAT_KEYSTORE_PASSWORD")
-            keyAlias = "termchat"
-            keyPassword = System.getenv("TERMCHAT_KEYSTORE_PASSWORD")
-        }
-    }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs["release"].takeIf { it.storeFile != null }
+            signingConfig = System.getenv("TERMCHAT_KEYSTORE")?.let { releaseKey(project, it) }
         }
     }
     // One APK per ABI: phones need only arm64; x86_64 is for the emulator.
@@ -65,3 +64,13 @@ dependencies {
     // Wake-ups through the push server the user picked, without Google (ADR-012).
     implementation("org.unifiedpush.android:connector:3.3.5")
 }
+
+// One version for the whole project: Cargo.toml. versionCode is
+// major * 10000 + minor * 100 + patch (CONTRIBUTING.md, "Versions").
+val cargoVersion = rootDir.resolve("../Cargo.toml").readLines()
+    .first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
+val (major, minor, patch) = cargoVersion.split('.').map { it.toInt() }
+check(
+    android.defaultConfig.versionName == cargoVersion &&
+        android.defaultConfig.versionCode == major * 10000 + minor * 100 + patch,
+) { "android/app/build.gradle.kts disagrees with Cargo.toml ($cargoVersion)" }
