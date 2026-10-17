@@ -52,7 +52,7 @@ fun notification(context: Context, channel: String, text: String, silent: Boolea
         context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
     )
     return Notification.Builder(context, channel)
-        .setSmallIcon(android.R.drawable.stat_notify_chat)
+        .setSmallIcon(R.drawable.ic_notification)
         .setContentTitle("termchat")
         .setContentText(text)
         .setContentIntent(open)

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The termchat mark (docs/logo): a locked speech bubble with a prompt. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <group android:scaleX="0.029" android:scaleY="0.029" android:translateX="-2.85" android:translateY="-2.85">
+        <path android:pathData="M392 354V290a120 120 0 0 1 240 0v64" android:strokeColor="#FFFFFF" android:strokeWidth="64" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M330 354H694Q792 354 792 452V666Q792 764 694 764H440L304 850V760Q232 748 232 666V452Q232 354 330 354Z" android:strokeColor="#FFFFFF" android:strokeWidth="64" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M370 500L450 570L370 640" android:strokeColor="#FFFFFF" android:strokeWidth="64" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M538 640H650" android:strokeColor="#FFFFFF" android:strokeWidth="64" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    </group>
+</vector>

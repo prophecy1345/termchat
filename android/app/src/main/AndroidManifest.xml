@@ -8,6 +8,7 @@
     <application
         android:name=".TermchatApp"
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="termchat"
         android:theme="@style/Theme.Termchat">
         <activity
