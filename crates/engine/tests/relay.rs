@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use termchat::{Event, Relay};
 use termchat_core::Client;
 use termchat_core::proto::{Body, ClientFrame, ErrorCode, ServerFrame, VERSION};
+use termchat_engine::{Event, Relay};
 use termchat_relay::{Config, Limits, Rate};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Receiver;
@@ -42,7 +42,8 @@ impl Peer {
         let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
             signer.lock().unwrap().auth_signature(host, nonce)
         });
-        let (relay, events) = Relay::connect(url, identity, sign, termchat::Dial::Direct).unwrap();
+        let (relay, events) =
+            Relay::connect(url, identity, sign, termchat_engine::Dial::Direct).unwrap();
         Self {
             core,
             relay,

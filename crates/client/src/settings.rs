@@ -37,7 +37,7 @@ impl Default for Settings {
 
 /// Lives beside the state file, and is wiped with it.
 pub fn path(state: &Path) -> PathBuf {
-    state.with_file_name("settings.json")
+    data::settings_path(state)
 }
 
 impl Settings {

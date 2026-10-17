@@ -4682,24 +4682,18 @@ dependencies = [
 name = "termchat"
 version = "0.1.12"
 dependencies = [
- "arti-client",
  "base64 0.22.1",
  "crossterm",
  "futures-util",
- "getrandom 0.4.3",
  "ratatui",
  "rustix",
- "rustls",
  "serde",
  "serde_json",
  "termchat-core",
- "termchat-proto",
- "termchat-relay",
+ "termchat-engine",
  "tokio",
  "tokio-tungstenite",
- "tor-rtcompat",
  "zeroize",
- "zxcvbn",
 ]
 
 [[package]]
@@ -4716,6 +4710,27 @@ dependencies = [
  "thiserror 2.0.21",
  "vodozemac",
  "zeroize",
+]
+
+[[package]]
+name = "termchat-engine"
+version = "0.1.12"
+dependencies = [
+ "arti-client",
+ "base64 0.22.1",
+ "futures-util",
+ "getrandom 0.4.3",
+ "rustls",
+ "serde",
+ "serde_json",
+ "termchat-core",
+ "termchat-proto",
+ "termchat-relay",
+ "tokio",
+ "tokio-tungstenite",
+ "tor-rtcompat",
+ "zeroize",
+ "zxcvbn",
 ]
 
 [[package]]

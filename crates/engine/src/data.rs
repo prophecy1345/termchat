@@ -153,6 +153,12 @@ impl Contact {
     }
 }
 
+/// Interface settings (theme and the like): plain, so the lock screen can use
+/// them before the password (ADR-008). Lives beside the state, wiped with it.
+pub fn settings_path(state: &Path) -> PathBuf {
+    state.with_file_name("settings.json")
+}
+
 /// Tor state and directory cache (ADR-004); holds no secrets, but shows that
 /// termchat was used over Tor.
 pub fn tor_dir(state: &Path) -> PathBuf {
@@ -165,7 +171,7 @@ pub fn tor_dir(state: &Path) -> PathBuf {
 /// old blocks may survive until TRIM; see the ADR for what that means.
 /// Backups still at the path they were written to or restored from go as well.
 pub fn wipe(path: &Path) -> io::Result<()> {
-    let settings = crate::settings::path(path);
+    let settings = settings_path(path);
     for p in [path.to_path_buf(), path.with_extension("tmp"), settings] {
         shred(&p)?;
     }
@@ -267,7 +273,7 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
             assert!(permission_warning(&path).is_some());
         }
-        write_atomic(&crate::settings::path(&path), b"{}").unwrap();
+        write_atomic(&settings_path(&path), b"{}").unwrap();
         write_atomic(&tor_dir(&path).join("state").join("guards"), b"[]").unwrap();
         // A known backup goes; one replaced by another file at its path stays.
         let header = |b: u8| vec![b; 200];
@@ -281,7 +287,7 @@ mod tests {
         assert!(!ours.exists() && theirs.exists() && !backups(&path).exists());
         fs::remove_file(&theirs).unwrap();
         assert!(!path.exists() && !path.with_extension("tmp").exists());
-        assert!(!crate::settings::path(&path).exists());
+        assert!(!settings_path(&path).exists());
         assert!(!tor_dir(&path).exists());
         // Nothing to remove is not an error.
         remove_tor_dir(&path).unwrap();

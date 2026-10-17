@@ -47,6 +47,8 @@ below are strict on purpose.
 - `crates/proto`: wire format (postcard), no IO.
 - `crates/core`: sessions (vodozemac), encrypted store, no IO.
 - `crates/relay`: the relay server (axum, SQLite).
-- `crates/client`: the terminal client (ratatui), transport, Tor.
+- `crates/engine`: everything a client does besides drawing: transport, Tor,
+  app data and its file, passwords (ADR-011).
+- `crates/client`: the terminal client (ratatui), a shell over `engine`.
 - `docs/`: threat model, protocol, self-hosting, ADRs.
 - `site/`: the project website.

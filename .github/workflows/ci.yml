@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy -p termchat --no-default-features --all-targets --locked -- -D warnings
+      - run: cargo clippy -p termchat -p termchat-engine --no-default-features --all-targets --locked -- -D warnings
 
   vet:
     runs-on: ubuntu-latest
