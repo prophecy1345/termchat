@@ -762,7 +762,7 @@ version = "0.1.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.inout]]
-version = "0.2.3"
+version = "0.2.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.instability]]
