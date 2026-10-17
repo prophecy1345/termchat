@@ -26,6 +26,8 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    # Mozilla's CA list as data, in webpki-roots: TLS roots on Android (ADR-011).
+    "CDLA-Permissive-2.0",
     # Public-domain style, pulled in by Arti (ADR-004).
     "CC0-1.0",
     "Unlicense",

@@ -64,30 +64,8 @@ Need help now? You are not alone.
 
 pub use crate::clean;
 
-/// What the contact is called here. Names are chosen by the peer, so an
-/// unverified contact, or one whose name collides with another contact or with
-/// ours, also shows the start of its fingerprint: "Alice·48213" (ADR-007).
 pub fn name(m: &Main, c: &Contact) -> String {
-    let base = |c: &Contact| {
-        let nick = m.engine.core().nickname(&c.key).map(str::to_owned);
-        clean(&c.petname.clone().or(nick).unwrap_or_default())
-    };
-    let fp = fingerprint(&c.key);
-    let name = base(c);
-    if name.is_empty() {
-        return fp[..5].to_string();
-    }
-    // O(contacts) per name, O(n²) per frame; cache if lists grow large.
-    let collides = name == clean(&m.engine.data.nickname)
-        || m.engine
-            .data
-            .contacts
-            .iter()
-            .any(|o| o.key != c.key && base(o) == name);
-    match !c.verified || collides {
-        true => format!("{name}·{}", &fp[..5]),
-        false => name,
-    }
+    m.engine.name(c)
 }
 
 fn age(at: u64) -> String {

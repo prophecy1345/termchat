@@ -238,8 +238,9 @@ pub fn remove_tor_dir(state: &Path) -> io::Result<()> {
 }
 
 /// A warning if other users could read the state file or its folder.
+/// Not on Android: each app runs as its own user, so its folder is private anyway.
 pub fn permission_warning(path: &Path) -> Option<String> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         use std::os::unix::fs::PermissionsExt;
         let loose = |p: &Path| fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o077 != 0);
@@ -267,7 +268,7 @@ mod tests {
         let path = dir.join("state");
         write_atomic(&path, b"secret").unwrap();
         assert_eq!(permission_warning(&path), None);
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "android")))]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();

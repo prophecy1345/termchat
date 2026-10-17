@@ -26,6 +26,10 @@ tor-rtcompat = { version = "0.47", default-features = false, optional = true }
 zeroize = "1.9.1"
 zxcvbn = { version = "3.1.1", default-features = false }
 
+# Android has no certificate bundle rustls-native-certs can read (ADR-011).
+[target.'cfg(target_os = "android")'.dependencies]
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
+
 [dev-dependencies]
 termchat-relay = { path = "../relay" }
 
