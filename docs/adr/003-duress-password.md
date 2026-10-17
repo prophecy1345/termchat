@@ -1,6 +1,6 @@
 # ADR-003: duress password
 
-Status: accepted. Date: 2026-10-15. Русская версия: [003-duress-password.ru.md](003-duress-password.ru.md).
+Status: accepted; section "Backups on this device" accepted 2026-10-17. Date: 2026-10-15. Русская версия: [003-duress-password.ru.md](003-duress-password.ru.md).
 
 ## Context
 
@@ -75,6 +75,36 @@ When the duress password is entered, before anything is shown:
 
 The same works on the auto-lock screen.
 
+### Backups on this device (accepted 2026-10-17)
+A backup left on the same disk survives the erase, opens with a password that
+can be forced out too, and shows that termchat was used. So:
+
+1. **The client remembers where backups are.** Writing a backup (Ctrl+P, b)
+   and restoring from one (Ctrl+B) add a line to `backups` next to the state
+   file: the file's path and the salt of its first slot (16 random bytes, in
+   the file's header anyway). The duress password does not open the state
+   file, so this list has to be readable without the main password: it is a
+   plain file, mode 0600.
+2. **Every wipe erases them:** duress, `WIPE` and `MOVED` (ADR-009) alike. For
+   each line, if the file at that path exists and its header carries the same
+   salt, it is overwritten, `fsync`ed and deleted, like the state file; then
+   `backups` itself goes the same way. A missing file, a different file at the
+   path or an unmounted USB stick is skipped silently. The salt check keeps a
+   planted line from erasing an unrelated file.
+3. **No default path.** The backup form no longer offers `~/termchat-backup`:
+   the user types where it goes.
+4. **A warning after writing:** "Move it off this device. A wipe erases it only
+   while it stays at this path."
+
+What this does not do, honestly:
+- A copy the user moved, renamed or copied elsewhere is not known and not
+  touched. That is the point: it is how they get their identity back.
+- A backup on a USB stick that is plugged in during the wipe is erased.
+- `backups` names where backups live (for example `/Volumes/USB/tc`) to
+  anyone who reads the disk before a wipe. It holds no key material.
+- On an SSD the overwritten blocks may survive until TRIM (point 2 above);
+  they are encrypted with the backup password.
+
 ### Settings
 - Off by default; turned on in the settings.
 - When turning it on, the client shows the warning below and asks for
@@ -94,7 +124,7 @@ The same works on the auto-lock screen.
    punishable as destroying evidence or obstruction. Users decide for themselves.
 4. **Physical risk.** Having found the deception, the adversary may increase the
    pressure.
-5. **The identity export** (backup) is stored separately and is not destroyed.
+5. **Backups elsewhere.** Only backups at the path the client wrote or restored them from are erased (see "Backups on this device"); copies moved elsewhere survive.
 6. **The relay and contacts** do not learn about the erasing. Messages that
    arrive later have no one to decrypt them.
 
