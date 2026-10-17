@@ -2,6 +2,12 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.2.1
+
+- The Android build works in F-Droid's build server: the signing setup no
+  longer breaks when F-Droid strips signing blocks, and the version is written
+  where F-Droid's update checker looks for it.
+
 ## 0.2.0
 
 - **Reproducible Android builds**: the APK can be rebuilt from source to the
