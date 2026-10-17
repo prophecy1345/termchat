@@ -407,6 +407,15 @@ impl Account {
         self.lock().finish_wipe("");
     }
 
+    /// The UnifiedPush endpoint, or `None` to stop wake-ups (ADR-012).
+    pub fn set_push(&self, endpoint: Option<String>) {
+        self.lock().set_push(endpoint);
+    }
+
+    pub fn push(&self) -> Option<String> {
+        self.lock().data.push.clone()
+    }
+
     pub fn news_seen(&self) {
         self.lock().news_seen();
     }

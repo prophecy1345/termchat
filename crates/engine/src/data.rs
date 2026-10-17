@@ -33,6 +33,8 @@ pub struct Data {
     pub rejected: Vec<Ed25519Key>,
     /// The version whose "what's new" was opened; the status bar nags until then.
     pub news_seen: String,
+    /// Where the relay wakes this account (UnifiedPush, ADR-012); told on every connect.
+    pub push: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

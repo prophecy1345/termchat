@@ -126,6 +126,15 @@ async fn post(url: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Network: `TERMCHAT_PUSH_URL=https://ntfy.sh/<topic> cargo test -p termchat-relay -- --ignored`,
+    /// then look at the topic.
+    #[tokio::test]
+    #[ignore]
+    async fn wakes_a_real_endpoint() {
+        let url = std::env::var("TERMCHAT_PUSH_URL").unwrap_or_default();
+        assert!(post(&url).await.is_ok());
+    }
+
     #[test]
     fn only_https_endpoints_on_public_addresses() {
         assert_eq!(

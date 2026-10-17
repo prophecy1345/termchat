@@ -26,6 +26,10 @@ const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
 /// ADR-003: a typo in the real password must never hit the duress one.
 pub const DURESS_DISTANCE: usize = 4;
+/// The first relay version that knows `SetPush` (ADR-012); older ones close
+/// the connection on it.
+const PUSH_SINCE: (u32, u32, u32) = (0, 1, 13);
+
 /// Disappearing timer steps, in the order a button cycles them.
 pub const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
 
@@ -80,6 +84,8 @@ pub struct Engine {
     pub connected: bool,
     /// A newer version the relay runs (ADR-010).
     pub update: Option<String>,
+    /// The relay knows `SetPush` (ADR-012).
+    push_ok: bool,
     /// The chat on screen: its messages do not count as unread.
     pub open: Option<Ed25519Key>,
     pub happened: Vec<Happened>,
@@ -249,6 +255,7 @@ impl Engine {
             events,
             connected: false,
             update: None,
+            push_ok: false,
             open: None,
             happened,
             path,
@@ -377,10 +384,15 @@ impl Engine {
         match ev {
             Event::RelayVersion(v) => {
                 let ours = parse_version(env!("CARGO_PKG_VERSION"));
+                self.push_ok = parse_version(&v) >= Some(PUSH_SINCE);
                 self.update = (parse_version(&v) > ours).then_some(v);
             }
             Event::Connected => {
                 self.connected = true;
+                // The relay may have lost it, or this is a restored backup.
+                if self.data.push.is_some() {
+                    self.tell_push();
+                }
                 let waiting: Vec<_> = self
                     .data
                     .contacts
@@ -986,6 +998,20 @@ impl Engine {
         match !c.verified || collides {
             true => format!("{name}·{}", &fp[..5]),
             false => name,
+        }
+    }
+
+    /// Where the relay should wake this account; `None` stops it (ADR-012).
+    pub fn set_push(&mut self, endpoint: Option<String>) {
+        self.data.push = endpoint;
+        self.persist();
+        self.tell_push();
+    }
+
+    fn tell_push(&mut self) {
+        if self.connected && self.push_ok {
+            let endpoint = self.data.push.clone();
+            let _ = self.relay.send(ClientFrame::SetPush { endpoint });
         }
     }
 
