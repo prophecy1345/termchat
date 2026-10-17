@@ -102,6 +102,18 @@ pub fn restore(dir: String, backup: String) -> Result<()> {
     Ok(engine::restore(&state(&dir), Path::new(&backup))?)
 }
 
+/// "What's new": this build's CHANGELOG.md.
+#[uniffi::export]
+pub fn changelog() -> String {
+    let all = include_str!("../../../CHANGELOG.md");
+    all[all.find("## ").unwrap_or(0)..].to_string()
+}
+
+#[uniffi::export]
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").into()
+}
+
 #[uniffi::export]
 pub fn generate_password() -> String {
     termchat_engine::password::generate().to_string()
@@ -434,7 +446,10 @@ mod tests {
         assert!(matches!(wrong, Err(TermchatError::Failed(_))));
         let a = unlock(dir.clone(), pw, Arc::new(Quiet)).unwrap().unwrap();
         assert_eq!(a.fingerprint(), me);
+        // A wipe stays a wipe when the account is dropped (it saves on drop).
+        assert!(a.leave(true));
         drop(a);
+        assert!(!state_exists(dir.clone()));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

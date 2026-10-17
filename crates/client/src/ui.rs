@@ -597,6 +597,9 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut flag = |text: String, colour: Color| {
         title.push(Span::styled(format!("   {text}"), Style::new().fg(colour)));
     };
+    if m.engine.core().is_request(&c.key) == Some(true) {
+        flag("request: Ctrl+Y accept, Ctrl+D reject".into(), t.peach);
+    }
     if !c.verified {
         flag("! not verified (Ctrl+F)".into(), t.peach);
     }
