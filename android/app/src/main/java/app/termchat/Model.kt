@@ -50,6 +50,39 @@ class Model(private val context: Context) : Listener {
         private set
     var busy by mutableStateOf(false)
     var lastInput = System.currentTimeMillis()
+    /** The app is on screen (between onStart and onStop). */
+    var visible = false
+
+    // Plain settings, like the terminal's settings.json (ADR-008); wiped with the state.
+    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    var notify by mutableStateOf(prefs.getBoolean("notify", false))
+        private set
+    /** Keep the relay connection while the app is in the background (ADR-012). */
+    var stay by mutableStateOf(prefs.getBoolean("stay", false))
+        private set
+
+    fun notifyOn(on: Boolean) { notify = on; prefs.edit().putBoolean("notify", on).apply() }
+
+    fun stayOn(on: Boolean) {
+        stay = on
+        prefs.edit().putBoolean("stay", on).apply()
+        link()
+    }
+
+    /** The service runs while an account is open and the user asked to stay connected. */
+    private fun link() {
+        if (account != null && stay) ConnectionService.start(context) else ConnectionService.stop(context)
+    }
+
+    // Runs as long as the process does, with or without a screen.
+    private val idleCheck = object : Runnable {
+        override fun run() { lockIfIdle(); main.postDelayed(this, 10_000) }
+    }
+
+    init {
+        channels(context)
+        main.postDelayed(idleCheck, 10_000)
+    }
 
     override fun onEvent(event: Event) = main.post {
         when (event) {
@@ -57,7 +90,7 @@ class Model(private val context: Context) : Listener {
             is Event.Notice -> notice = event.text
             is Event.WipeAnyway -> { leaving = false; wipeAnyway = event.why }
             is Event.Wiped -> wiped(event.note)
-            is Event.Alert -> {}
+            is Event.Alert -> alert(event.index)
         }
     }.let {}
 
@@ -76,6 +109,15 @@ class Model(private val context: Context) : Listener {
         account = a
         lastInput = System.currentTimeMillis()
         screen = Screen.Chats
+        link()
+    }
+
+    /** "New message", nothing else, and only when the chat is not in front of the user. */
+    private fun alert(index: UInt?) {
+        val open = (screen as? Screen.Chat)?.index
+        if (!notify || (visible && open != null && open == index)) return
+        context.getSystemService(android.app.NotificationManager::class.java)
+            .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
     }
 
     /** Saves and drops every key and message from memory. */
@@ -85,6 +127,7 @@ class Model(private val context: Context) : Listener {
         screen = Screen.Start
         notice = null
         leaving = false
+        link()
     }
 
     fun touch() { lastInput = System.currentTimeMillis() }
@@ -92,8 +135,10 @@ class Model(private val context: Context) : Listener {
     /** After the user changed something: the engine only reports the relay's changes. */
     fun changed() { version++ }
 
+    /** Five minutes without a touch lock it, on screen or in the background (ADR-011),
+     *  unless it is in the background and the user asked to stay connected (ADR-012). */
     fun lockIfIdle() {
-        if (account != null && System.currentTimeMillis() - lastInput >= AUTOLOCK_MS) lock()
+        if (account != null && (visible || !stay) && System.currentTimeMillis() - lastInput >= AUTOLOCK_MS) lock()
     }
 
     /** The state file is gone: SAF backups we know of go too (ADR-003, ADR-011). */
@@ -106,6 +151,10 @@ class Model(private val context: Context) : Listener {
         wipedNote = note
         wipes++
         screen = Screen.Start
+        prefs.edit().clear().apply()
+        notify = false
+        stay = false
+        link()
     }
 
     // Backups written or restored through the Storage Access Framework. The

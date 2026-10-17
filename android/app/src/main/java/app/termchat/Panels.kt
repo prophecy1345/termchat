@@ -157,6 +157,23 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         }
     }
 
+    val allow = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> m.notifyOn(ok) }
+    Text("NOTIFICATIONS", style = Tc.caps)
+    MenuRow(
+        "New messages: ${if (m.notify) "on" else "off"}",
+        "\"termchat: New message\", with no name and no text",
+    ) {
+        if (m.notify) m.notifyOn(false)
+        else if (android.os.Build.VERSION.SDK_INT >= 33) allow.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        else m.notifyOn(true)
+    }
+    MenuRow(
+        "Stay connected in the background: ${if (m.stay) "on" else "off"}",
+        "Messages arrive while the app is closed. Costs battery, shows a permanent " +
+            "\"termchat is connected\" notice, and keeps your keys in memory: " +
+            "the app no longer locks itself in the background.",
+    ) { m.stayOn(!m.stay) }
+    Line()
     Text("SECURITY", style = Tc.caps)
     MenuRow("Back up your identity" + if (a.backedUp()) "" else "  ●", "Identity and contacts, no messages. Keep it off this phone.") { open("backup") }
     MenuRow("Change password") { open("password") }

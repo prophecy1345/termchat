@@ -13,11 +13,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: Model
-    private var hiddenSince = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,34 +24,23 @@ class MainActivity : ComponentActivity() {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         }
-        model = Model(applicationContext)
+        model = (application as TermchatApp).model
         setContent { TermchatTheme { NoLearning { Surface(Modifier.fillMaxSize()) { Root(model) } } } }
-    }
-
-    // A recreated activity starts locked; the old account must not live on in
-    // the background with its keys and its relay connection.
-    override fun onDestroy() {
-        model.lock()
-        super.onDestroy()
     }
 
     override fun onStop() {
         super.onStop()
-        hiddenSince = System.currentTimeMillis()
+        model.visible = false
     }
 
     override fun onStart() {
         super.onStart()
-        // Five minutes in the background lock it, like five idle minutes (ADR-011).
-        if (hiddenSince > 0 && System.currentTimeMillis() - hiddenSince >= AUTOLOCK_MS) model.lock()
+        model.visible = true
     }
 }
 
 @Composable
 private fun Root(m: Model) {
-    LaunchedEffect(Unit) {
-        while (true) { delay(10_000); m.lockIfIdle() }
-    }
     BackHandler(enabled = m.screen != Screen.Chats && m.screen != Screen.Start) { m.screen = Screen.Chats }
     Box(
         Modifier.fillMaxSize().safeDrawingPadding().imePadding().pointerInput(Unit) {
