@@ -61,6 +61,24 @@ class Model(private val context: Context) : Listener {
     var stay by mutableStateOf(prefs.getBoolean("stay", false))
         private set
 
+    /** The UnifiedPush endpoint the relay should wake (ADR-012); kept for the next unlock. */
+    var push by mutableStateOf(prefs.getString("push", null))
+        private set
+
+    fun pushEndpoint(url: String?) {
+        push = url
+        prefs.edit().putString("push", url).apply()
+        account?.setPush(url)
+    }
+
+    /** A wake-up from the push server: a message waits on the relay. */
+    fun woken() {
+        if (account == null || !visible) {
+            context.getSystemService(android.app.NotificationManager::class.java)
+                .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
+        }
+    }
+
     fun notifyOn(on: Boolean) { notify = on; prefs.edit().putBoolean("notify", on).apply() }
 
     fun stayOn(on: Boolean) {
@@ -107,6 +125,7 @@ class Model(private val context: Context) : Listener {
 
     fun opened(a: Account) {
         account = a
+        if (a.push() != push) a.setPush(push)
         lastInput = System.currentTimeMillis()
         screen = Screen.Chats
         link()
@@ -154,6 +173,8 @@ class Model(private val context: Context) : Listener {
         prefs.edit().clear().apply()
         notify = false
         stay = false
+        if (push != null) org.unifiedpush.android.connector.UnifiedPush.unregister(context)
+        push = null
         link()
     }
 

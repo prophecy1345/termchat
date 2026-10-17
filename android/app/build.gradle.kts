@@ -28,4 +28,6 @@ dependencies {
     // Drawing and scanning invite QR codes, without Google ML Kit (ADR-011).
     implementation("com.google.zxing:core:3.5.4")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0") { isTransitive = false }
+    // Wake-ups through the push server the user picked, without Google (ADR-012).
+    implementation("org.unifiedpush.android:connector:3.3.5")
 }

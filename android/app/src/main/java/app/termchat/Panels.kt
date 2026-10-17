@@ -31,6 +31,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import org.unifiedpush.android.connector.UnifiedPush
 import java.io.File
 
 @Composable
@@ -173,6 +174,23 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             "\"termchat is connected\" notice, and keeps your keys in memory: " +
             "the app no longer locks itself in the background.",
     ) { m.stayOn(!m.stay) }
+    val activity = LocalContext.current as android.app.Activity
+    MenuRow(
+        "Wake-ups through UnifiedPush: ${if (m.push != null) "on" else "off"}",
+        "Needs a distributor app such as ntfy. When a message waits, the relay pings " +
+            "your push server, and the phone shows \"New message\". The relay keeps the " +
+            "push address; the push server sees when you get messages, not from whom.",
+    ) {
+        if (m.push != null) {
+            UnifiedPush.unregister(context)
+            m.pushEndpoint(null)
+        } else {
+            UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
+                if (ok) UnifiedPush.register(context)
+                else m.note = "Install a UnifiedPush distributor first, for example ntfy."
+            }
+        }
+    }
     Line()
     Text("SECURITY", style = Tc.caps)
     MenuRow("Back up your identity" + if (a.backedUp()) "" else "  ●", "Identity and contacts, no messages. Keep it off this phone.") { open("backup") }
