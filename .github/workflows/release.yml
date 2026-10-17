@@ -70,6 +70,30 @@ jobs:
             termchat-*.tar.gz
             termchat-*.zip
 
+  # F-Droid rebuilds the APK and ships ours only if the bytes match (ADR-011):
+  # two unsigned builds of the same commit in different folders must be equal.
+  android-reproducible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: a
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: elsewhere/b
+      - run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370" >/dev/null
+          cargo install cargo-ndk@4.1.2 --locked
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
+          for d in a elsewhere/b; do
+            (cd "$d" && rustup target add aarch64-linux-android x86_64-linux-android &&
+             android/build-rust.sh && cd android && ./gradlew --no-daemon assembleRelease)
+          done
+          apk=android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
+          sha256sum "a/$apk" "elsewhere/b/$apk"
+          cmp "a/$apk" "elsewhere/b/$apk"
+
   # The Android app (ADR-011): signed with the release key from the secrets.
   android:
     needs: reproducible
@@ -144,7 +168,7 @@ jobs:
           & "$env:LOCALAPPDATA\Programs\termchat\termchat.exe" --version
 
   publish:
-    needs: [build, installers, android]
+    needs: [build, installers, android, android-reproducible]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
