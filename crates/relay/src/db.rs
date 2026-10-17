@@ -38,7 +38,6 @@ CREATE TABLE IF NOT EXISTS queue (
 );
 CREATE INDEX IF NOT EXISTS queue_recipient ON queue(recipient, id);
 CREATE INDEX IF NOT EXISTS queue_created ON queue(created_at);
-PRAGMA user_version = 1;
 ";
 
 pub struct Db {
@@ -70,6 +69,13 @@ impl Db {
             "PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
+        // Version 2: where to wake a key with UnifiedPush (ADR-012).
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 2 {
+            conn.execute_batch(
+                "ALTER TABLE accounts ADD COLUMN push TEXT; PRAGMA user_version = 2;",
+            )?;
+        }
         let queue_bytes: i64 =
             conn.query_row("SELECT COALESCE(SUM(size), 0) FROM queue", [], |r| r.get(0))?;
         Ok(Self {
@@ -278,6 +284,25 @@ impl Db {
         Ok(())
     }
 
+    /// Stores or forgets the push endpoint; it goes with the account (ADR-012).
+    pub fn set_push(&self, key: &Ed25519Key, endpoint: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE accounts SET push = ? WHERE key = ?",
+            params![endpoint, key],
+        )?;
+        Ok(())
+    }
+
+    pub fn push(&self, key: &Ed25519Key) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT push FROM accounts WHERE key = ?", [key], |r| {
+                r.get(0)
+            })
+            .optional()?
+            .flatten())
+    }
+
     /// Drops envelopes older than `queue_ttl` and accounts unseen for `account_ttl` (seconds),
     /// then gives the freed pages back so old ciphertext does not linger in the file.
     pub fn expire(&mut self, now: i64, queue_ttl: i64, account_ttl: i64) -> Result<()> {
@@ -423,5 +448,36 @@ mod tests {
         db.ban(&[3; 32]).unwrap();
         db.unregister(&[3; 32]).unwrap();
         assert_eq!(db.banned(&[3; 32]).unwrap(), Some(true));
+    }
+
+    #[test]
+    fn push_endpoint_lives_with_the_account_and_old_files_migrate() {
+        let path = std::env::temp_dir().join(format!("termchat-relay-v1-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            // A version 1 file, before the push column existed.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch("PRAGMA user_version = 1;").unwrap();
+        }
+        let mut db = Db::open(Some(&path)).unwrap();
+        db.register(&[1; 32], 0).unwrap();
+        assert_eq!(db.push(&[1; 32]).unwrap(), None);
+        db.set_push(&[1; 32], Some("https://ntfy.sh/up1")).unwrap();
+        assert_eq!(
+            db.push(&[1; 32]).unwrap().as_deref(),
+            Some("https://ntfy.sh/up1")
+        );
+        db.set_push(&[1; 32], None).unwrap();
+        assert_eq!(db.push(&[1; 32]).unwrap(), None);
+        db.set_push(&[1; 32], Some("https://ntfy.sh/up1")).unwrap();
+        db.unregister(&[1; 32]).unwrap();
+        assert_eq!(db.push(&[1; 32]).unwrap(), None);
+        drop(db);
+        // Opening again does not migrate twice.
+        Db::open(Some(&path)).unwrap();
+        for ext in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
+        }
     }
 }

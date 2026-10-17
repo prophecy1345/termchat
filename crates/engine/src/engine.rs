@@ -472,7 +472,7 @@ impl Engine {
             } => self.note(format!("relay: {}", why(code))),
             ServerFrame::Unregistered => self.finish_wipe(""),
             ServerFrame::Reported => self.note("reported to the relay operator, and blocked"),
-            ServerFrame::Challenge { .. } | ServerFrame::AuthOk => {}
+            ServerFrame::Challenge { .. } | ServerFrame::AuthOk | ServerFrame::PushSet => {}
         }
     }
 

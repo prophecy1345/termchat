@@ -4975,8 +4975,10 @@ dependencies = [
  "termchat-core",
  "termchat-proto",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]

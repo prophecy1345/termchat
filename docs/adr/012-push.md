@@ -81,6 +81,7 @@ default.
 
 ## Dependencies
 
-- **Relay:** an HTTP client for the POST, `reqwest` with rustls and no
-  default features. hyper is already in the tree through axum.
+- **Relay:** no HTTP client library: one empty HTTP/1.1 POST over
+  `tokio-rustls` with `webpki-roots`, both already in the tree through the
+  client. (Changed at implementation: `reqwest` 0.13 brings `aws-lc-rs`.)
 - **App:** the UnifiedPush connector library (`org.unifiedpush.android:connector`).

@@ -123,7 +123,7 @@ not lock out Tor users.
   linger on SSDs until TRIM.
 - **Upgrades.** Stop, replace the binary, start. The schema version is stored in
   the database (`PRAGMA user_version`) so later releases can migrate it; so far
-  there is only version 1. Clients compare their version with the one your
+  version 2 adds the UnifiedPush endpoint (ADR-012) and migrates on start. Clients compare their version with the one your
   relay reports and tell their users when it is newer (ADR-010), so keep the
   relay current: an old relay keeps quiet about new releases.
 - **Shutting down for good.** `systemctl stop termchat-relay`, then delete the

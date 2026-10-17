@@ -106,6 +106,8 @@ C -> R  Report { sender: ed25519, text: String }   // ADR-006, text up to 16000 
 R -> C  Reported                                  // the same answer on every path
 C -> R  Unregister                                // ADR-009: forget my key, prekeys and queue
 R -> C  Unregistered                              // then the relay closes the connection
+C -> R  SetPush { endpoint: Option<String> }      // ADR-012: https URL, up to 512 bytes; None forgets it
+R -> C  PushSet                                   // or Error { Malformed } for a bad URL
 ```
 
 - The relay keeps an envelope in the recipient's queue until the recipient sends
@@ -121,6 +123,11 @@ R -> C  Unregistered                              // then the relay closes the c
   the account row with its prekeys and incoming queue (bans stay), answers
   `Unregistered` and closes the connection. Afterwards `ClaimKey` and `Send` to
   that key answer `UnknownRecipient`.
+- `SetPush` stores a UnifiedPush endpoint with the account (ADR-012). When an
+  envelope is queued for that key while it is offline, the relay POSTs an empty
+  body to the endpoint, at most once every 30 seconds, only to public addresses.
+  Clients send it only to a relay whose version header (section 2) is at least
+  0.1.13, since an older relay closes the connection on an unknown frame.
 
 ## 6. Envelope
 

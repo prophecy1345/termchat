@@ -19,6 +19,8 @@ pub const MAX_NOTE_BYTES: usize = 256;
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// A UnifiedPush endpoint URL (ADR-012).
+pub const MAX_PUSH_URL_BYTES: usize = 512;
 /// HTTP header on the relay's upgrade response: its version (ADR-010).
 pub const VERSION_HEADER: &str = "x-termchat-version";
 /// One-time keys per `PublishKeys`: vodozemac keeps 50 on the server.
@@ -111,6 +113,10 @@ pub enum ClientFrame {
     },
     /// Forget this key, its prekeys and its queue (ADR-009).
     Unregister,
+    /// Where to wake this key when a message waits for it; `None` forgets it (ADR-012).
+    SetPush {
+        endpoint: Option<String>,
+    },
 }
 
 /// Relay to client.
@@ -145,6 +151,8 @@ pub enum ServerFrame {
     },
     /// The key is gone from the relay; the connection closes next (ADR-009).
     Unregistered,
+    /// `SetPush` was stored (ADR-012).
+    PushSet,
 }
 
 /// protocol.md, section 12.
@@ -193,6 +201,9 @@ impl ClientFrame {
             Self::Report { text, .. } if text.len() > MAX_TEXT_BYTES => {
                 return Err(Error::TooLarge);
             }
+            Self::SetPush {
+                endpoint: Some(url),
+            } if url.len() > MAX_PUSH_URL_BYTES => return Err(Error::TooLarge),
             _ => {}
         }
         Ok(frame)
@@ -513,6 +524,18 @@ mod tests {
         assert_eq!(ClientFrame::decode(&trailing), Err(Error::Malformed));
         let gone = ServerFrame::Unregistered;
         assert_eq!(ServerFrame::decode(&gone.encode()).unwrap(), gone);
+        let push = ClientFrame::SetPush {
+            endpoint: Some("https://ntfy.sh/upAbc".into()),
+        };
+        assert_eq!(ClientFrame::decode(&push.encode()).unwrap(), push);
+        let long = ClientFrame::SetPush {
+            endpoint: Some("x".repeat(MAX_PUSH_URL_BYTES + 1)),
+        };
+        assert_eq!(ClientFrame::decode(&long.encode()), Err(Error::TooLarge));
+        assert_eq!(
+            ServerFrame::decode(&ServerFrame::PushSet.encode()).unwrap(),
+            ServerFrame::PushSet
+        );
 
         let old = ClientFrame::Send {
             client_id: 7,

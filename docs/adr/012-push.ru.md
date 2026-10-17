@@ -50,5 +50,5 @@ UnifiedPush даёт пользователю выбрать push-сервер, 
 
 ## Зависимости
 
-- **Relay:** HTTP-клиент для POST — `reqwest` с rustls и без возможностей по умолчанию. hyper уже есть в дереве через axum.
+- **Relay:** без HTTP-библиотеки: один пустой POST по HTTP/1.1 поверх `tokio-rustls` с `webpki-roots`, оба уже есть в дереве через клиент. (Изменено при реализации: `reqwest` 0.13 тянет `aws-lc-rs`.)
 - **Приложение:** библиотека-коннектор UnifiedPush (`org.unifiedpush.android:connector`).

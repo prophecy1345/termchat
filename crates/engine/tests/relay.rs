@@ -805,3 +805,29 @@ async fn relay_says_its_version_before_connected() {
     assert_eq!(alice.next().await, Event::RelayVersion(version));
     assert_eq!(alice.next().await, Event::Connected);
 }
+
+#[tokio::test]
+async fn set_push_takes_only_https_endpoints() {
+    let url = start_relay(Limits::default()).await;
+    let (a, _) = pair();
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    let set = |endpoint: &str| ClientFrame::SetPush {
+        endpoint: Some(endpoint.into()),
+    };
+    alice.relay.send(set("http://ntfy.sh/up")).unwrap();
+    assert_eq!(
+        alice.frame().await,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::Malformed
+        }
+    );
+    alice.relay.send(set("https://ntfy.sh/up")).unwrap();
+    assert_eq!(alice.frame().await, ServerFrame::PushSet);
+    alice
+        .relay
+        .send(ClientFrame::SetPush { endpoint: None })
+        .unwrap();
+    assert_eq!(alice.frame().await, ServerFrame::PushSet);
+}

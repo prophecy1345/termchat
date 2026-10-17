@@ -5,6 +5,7 @@
 //! online connections and who wrote to whom stay in memory.
 
 pub mod db;
+mod push;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -236,7 +237,12 @@ struct Account {
     claims: Bucket,
     claimed: Bucket,
     reports: Bucket,
+    /// The last UnifiedPush wake-up sent for this key (ADR-012).
+    pushed: Option<Instant>,
 }
+
+/// At most one wake-up per key in this time (ADR-012).
+const PUSH_GAP: Duration = Duration::from_secs(30);
 
 impl Account {
     fn new(l: &Limits, now: Instant) -> Self {
@@ -250,6 +256,7 @@ impl Account {
             claims: Bucket::full(l.claims_per_key, now),
             claimed: Bucket::full(l.claims_per_target, now),
             reports: Bucket::full(l.reports_per_key, now),
+            pushed: None,
         }
     }
 }
@@ -635,10 +642,25 @@ fn handle(
             };
             // A full channel means the client lags: drop its connection so it
             // reconnects and gets the whole queue (ADR-007).
-            if let Some((_, tx)) = relay.online.get(&to)
-                && tx.try_send(deliver).is_err()
-            {
-                relay.online.remove(&to);
+            match relay.online.get(&to) {
+                Some((_, tx)) => {
+                    if tx.try_send(deliver).is_err() {
+                        relay.online.remove(&to);
+                    }
+                }
+                // Not here: wake it, if it asked for that (ADR-012).
+                None => {
+                    let t = relay
+                        .mem
+                        .entry(to)
+                        .or_insert_with(|| Account::new(limits, now));
+                    if t.pushed.is_none_or(|at| now.duration_since(at) >= PUSH_GAP)
+                        && let Some(url) = db(relay.db.push(&to))?
+                    {
+                        t.pushed = Some(now);
+                        tokio::spawn(push::wake(url));
+                    }
+                }
             }
             vec![ServerFrame::Accepted { client_id }]
         }
@@ -678,6 +700,18 @@ fn handle(
         ClientFrame::Ack { relay_id } => {
             db(relay.db.ack(&me, relay_id))?;
             vec![]
+        }
+
+        // ADR-012. Only the shape is checked here; the address when it is used.
+        ClientFrame::SetPush { endpoint } => {
+            if endpoint
+                .as_deref()
+                .is_some_and(|u| push::parse(u).is_none())
+            {
+                return Ok(vec![error(None, ErrorCode::Malformed)]);
+            }
+            db(relay.db.set_push(&me, endpoint.as_deref()))?;
+            vec![ServerFrame::PushSet]
         }
 
         // ADR-009. Dropping the sender ends the loop once the reply is out.
