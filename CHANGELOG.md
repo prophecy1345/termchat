@@ -2,6 +2,14 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.2.3
+
+- Android: the QR code scanner opens upright and follows the phone's rotation,
+  instead of always turning sideways.
+- The install notes explain how to get messages while the Android app is
+  closed: wake-ups through ntfy or another UnifiedPush app, or staying
+  connected in the background.
+
 ## 0.2.2
 
 - The app store texts, icon and screenshots move to `fastlane/` at the

@@ -1,0 +1,1 @@
+The QR code scanner opens upright and follows the phone's rotation.
