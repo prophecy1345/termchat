@@ -114,6 +114,7 @@ pub enum Popup {
 pub enum Doc {
     Keys,
     Manual,
+    News,
 }
 
 /// Tabs of the settings window.
@@ -485,6 +486,7 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
         onion_url: onion,
         tor,
         nickname: nickname.into(),
+        news_seen: env!("CARGO_PKG_VERSION").into(),
         ..Data::default()
     };
     let mut main = Main::open(Client::default(), key, data, path.to_owned())?;
@@ -1163,6 +1165,11 @@ impl Main {
         }
     }
 
+    /// This version's notes were not opened yet.
+    pub fn news_unread(&self) -> bool {
+        self.data.news_seen != env!("CARGO_PKG_VERSION")
+    }
+
     /// Ctrl+P menu: hotkey and label.
     pub fn menu(&self) -> Vec<(char, String)> {
         let nag = if self.data.backed_up { "" } else { "  ●" };
@@ -1170,6 +1177,10 @@ impl Main {
             ('s', "settings".into()),
             ('k', "keys".into()),
             ('m', "manual".into()),
+            (
+                'n',
+                format!("what's new{}", if self.news_unread() { "  ●" } else { "" }),
+            ),
             ('o', "your invite".into()),
             ('a', "add contact".into()),
             ('b', format!("back up your identity{nag}")),
@@ -1358,6 +1369,11 @@ impl Main {
                 }
                 Ok(Some('k')) => Some(pager(Doc::Keys)),
                 Ok(Some('m')) => Some(pager(Doc::Manual)),
+                Ok(Some('n')) => {
+                    self.data.news_seen = env!("CARGO_PKG_VERSION").into();
+                    self.persist();
+                    Some(pager(Doc::News))
+                }
                 Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {

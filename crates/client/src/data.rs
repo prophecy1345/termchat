@@ -31,6 +31,8 @@ pub struct Data {
     pub contacts: Vec<Contact>,
     /// Requests we turned down; their messages are dropped unread (ADR-007).
     pub rejected: Vec<Ed25519Key>,
+    /// The version whose "what's new" was opened; the status bar nags until then.
+    pub news_seen: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

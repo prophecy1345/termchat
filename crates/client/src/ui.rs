@@ -766,6 +766,12 @@ fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             Style::new().fg(t.peach),
         ));
     }
+    if m.news_unread() {
+        left.push(Span::styled(
+            "  new in this version: Ctrl+P, n",
+            Style::new().fg(t.teal),
+        ));
+    }
     if !m.status.is_empty() {
         left.push(Span::styled(
             format!("  {}", m.status),
@@ -819,6 +825,12 @@ fn manual() -> &'static str {
     let end = README.find("<!-- manual:end -->").unwrap_or(README.len());
     let body = &README[start..end.max(start)];
     body.split_once('\n').map_or(body, |(_, rest)| rest)
+}
+
+/// CHANGELOG.md from its first version heading.
+fn news() -> &'static str {
+    const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+    &CHANGELOG[CHANGELOG.find("## ").unwrap_or(0)..]
 }
 
 /// Just enough Markdown for the manual: headings, lists, tables, code, bold,
@@ -1083,6 +1095,7 @@ fn popup_pane(
                         .collect(),
                 ),
                 Doc::Manual => ("manual", markdown(t, manual(), &q)),
+                Doc::News => ("what's new", markdown(t, news(), &q)),
             };
             pager(f, t, h, title, lines, filter, *scroll);
         }
@@ -1214,6 +1227,12 @@ mod tests {
         assert_eq!(wrap("", 4, 0), (vec![String::new()], (0, 0)));
         // Wide characters take two columns.
         assert_eq!(wrap("日本語", 4, 3).0, ["日本", "語"]);
+    }
+
+    #[test]
+    fn news_starts_with_this_version() {
+        let v = format!("## {}\n", env!("CARGO_PKG_VERSION"));
+        assert!(news().contains(&v), "CHANGELOG.md has no {v}");
     }
 
     #[test]
