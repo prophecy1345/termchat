@@ -62,24 +62,14 @@ Need help now? You are not alone.
   Samaritans (UK, IE): 116 123
   Human trafficking hotline (US): 1-888-373-7888";
 
-/// Drops control and bidi-override characters: a peer must not be able to
-/// move the cursor, clear the screen or reorder text in our terminal.
-pub fn clean(s: &str) -> String {
-    s.chars()
-        .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
-        .filter(|&c| {
-            !c.is_control()
-                && !matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-        })
-        .collect()
-}
+pub use crate::clean;
 
 /// What the contact is called here. Names are chosen by the peer, so an
 /// unverified contact, or one whose name collides with another contact or with
 /// ours, also shows the start of its fingerprint: "Alice·48213" (ADR-007).
 pub fn name(m: &Main, c: &Contact) -> String {
     let base = |c: &Contact| {
-        let nick = m.core().nickname(&c.key).map(str::to_owned);
+        let nick = m.engine.core().nickname(&c.key).map(str::to_owned);
         clean(&c.petname.clone().or(nick).unwrap_or_default())
     };
     let fp = fingerprint(&c.key);
@@ -88,8 +78,9 @@ pub fn name(m: &Main, c: &Contact) -> String {
         return fp[..5].to_string();
     }
     // O(contacts) per name, O(n²) per frame; cache if lists grow large.
-    let collides = name == clean(&m.data.nickname)
-        || m.data
+    let collides = name == clean(&m.engine.data.nickname)
+        || m.engine
+            .data
             .contacts
             .iter()
             .any(|o| o.key != c.key && base(o) == name);
@@ -486,12 +477,13 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
 
     let width = usize::from(list.width);
     let items: Vec<ListItem> = m
+        .engine
         .data
         .contacts
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let request = m.core().is_request(&c.key) == Some(true);
+            let request = m.engine.core().is_request(&c.key) == Some(true);
             let (mark, colour) = match () {
                 _ if c.blocked => ("×", t.red),
                 _ if c.left => ("-", t.overlay0),
@@ -747,7 +739,7 @@ fn input_bar(
 }
 
 fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
-    let link = match (m.connected, m.data.tor) {
+    let link = match (m.engine.connected, m.engine.data.tor) {
         (true, true) => (" ● online via Tor", t.green),
         (false, true) => (" ○ connecting via Tor…", t.yellow),
         (true, false) => (" ● online", t.green),
@@ -756,17 +748,17 @@ fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut left = vec![
         Span::styled(link.0, Style::new().fg(link.1)),
         Span::styled(
-            format!("  {}", clean(&m.data.nickname)),
+            format!("  {}", clean(&m.engine.data.nickname)),
             Style::new().fg(t.subtext0),
         ),
     ];
-    if !m.data.backed_up {
+    if !m.engine.data.backed_up {
         left.push(Span::styled(
             "  ! no backup: Ctrl+P",
             Style::new().fg(t.peach),
         ));
     }
-    if let Some(v) = &m.update {
+    if let Some(v) = &m.engine.update {
         left.push(Span::styled(
             format!("  termchat {v} is out: Ctrl+P, n"),
             Style::new().fg(t.teal),
@@ -1124,7 +1116,7 @@ fn popup_pane(
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Your fingerprint  ", Style::new().fg(t.subtext0)),
-                    Span::raw(fingerprint(&m.me())),
+                    Span::raw(fingerprint(&m.engine.me())),
                 ]),
             ];
             let buttons = [
@@ -1135,7 +1127,7 @@ fn popup_pane(
         }
         Popup::Verify => {
             let Some(c) = m.current() else { return };
-            let number = safety_number(&m.me(), &c.key);
+            let number = safety_number(&m.engine.me(), &c.key);
             let groups: Vec<&str> = number.split(' ').collect();
             let mut lines = vec![
                 Line::from(format!(

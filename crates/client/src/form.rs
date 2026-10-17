@@ -158,14 +158,11 @@ impl Form {
         self.fields[self.field].insert(text);
     }
 
-    /// Two password fields must match and be strong.
-    pub fn new_password(&self, at: usize, avoid: &[&str]) -> Result<&str, String> {
+    /// A new password and its repeat must match; the engine judges its strength.
+    pub fn new_password(&self, at: usize) -> Result<&str, String> {
         let (pw, repeat) = (&self.fields[at], &self.fields[at + 1]);
         if pw != repeat {
             return Err("passwords do not match".into());
-        }
-        if let Some(why) = password::weakness(pw, avoid) {
-            return Err(why);
         }
         Ok(pw)
     }

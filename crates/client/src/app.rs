@@ -2,40 +2,23 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
-use termchat_core::proto::{
-    self, Body, ClientFrame, Ed25519Key, ErrorCode, Invite, ServerFrame, check_nickname,
-};
-use termchat_core::{
-    Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
-};
-use tokio::sync::mpsc::Receiver;
-use tokio_tungstenite::tungstenite::http::Uri;
+use termchat_core::proto::Ed25519Key;
 
-use crate::data::{self, Contact, Data, Msg, Status};
+use crate::data::{self, Contact};
+use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
 use crate::notify;
-use crate::password;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
-use crate::{Dial, Event, Relay, parse_version, theme};
+use crate::{Event, theme};
 
 /// Idle time before the client locks itself.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
-/// How long a wipe waits for the relay to take the goodbyes (ADR-009).
-const LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
-const NOT_REMOVED: &str =
-    "The relay did not confirm removing your key; it forgets idle keys after 90 days.";
-/// ADR-007: what a not-yet-accepted request may leave behind.
-const MAX_HIDDEN: usize = 5;
-const MAX_REJECTED: usize = 1000;
-/// ADR-003: a typo in the real password must never hit the duress one.
-const DURESS_DISTANCE: usize = 4;
 const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
 
 /// How this copy was installed decides how to update it (ADR-010).
@@ -57,14 +40,6 @@ fn update_command() -> Option<&'static str> {
     } else {
         None
     }
-}
-
-/// Disappearing timer steps for Ctrl+T.
-const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
-
-fn next_timer(now: Option<u32>) -> Option<u32> {
-    let at = TIMERS.iter().position(|t| *t == now).unwrap_or(0);
-    TIMERS[(at + 1) % TIMERS.len()]
 }
 
 /// What Ctrl+T does, e.g. "off → 5m" or "7d → off".
@@ -162,14 +137,7 @@ const SOUND_GAP: Duration = Duration::from_secs(2);
 pub const TOAST_KEY: u8 = 150;
 
 pub struct Main {
-    pub core: Arc<Mutex<Client>>,
-    key: FileKey,
-    pub data: Data,
-    relay: Relay,
-    pub events: Receiver<Event>,
-    pub connected: bool,
-    /// A newer version the relay runs (ADR-010).
-    pub update: Option<String>,
+    pub engine: Box<Engine>,
     pub selected: usize,
     /// History rows scrolled up from the bottom.
     pub scroll: usize,
@@ -182,22 +150,9 @@ pub struct Main {
     path: PathBuf,
     /// Everything was erased; the app returns to the first-run screen with this note.
     wiped: Option<String>,
-    leaving: Option<Leaving>,
 }
 
-/// Goodbyes sent and not yet accepted, then `Unregister` (ADR-009).
-struct Leaving {
-    waiting: Vec<u64>,
-    until: Instant,
-    unregistering: bool,
-}
-
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+pub use crate::engine::now;
 
 impl App {
     pub fn new(path: PathBuf) -> Self {
@@ -224,7 +179,7 @@ impl App {
     /// The terminal window title: an unread count, never a name (ADR-008).
     pub fn title(&self) -> String {
         let unread: usize = match &self.screen {
-            Screen::Main(m) => m.data.contacts.iter().map(|c| c.unread).sum(),
+            Screen::Main(m) => m.engine.data.contacts.iter().map(|c| c.unread).sum(),
             _ => 0,
         };
         match unread {
@@ -245,7 +200,7 @@ impl App {
     /// Next relay event while unlocked; never resolves otherwise.
     pub async fn relay_event(&mut self) -> Event {
         if let Screen::Main(m) = &mut self.screen
-            && let Some(ev) = m.events.recv().await
+            && let Some(ev) = m.engine.events.recv().await
         {
             return ev;
         }
@@ -267,7 +222,7 @@ impl App {
             if open && self.focused != Some(false) {
                 continue;
             }
-            let Some(c) = m.index(&key).map(|i| &m.data.contacts[i]) else {
+            let Some(c) = m.engine.index(&key).map(|i| &m.engine.data.contacts[i]) else {
                 continue;
             };
             let what = if request {
@@ -300,8 +255,8 @@ impl App {
             if m.last_input.elapsed() >= AUTOLOCK {
                 self.lock();
             } else {
-                m.expire();
-                m.leave_timeout();
+                m.engine.tick();
+                m.absorb();
                 if let Some(note) = m.wiped.take() {
                     self.wiped(note);
                 }
@@ -326,16 +281,18 @@ impl App {
                 Action::Cancel if f.kind == Kind::Restore => {
                     self.screen = Screen::Setup(Form::new(Kind::Setup))
                 }
-                Action::Submit if f.kind == Kind::Restore => match restore(f, &self.path) {
-                    Ok(()) => {
-                        let hint = "restored: enter the backup's password".to_string();
-                        self.screen = Screen::Unlock(Unlock {
-                            error: hint,
-                            ..Unlock::default()
-                        });
+                Action::Submit if f.kind == Kind::Restore => {
+                    match engine::restore(&self.path, &form::expand(&f.fields[0])) {
+                        Ok(()) => {
+                            let hint = "restored: enter the backup's password".to_string();
+                            self.screen = Screen::Unlock(Unlock {
+                                error: hint,
+                                ..Unlock::default()
+                            });
+                        }
+                        Err(e) => f.error = e,
                     }
-                    Err(e) => f.error = e,
-                },
+                }
                 Action::Submit => match setup(f, &self.path) {
                     Ok(main) => self.screen = Screen::Main(main),
                     Err(e) => f.error = e,
@@ -343,9 +300,9 @@ impl App {
                 _ => {}
             },
             Screen::Unlock(u) => match u.on_key(k, &self.path) {
-                Unlocked::Stay => {}
-                Unlocked::Open(main) => self.screen = Screen::Main(main),
-                Unlocked::Wiped => self.wiped(String::new()),
+                Unlocking::Stay => {}
+                Unlocking::Open(main) => self.screen = Screen::Main(main),
+                Unlocking::Wiped => self.wiped(String::new()),
             },
             Screen::Main(m) => {
                 m.last_input = Instant::now();
@@ -369,7 +326,7 @@ impl App {
                     let i = usize::from(f - TOAST_KEY);
                     if i < self.toasts.len() {
                         let toast = self.toasts.remove(i);
-                        if let Some(at) = m.index(&toast.key) {
+                        if let Some(at) = m.engine.index(&toast.key) {
                             m.select(at);
                         }
                     }
@@ -479,92 +436,27 @@ impl App {
 }
 
 fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
-    let url = f.fields[0].trim();
-    if !relay_url_ok(url) {
-        return Err("relay URL must start with wss:// (ws:// only for localhost or .onion)".into());
-    }
-    let onion = f.fields[1].trim();
-    let onion = (!onion.is_empty()).then(|| onion.to_string());
-    if onion.as_ref().is_some_and(|o| {
-        !(o.starts_with("ws://") && ws_host(o).is_some_and(|h| h.ends_with(".onion")))
-    }) {
-        return Err("onion URL looks like ws://xxxx.onion/".into());
-    }
     let tor = match f.fields[2].trim().to_lowercase().as_str() {
         "y" | "yes" => true,
         "n" | "no" => false,
         _ => return Err("Use Tor: answer y or n".into()),
     };
-    if tor && onion.is_none() {
-        return Err("Tor needs the relay's onion URL (or answer n)".into());
-    }
-    if tor && !cfg!(feature = "tor") {
-        return Err("this build has no Tor support; answer n".into());
-    }
-    let nickname = f.fields[3].trim();
-    check_nickname(nickname).map_err(|_| "nickname: 1-64 bytes, no control characters")?;
-    let password = f.new_password(4, &[nickname])?;
-    let key =
-        create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
-    let data = Data {
-        relay_url: url.into(),
-        onion_url: onion,
+    let onion = f.fields[1].trim();
+    let setup = Setup {
+        relay_url: f.fields[0].trim(),
+        onion_url: (!onion.is_empty()).then_some(onion),
         tor,
-        nickname: nickname.into(),
-        news_seen: env!("CARGO_PKG_VERSION").into(),
-        ..Data::default()
+        nickname: f.fields[3].trim(),
+        password: f.new_password(4)?,
     };
-    let mut main = Main::open(Client::default(), key, data, path.to_owned())?;
-    if !main.persist() {
-        return Err(main.status);
-    }
+    let mut main = Main::new(Engine::setup(path, &setup)?, path);
     main.popup = Some(Popup::Notice(
         "Welcome. Click a contact to open the chat, right-click it for actions;\nCtrl+P opens the menu (settings, keys, manual), ? lists the keys.\n\nFirst, back up your identity: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
     ));
     Ok(main)
 }
 
-/// Plain `ws://` would show the relay traffic (and so who we talk to) to the
-/// network; it is only fine where TLS adds nothing: the same machine or an
-/// onion service, which authenticates and encrypts on its own.
-fn relay_url_ok(url: &str) -> bool {
-    let Some(host) = ws_host(url) else {
-        return false;
-    };
-    url.starts_with("wss://")
-        || matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        || host.ends_with(".onion")
-}
-
-/// The host the transport will actually connect to. Parsed the same way as in
-/// `Relay::connect`, so userinfo, a query or a fragment cannot smuggle a
-/// different host past the checks above.
-fn ws_host(url: &str) -> Option<String> {
-    let uri: Uri = url.parse().ok()?;
-    if !matches!(uri.scheme_str(), Some("ws" | "wss")) {
-        return None;
-    }
-    let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
-    Some(host.to_owned())
-}
-
-fn why(code: ErrorCode) -> String {
-    match code {
-        ErrorCode::UnknownRecipient => "contact is no longer on the relay".into(),
-        code => format!("{code:?}"),
-    }
-}
-
-/// A backup is a state file without sessions or messages: restoring is a copy.
-fn restore(f: &Form, path: &Path) -> Result<(), String> {
-    let backup = form::expand(&f.fields[0]);
-    let bytes = std::fs::read(&backup).map_err(|e| format!("cannot read backup: {e}"))?;
-    data::write_atomic(path, &bytes).map_err(|e| e.to_string())?;
-    // ADR-003: the copy brought onto this device is erased with it.
-    data::remember_backup(path, &backup, &bytes).map_err(|e| e.to_string())
-}
-
-pub enum Unlocked {
+pub enum Unlocking {
     Stay,
     Open(Box<Main>),
     /// The duress password was entered and the data is gone.
@@ -572,546 +464,92 @@ pub enum Unlocked {
 }
 
 impl Unlock {
-    fn on_key(&mut self, k: KeyEvent, path: &Path) -> Unlocked {
+    fn on_key(&mut self, k: KeyEvent, path: &Path) -> Unlocking {
         if !self.input.on_key(k) {
-            return Unlocked::Stay;
+            return Unlocking::Stay;
         }
-        // Argon2 blocks the UI thread for ~1 s; move to spawn_blocking if it bothers.
-        let loaded = std::fs::read(path)
-            .map_err(|e| format!("cannot read state: {e}"))
-            .map(|bytes| Client::load(self.input.as_bytes(), &bytes));
+        let result = Engine::unlock(path, self.input.as_bytes());
         self.input = Input::default();
-        let result = match loaded {
-            // ADR-003: erase first, say nothing.
-            Ok(Err(CoreError::Duress)) => {
-                let _ = data::wipe(path);
-                return Unlocked::Wiped;
-            }
-            Ok(Err(CoreError::WrongPassword)) => Err("wrong password".to_string()),
-            Ok(Err(e)) => Err(e.to_string()),
-            Ok(Ok((core, key, app))) => Data::from_json(&app)
-                .map_err(|e| e.to_string())
-                .and_then(|data| Main::open(core, key, data, path.to_owned())),
-            Err(e) => Err(e),
-        };
         match result {
-            Ok(main) => Unlocked::Open(main),
+            Ok(Unlocked::Open(engine)) => Unlocking::Open(Main::new(engine, path)),
+            Ok(Unlocked::Wiped) => Unlocking::Wiped,
             Err(e) => {
                 self.error = e;
-                Unlocked::Stay
+                Unlocking::Stay
             }
         }
     }
 }
 
-/// Starts the relay link: through Tor only if Tor is on (ADR-004).
-fn link(
-    core: &Arc<Mutex<Client>>,
-    data: &Data,
-    path: &Path,
-) -> Result<(Relay, Receiver<Event>), String> {
-    let identity = core
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .identity();
-    let signer = Arc::clone(core);
-    let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
-        signer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .auth_signature(host, nonce)
-    });
-    let (url, dial) = match (&data.onion_url, data.tor) {
-        (Some(onion), true) => (onion.as_str(), Dial::Tor(data::tor_dir(path))),
-        (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
-        (_, false) => (data.relay_url.as_str(), Dial::Direct),
-    };
-    Relay::connect(url, identity, sign, dial).map_err(|e| match e {
-        crate::Error::NoTor => "this build has no Tor support".into(),
-        _ => format!("bad relay URL: {url}"),
-    })
-}
-
 impl Main {
-    fn open(core: Client, key: FileKey, data: Data, path: PathBuf) -> Result<Box<Self>, String> {
-        let core = Arc::new(Mutex::new(core));
-        let (relay, events) = link(&core, &data, &path)?;
+    fn new(engine: Box<Engine>, path: &Path) -> Box<Self> {
         let mut main = Box::new(Self {
-            core,
-            key,
-            data,
-            relay,
-            events,
-            connected: false,
-            update: None,
+            engine,
             selected: 0,
             scroll: 0,
             input: Input::default(),
-            popup: data::permission_warning(&path).map(Popup::Notice),
+            popup: None,
             alerts: Vec::new(),
             status: String::new(),
             last_input: Instant::now(),
-            path,
+            path: path.to_owned(),
             wiped: None,
-            leaving: None,
         });
+        main.absorb();
         main.resort();
-        Ok(main)
+        main
+    }
+
+    /// Takes in what the engine reported since the last call.
+    fn absorb(&mut self) {
+        for h in std::mem::take(&mut self.engine.happened) {
+            match h {
+                Happened::Alert { key, request } => self.alerts.push((key, request)),
+                Happened::Note(n) => self.status = n,
+                Happened::Notice(n) => self.popup = Some(Popup::Notice(n)),
+                Happened::Wiped(n) => self.wiped = Some(n),
+                Happened::WipeAnyway(why) => self.popup = Some(Popup::WipeAnyway(why)),
+            }
+        }
     }
 
     /// Most recent first; the open chat stays open while rows move.
     fn resort(&mut self) {
         let open = self.current().map(|c| c.key);
-        self.data
-            .contacts
-            .sort_by_key(|c| std::cmp::Reverse(c.last_at()));
-        if let Some(i) = open.and_then(|k| self.index(&k)) {
+        self.engine.resort();
+        if let Some(i) = open.and_then(|k| self.engine.index(&k)) {
             self.selected = i;
         }
     }
 
-    pub fn core(&self) -> MutexGuard<'_, Client> {
-        self.core.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub fn me(&self) -> Ed25519Key {
-        self.core().identity().ed25519
-    }
-
-    pub fn invite(&self) -> String {
-        Invite {
-            version: proto::VERSION,
-            relay_url: self.data.relay_url.clone(),
-            onion_url: self.data.onion_url.clone(),
-            identity: self.core().identity(),
-        }
-        .encode()
-    }
-
-    /// Must run after every change to the ratchet or the data.
-    fn persist(&mut self) -> bool {
-        let saved = self
-            .data
-            .to_json()
-            .map_err(|e| e.to_string())
-            .and_then(|app| self.core().save(&self.key, &app).map_err(|e| e.to_string()))
-            .and_then(|bytes| data::write_atomic(&self.path, &bytes).map_err(|e| e.to_string()));
-        if let Err(e) = &saved {
-            self.status = format!("SAVE FAILED: {e}");
-        }
-        saved.is_ok()
-    }
-
-    fn index(&self, key: &Ed25519Key) -> Option<usize> {
-        self.data.contacts.iter().position(|c| c.key == *key)
-    }
-
-    fn system(&mut self, i: usize, text: impl Into<String>) {
-        self.data.contacts[i].messages.push(Msg {
-            mine: false,
-            text: text.into(),
-            at: now(),
-            expires_at: None,
-            status: Status::System,
-        });
-    }
-
-    /// Encrypts, saves the advanced ratchet, then hands the envelope to the transport.
-    /// An unsaved ratchet must never go on the wire: a restart would replay it.
-    fn transmit(&mut self, key: &Ed25519Key, body: Body) -> Result<u64, String> {
-        let envelope = self.core().encrypt(key, body).map_err(|e| e.to_string())?;
-        let client_id = self.data.next_client_id;
-        self.data.next_client_id += 1;
-        if !self.persist() {
-            return Err(self.status.clone());
-        }
-        self.relay
-            .send(ClientFrame::Send {
-                client_id,
-                envelope,
-            })
-            .map_err(|_| "relay link closed")?;
-        Ok(client_id)
-    }
-
-    fn claim(&mut self, key: Ed25519Key) {
-        let _ = self.relay.send(ClientFrame::ClaimKey { target: key });
-    }
-
-    /// Sends our contact request (if still owed) and every queued message.
-    fn flush(&mut self, i: usize) {
-        let key = self.data.contacts[i].key;
-        if self.data.contacts[i].request_pending {
-            let body = Body::ContactRequest {
-                identity: self.core().identity(),
-                nickname: self.data.nickname.clone(),
-                note: String::new(),
-            };
-            match self.transmit(&key, body) {
-                Ok(_) => self.data.contacts[i].request_pending = false,
-                Err(e) => return self.status = e,
-            }
-        }
-        let expires_in = self.data.contacts[i].expires_in;
-        for m in 0..self.data.contacts[i].messages.len() {
-            let msg = &self.data.contacts[i].messages[m];
-            if msg.status != Status::Queued {
-                continue;
-            }
-            let body = Body::Text {
-                sent_at: msg.at,
-                expires_in,
-                text: msg.text.clone(),
-            };
-            self.data.contacts[i].messages[m].status = match self.transmit(&key, body) {
-                Ok(id) => Status::Sending(id),
-                Err(e) => Status::Failed(e),
-            };
-        }
-        self.persist();
+    fn persist(&mut self) {
+        self.engine.persist();
+        self.absorb();
     }
 
     fn on_relay(&mut self, ev: Event) {
-        match ev {
-            Event::RelayVersion(v) => {
-                let ours = parse_version(env!("CARGO_PKG_VERSION"));
-                self.update = (parse_version(&v) > ours).then_some(v);
-            }
-            Event::Connected => {
-                self.connected = true;
-                let waiting: Vec<_> = self
-                    .data
-                    .contacts
-                    .iter()
-                    .filter(|c| {
-                        c.request_pending || c.messages.iter().any(|m| m.status == Status::Queued)
-                    })
-                    .map(|c| c.key)
-                    .collect();
-                for key in waiting {
-                    let ready = self.core().has_session(&key);
-                    match ready {
-                        true => {
-                            if let Some(i) = self.index(&key) {
-                                self.flush(i);
-                            }
-                        }
-                        false => self.claim(key),
-                    }
-                }
-            }
-            Event::Disconnected => {
-                self.connected = false;
-                // An older relay closes the connection on `Unregister`.
-                if self.leaving.as_ref().is_some_and(|l| l.unregistering) {
-                    self.popup = self.finish_wipe(NOT_REMOVED);
-                }
-            }
-            Event::Frame(frame) => self.on_frame(frame),
+        self.engine.open = self.current().map(|c| c.key);
+        self.engine.on_relay(ev);
+        // A first contact shows up already open.
+        if let Some(c) = self.engine.data.contacts.get_mut(self.selected) {
+            c.unread = 0;
         }
-    }
-
-    fn on_frame(&mut self, frame: ServerFrame) {
-        match frame {
-            ServerFrame::KeyCount {
-                one_time_left,
-                fallback_used,
-            } => {
-                // An empty relay (first run, or it lost its database) has no fallback key either.
-                let rotate = fallback_used || !self.data.fallback_published || one_time_left == 0;
-                let keys = self.core().prekeys(one_time_left as usize, rotate);
-                if !keys.one_time.is_empty() || keys.fallback.is_some() {
-                    if rotate && self.data.fallback_published {
-                        self.data.old_fallback_since = Some(now());
-                    }
-                    self.data.fallback_published = true;
-                    self.persist();
-                    let _ = self.relay.send(ClientFrame::PublishKeys {
-                        one_time: keys.one_time,
-                        fallback: keys.fallback,
-                    });
-                }
-            }
-            ServerFrame::ClaimedKey { target, key } => {
-                let Some(i) = self.index(&target) else { return };
-                if !self.core().has_session(&target) {
-                    let started = self.core().start_session(&target, &key);
-                    if let Err(e) = started {
-                        return self.status = format!("cannot start session: {e}");
-                    }
-                    self.persist();
-                }
-                self.flush(i);
-            }
-            ServerFrame::Deliver {
-                relay_id,
-                sender,
-                envelope,
-            } => {
-                // Not saved means not acked: the relay keeps it for the next connection.
-                if self.receive(sender, &envelope) {
-                    let _ = self.relay.send(ClientFrame::Ack { relay_id });
-                }
-            }
-            ServerFrame::Accepted { client_id } => {
-                self.set_status(client_id, Status::Sent);
-                self.goodbye_done(Some(client_id));
-            }
-            ServerFrame::Error {
-                client_id: Some(id),
-                code,
-            } => {
-                self.set_status(id, Status::Failed(why(code)));
-                self.goodbye_done(Some(id));
-            }
-            ServerFrame::Error {
-                client_id: None,
-                code,
-            } => self.status = format!("relay: {}", why(code)),
-            ServerFrame::Unregistered => self.popup = self.finish_wipe(""),
-            ServerFrame::Reported => {
-                self.status = "reported to the relay operator, and blocked".into()
-            }
-            ServerFrame::Challenge { .. } | ServerFrame::AuthOk => {}
-        }
-    }
-
-    /// ADR-009: goodbyes to every contact we talk to, then `Unregister`, then the wipe.
-    /// `MOVED` (section 6) only erases this device, silently.
-    fn leave(&mut self, mut f: Form) -> Option<Popup> {
-        match f.fields[0].trim() {
-            "WIPE" => {}
-            "MOVED" => return self.finish_wipe(""),
-            _ => {
-                f.error = "type WIPE or MOVED in capitals".into();
-                return Some(Popup::Form(f));
-            }
-        }
-        if !self.connected {
-            return Some(Popup::WipeAnyway("No connection to the relay.".into()));
-        }
-        let told: Vec<_> = self
-            .data
-            .contacts
-            .iter()
-            .filter(|c| !c.blocked && !c.left && !c.request_pending)
-            .map(|c| c.key)
-            .collect();
-        let mut waiting = Vec::new();
-        for key in told {
-            let talking =
-                self.core().has_session(&key) && self.core().is_request(&key) != Some(true);
-            if talking && let Ok(id) = self.transmit(&key, Body::Goodbye) {
-                waiting.push(id);
-            }
-        }
-        self.leaving = Some(Leaving {
-            waiting,
-            until: Instant::now() + LEAVE_TIMEOUT,
-            unregistering: false,
-        });
-        self.goodbye_done(None);
-        Some(Popup::Leaving)
-    }
-
-    /// The relay answered `client_id`; once every goodbye is in, ask it to forget us.
-    fn goodbye_done(&mut self, client_id: Option<u64>) {
-        let Some(l) = &mut self.leaving else { return };
-        l.waiting.retain(|w| Some(*w) != client_id);
-        if l.waiting.is_empty() && !l.unregistering {
-            l.unregistering = true;
-            let _ = self.relay.send(ClientFrame::Unregister);
-        }
-    }
-
-    fn leave_timeout(&mut self) {
-        let Some(l) = &self.leaving else { return };
-        if Instant::now() < l.until {
-            return;
-        }
-        self.popup = match l.unregistering {
-            true => self.finish_wipe(NOT_REMOVED),
-            false => {
-                self.leaving = None;
-                Some(Popup::WipeAnyway(
-                    "The relay did not answer in time; some contacts may already know.".into(),
-                ))
-            }
-        };
-    }
-
-    /// Erases the device; `note` goes on the first-run screen. `Some` popup if it failed.
-    fn finish_wipe(&mut self, note: &str) -> Option<Popup> {
-        self.leaving = None;
-        match data::wipe(&self.path) {
-            Ok(()) => {
-                self.wiped = Some(note.into());
-                None
-            }
-            Err(e) => Some(Popup::Notice(format!("wipe failed: {e}"))),
-        }
-    }
-
-    fn set_status(&mut self, client_id: u64, status: Status) {
-        for m in self
-            .data
-            .contacts
-            .iter_mut()
-            .flat_map(|c| c.messages.iter_mut())
-        {
-            if m.status == Status::Sending(client_id) {
-                m.status = status;
-                self.persist();
-                return;
-            }
-        }
-    }
-
-    /// Decrypts and stores one delivery. `true` once it is safe to ack: the
-    /// message is on disk, or there was nothing worth keeping.
-    fn receive(&mut self, sender: Ed25519Key, envelope: &proto::Envelope) -> bool {
-        // Blocked or rejected: not even decrypted. The caller still acks so the relay forgets it.
-        if self.data.rejected.contains(&sender)
-            || self
-                .index(&sender)
-                .is_some_and(|i| self.data.contacts[i].blocked)
-        {
-            return true;
-        }
-        let had_session = self.core().has_session(&sender);
-        let result = self.core().decrypt(&sender, envelope);
-        let got = match result {
-            Ok(got) => got,
-            Err(CoreError::Duplicate) => return true,
-            Err(e) => {
-                if let Some(i) = self.index(&sender) {
-                    self.system(i, format!("a message could not be decrypted ({e})"));
-                    self.persist();
-                }
-                return true;
-            }
-        };
-        let i = match self.index(&sender) {
-            Some(i) => i,
-            None => {
-                self.data.contacts.push(Contact {
-                    key: sender,
-                    added_at: now(),
-                    ..Default::default()
-                });
-                self.data.contacts.len() - 1
-            }
-        };
-        if got.new_session && had_session {
-            self.system(
-                i,
-                "⚠ they restarted the conversation (restored a backup?); messages may be lost",
-            );
-        }
-        if got.missed > 0 {
-            // The number comes from the peer's `seq`; do not let it look alarming on purpose.
-            let missed = match got.missed {
-                0..=9999 => got.missed.to_string(),
-                _ => "over 9999".to_string(),
-            };
-            self.system(i, format!("⚠ {missed} message(s) missing so far"));
-        }
-        match got.body {
-            // A stranger's texts wait out of sight until the request is accepted.
-            Body::Text { text, .. } if got.request => {
-                let c = &mut self.data.contacts[i];
-                match c.hidden.len() < MAX_HIDDEN {
-                    true => c.hidden.push(Msg {
-                        mine: false,
-                        text,
-                        at: now(),
-                        expires_at: None,
-                        status: Status::Received,
-                    }),
-                    false => c.held_back = c.held_back.saturating_add(1),
-                }
-            }
-            Body::ContactAccept { .. } if got.request => {}
-            Body::Text {
-                expires_in, text, ..
-            } => {
-                let at = now();
-                self.data.contacts[i].messages.push(Msg {
-                    mine: false,
-                    text,
-                    at,
-                    expires_at: expires_in.map(|s| at + u64::from(s)),
-                    status: Status::Received,
-                });
-                self.alerts.push((sender, false));
-            }
-            Body::ContactRequest { note, .. } => {
-                let request = self.core().is_request(&sender);
-                if request == Some(true) {
-                    self.alerts.push((sender, true));
-                }
-                let text = match request {
-                    Some(true) => format!(
-                        "contact request{}  —  Ctrl+Y accept, Ctrl+D reject",
-                        match note.is_empty() {
-                            true => String::new(),
-                            false => format!(": {note}"),
-                        }
-                    ),
-                    _ => "connected".into(),
-                };
-                self.system(i, text);
-            }
-            Body::ContactAccept { .. } => self.system(i, "accepted your request"),
-            Body::Goodbye if got.request => {}
-            Body::Goodbye => {
-                self.system(i, "deleted their account; this chat is read-only now");
-                self.data.contacts[i].left = true;
-                self.alerts.push((sender, false));
-            }
-        }
-        if i != self.selected {
-            self.data.contacts[i].unread += 1;
-        }
-        self.persist()
-    }
-
-    /// Drops messages whose disappearing timer ran out, and the rotated-out
-    /// fallback key once nothing sent to it can still be queued (ADR-002).
-    fn expire(&mut self) {
-        let t = now();
-        let mut changed = false;
-        let keep = (proto::QUEUE_TTL_DAYS + 1) * 86_400;
-        if self
-            .data
-            .old_fallback_since
-            .is_some_and(|since| t >= since + keep)
-        {
-            self.core().forget_old_fallback();
-            self.data.old_fallback_since = None;
-            changed = true;
-        }
-        for c in &mut self.data.contacts {
-            let before = c.messages.len();
-            c.messages.retain(|m| m.expires_at.is_none_or(|e| e > t));
-            changed |= c.messages.len() != before;
-        }
-        if changed {
-            self.persist();
-        }
+        self.absorb();
     }
 
     pub fn current(&self) -> Option<&Contact> {
-        self.data.contacts.get(self.selected)
+        self.engine.data.contacts.get(self.selected)
     }
 
     fn on_key(&mut self, k: KeyEvent, ctrl: bool, settings: &mut Settings) {
         // Seen by now; a new problem sets it again.
         self.status.clear();
         if let Some(popup) = self.popup.take() {
-            return self.on_popup_key(popup, k, settings);
+            self.on_popup_key(popup, k, settings);
+            return self.absorb();
         }
         let key = self.current().map(|c| c.key);
+        let i = self.selected;
         match (ctrl, k.code) {
             (false, KeyCode::F(1)) => self.popup = Some(pager(Doc::Keys)),
             (false, KeyCode::Char('?')) if self.input.is_empty() => {
@@ -1121,88 +559,58 @@ impl Main {
             (false, KeyCode::Down) => self.select(self.selected + 1),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
             (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu(0)),
-            (true, KeyCode::Char('o')) => self.popup = Some(Popup::Invite(self.invite())),
+            (true, KeyCode::Char('o')) => self.popup = Some(Popup::Invite(self.engine.invite())),
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
             (true, KeyCode::Char('r')) if key.is_some() => {
                 self.popup = Some(Popup::Rename(Input::default()))
             }
             (true, KeyCode::Char('d')) if key.is_some() => self.popup = Some(Popup::Delete),
             (true, KeyCode::Char('y')) => {
-                if let Some(key) = key
-                    && self.core().accept(&key)
-                {
-                    let body = Body::ContactAccept {
-                        nickname: self.data.nickname.clone(),
-                    };
-                    let i = self.selected;
-                    let c = &mut self.data.contacts[i];
-                    let hidden = std::mem::take(&mut c.hidden);
-                    let held = std::mem::take(&mut c.held_back);
-                    c.messages.extend(hidden);
-                    if held > 0 {
-                        self.system(
-                            i,
-                            format!(
-                                "{held} more message(s) from before you accepted were not kept"
-                            ),
-                        );
-                    }
-                    match self.transmit(&key, body) {
-                        Ok(_) => self.system(i, "you accepted the request"),
-                        Err(e) => self.status = e,
-                    }
+                if key.is_some() {
+                    self.engine.accept(i);
                 }
             }
-            (true, KeyCode::Char('t')) => {
-                if let Some(c) = self.data.contacts.get_mut(self.selected) {
-                    c.expires_in = next_timer(c.expires_in);
-                    self.persist();
-                }
-            }
+            (true, KeyCode::Char('t')) => self
+                .engine
+                .edit(i, |c| c.expires_in = next_timer(c.expires_in)),
             (true, KeyCode::Char('x')) => {
-                if let Some(text) = self.report_text() {
+                if let Some(text) = self.engine.report_text(i) {
                     self.popup = Some(Popup::Report(text));
                 }
             }
             (true, KeyCode::Char('b')) => {
-                if let Some(c) = self.data.contacts.get_mut(self.selected) {
-                    c.blocked = !c.blocked;
-                    let what = if c.blocked {
-                        "blocked: their messages are dropped unread"
-                    } else {
-                        "unblocked"
-                    };
-                    self.status = what.into();
-                    self.persist();
+                self.engine.edit(i, |c| c.blocked = !c.blocked);
+                if let Some(c) = self.current() {
+                    self.status = match c.blocked {
+                        true => "blocked: their messages are dropped unread",
+                        false => "unblocked",
+                    }
+                    .into();
                 }
             }
-            (true, KeyCode::Char('e')) => {
-                if let Some(c) = self.data.contacts.get_mut(self.selected) {
-                    c.no_history = !c.no_history;
-                    self.persist();
-                }
-            }
+            (true, KeyCode::Char('e')) => self.engine.edit(i, |c| c.no_history = !c.no_history),
             _ if self.input.on_key(k) => self.send(),
             _ => {}
         }
+        self.absorb();
     }
 
     fn select(&mut self, i: usize) {
-        if i < self.data.contacts.len() {
+        if i < self.engine.data.contacts.len() {
             self.selected = i;
             self.scroll = 0;
-            self.data.contacts[i].unread = 0;
+            self.engine.data.contacts[i].unread = 0;
         }
     }
 
     /// This version's notes were not opened yet, or a newer one is out.
     pub fn news_unread(&self) -> bool {
-        self.update.is_some() || self.data.news_seen != env!("CARGO_PKG_VERSION")
+        self.engine.update.is_some() || self.engine.data.news_seen != env!("CARGO_PKG_VERSION")
     }
 
     /// Top of "what's new" when the relay runs a newer version (ADR-010).
     pub fn update_note(&self) -> Option<String> {
-        let v = self.update.as_ref()?;
+        let v = self.engine.update.as_ref()?;
         let how = match update_command() {
             Some(cmd) => format!("To update, quit termchat and run:\n\n```\n{cmd}\n```"),
             None => format!("Download it from {RELEASES}"),
@@ -1214,7 +622,11 @@ impl Main {
 
     /// Ctrl+P menu: hotkey and label.
     pub fn menu(&self) -> Vec<(char, String)> {
-        let nag = if self.data.backed_up { "" } else { "  ●" };
+        let nag = if self.engine.data.backed_up {
+            ""
+        } else {
+            "  ●"
+        };
         vec![
             ('s', "settings".into()),
             ('k', "keys".into()),
@@ -1246,13 +658,17 @@ impl Main {
                 row(
                     &format!(
                         "back up your identity{}",
-                        if self.data.backed_up { "" } else { "  ●" }
+                        if self.engine.data.backed_up {
+                            ""
+                        } else {
+                            "  ●"
+                        }
                     ),
                     false,
                 ),
                 row("change password", false),
                 row("duress password", false),
-                row("Tor", self.data.tor),
+                row("Tor", self.engine.data.tor),
                 row("wipe everything from this device", false),
             ],
         }
@@ -1296,7 +712,7 @@ impl Main {
             (3, 0) => return Some(Popup::Form(Form::new(Kind::Backup))),
             (3, 1) => return Some(Popup::Form(Form::new(Kind::Password))),
             (3, 2) => return Some(Popup::Form(Form::new(Kind::Duress))),
-            (3, 3) => return Some(Popup::Notice(self.toggle_tor())),
+            (3, 3) => return Some(Popup::Notice(self.engine.toggle_tor())),
             (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),
             (0, _) => {
                 s.theme = theme::THEMES
@@ -1319,7 +735,7 @@ impl Main {
             return Vec::new();
         };
         let mut items = Vec::new();
-        if self.core().is_request(&c.key) == Some(true) {
+        if self.engine.core().is_request(&c.key) == Some(true) {
             items.push(('y', "accept request".to_string()));
         }
         let verified = if c.verified {
@@ -1345,51 +761,26 @@ impl Main {
     fn send(&mut self) {
         self.scroll = 0;
         let text = std::mem::take(&mut self.input);
-        let Some(c) = self.current() else {
-            return self.status = "add a contact first (Ctrl+A)".into();
-        };
-        if text.trim().is_empty() {
+        if text.trim().is_empty() && self.current().is_some() {
             return;
         }
-        if text.len() > proto::MAX_TEXT_BYTES {
+        if let Err(e) = self.engine.send(self.selected, &text) {
             self.input = text;
-            return self.status = "message too long".into();
-        }
-        if c.blocked {
-            self.input = text;
-            return self.status = "contact is blocked (Ctrl+B to unblock)".into();
-        }
-        if c.left {
-            self.input = text;
-            return self.status = "this contact left".into();
-        }
-        let (key, expires_in, i) = (c.key, c.expires_in, self.selected);
-        let at = now();
-        self.data.contacts[i].messages.push(Msg {
-            mine: true,
-            text: text.to_string(),
-            at,
-            expires_at: expires_in.map(|s| at + u64::from(s)),
-            status: Status::Queued,
-        });
-        let ready = self.core().has_session(&key);
-        match ready {
-            true => self.flush(i),
-            false => {
-                self.persist();
-                self.claim(key);
-            }
+            self.status = e;
         }
     }
 
     fn on_popup_key(&mut self, popup: Popup, k: KeyEvent, settings: &mut Settings) {
+        let i = self.selected;
         let keep = match popup {
             Popup::Notice(_) => None,
             Popup::Leaving => Some(Popup::Leaving),
-            Popup::WipeAnyway(_) => match k.code {
-                KeyCode::Char('y') => self.finish_wipe(""),
-                _ => None,
-            },
+            Popup::WipeAnyway(_) => {
+                if k.code == KeyCode::Char('y') {
+                    self.engine.finish_wipe("");
+                }
+                None
+            }
             Popup::Pager { .. } if k.code == KeyCode::Esc => None,
             Popup::Pager {
                 doc, mut filter, ..
@@ -1412,8 +803,7 @@ impl Main {
                 Ok(Some('k')) => Some(pager(Doc::Keys)),
                 Ok(Some('m')) => Some(pager(Doc::Manual)),
                 Ok(Some('n')) => {
-                    self.data.news_seen = env!("CARGO_PKG_VERSION").into();
-                    self.persist();
+                    self.engine.news_seen();
                     Some(pager(Doc::News))
                 }
                 Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
@@ -1441,7 +831,17 @@ impl Main {
             Popup::Form(mut f) => match f.on_key(k) {
                 Action::Stay => Some(Popup::Form(f)),
                 Action::Cancel => None,
-                Action::Submit if f.kind == Kind::Wipe => self.leave(f),
+                Action::Submit if f.kind == Kind::Wipe => match f.fields[0].trim() {
+                    "WIPE" => self.engine.leave(false).then_some(Popup::Leaving),
+                    "MOVED" => {
+                        self.engine.leave(true);
+                        None
+                    }
+                    _ => {
+                        f.error = "type WIPE or MOVED in capitals".into();
+                        Some(Popup::Form(f))
+                    }
+                },
                 Action::Submit => match self.submit(&f) {
                     Ok(done) => Some(Popup::Notice(done)),
                     Err(e) => {
@@ -1458,45 +858,29 @@ impl Main {
                 None
             }
             Popup::Verify => {
-                if k.code == KeyCode::Char('v')
-                    && let Some(c) = self.data.contacts.get_mut(self.selected)
-                {
-                    c.verified = !c.verified;
-                    self.persist();
+                if k.code == KeyCode::Char('v') {
+                    self.engine.edit(i, |c| c.verified = !c.verified);
                 }
                 None
             }
             Popup::Report(text) => {
-                if k.code == KeyCode::Char('y') && self.selected < self.data.contacts.len() {
-                    let i = self.selected;
-                    let sender = self.data.contacts[i].key;
-                    let _ = self.relay.send(ClientFrame::Report { sender, text });
-                    self.data.contacts[i].blocked = true;
-                    self.persist();
+                if k.code == KeyCode::Char('y') {
+                    self.engine.report(i, text);
                 }
                 None
             }
             Popup::Delete => {
-                if k.code == KeyCode::Char('y') && self.selected < self.data.contacts.len() {
-                    let c = self.data.contacts.remove(self.selected);
-                    // Turning down a request is remembered, so it cannot simply ask again.
-                    let was_request = self.core().is_request(&c.key) == Some(true);
-                    if was_request && !self.data.rejected.contains(&c.key) {
-                        if self.data.rejected.len() >= MAX_REJECTED {
-                            self.data.rejected.remove(0);
-                        }
-                        self.data.rejected.push(c.key);
-                    }
-                    self.core().remove_contact(&c.key);
-                    self.selected = self.selected.saturating_sub(1);
-                    self.persist();
+                if k.code == KeyCode::Char('y') && i < self.engine.data.contacts.len() {
+                    self.engine.delete(i);
+                    self.selected = i.saturating_sub(1);
                 }
                 None
             }
             Popup::Add(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
-                    if let Err(e) = self.add(&s) {
-                        self.status = e;
+                    match self.engine.add(&s) {
+                        Ok(i) => self.select(i),
+                        Err(e) => self.status = e,
                     }
                     None
                 }
@@ -1505,10 +889,8 @@ impl Main {
             Popup::Rename(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
                     let name = s.trim();
-                    if let Some(c) = self.data.contacts.get_mut(self.selected) {
-                        c.petname = (!name.is_empty()).then(|| name.chars().take(64).collect());
-                    }
-                    self.persist();
+                    let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
+                    self.engine.edit(i, |c| c.petname = name);
                     None
                 }
                 false => Some(Popup::Rename(s)),
@@ -1516,56 +898,6 @@ impl Main {
             Popup::Add(_) | Popup::Rename(_) => None,
         };
         self.popup = keep;
-    }
-
-    /// Their last few messages, joined, within the protocol limit (ADR-006).
-    fn report_text(&self) -> Option<String> {
-        const LAST: usize = 5;
-        let c = self.current()?;
-        let mut theirs: Vec<&str> = c
-            .messages
-            .iter()
-            .rev()
-            .filter(|m| m.status == Status::Received)
-            .take(LAST)
-            .map(|m| m.text.as_str())
-            .collect();
-        theirs.reverse();
-        let mut text = theirs.join("\n---\n");
-        if text.len() > proto::MAX_TEXT_BYTES {
-            let mut end = proto::MAX_TEXT_BYTES;
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-        }
-        Some(text).filter(|t| !t.is_empty())
-    }
-
-    /// Switches Tor on or off and reconnects; returns what to tell the user.
-    fn toggle_tor(&mut self) -> String {
-        if !self.data.tor && self.data.onion_url.is_none() {
-            return "This relay has no onion URL, so Tor is not available.".into();
-        }
-        self.data.tor = !self.data.tor;
-        match link(&self.core, &self.data, &self.path) {
-            Ok((relay, events)) => {
-                (self.relay, self.events) = (relay, events);
-                self.connected = false;
-                self.persist();
-                match self.data.tor {
-                    true => {
-                        "Tor on: connecting only through Tor. The first connection takes 10-30 s."
-                            .into()
-                    }
-                    false => "Tor off: the relay and your provider now see your IP address.".into(),
-                }
-            }
-            Err(e) => {
-                self.data.tor = !self.data.tor;
-                e
-            }
-        }
     }
 
     /// Settings forms. `Ok` carries what to tell the user.
@@ -1576,112 +908,26 @@ impl Main {
                     return Err("where should it go? A USB stick, for example".into());
                 }
                 let path = form::expand(&f.fields[0]);
-                let pw = f.new_password(1, &[&self.data.nickname])?;
-                let key = create_file_key(pw.as_bytes(), KdfParams::DEFAULT)
-                    .map_err(|e| e.to_string())?;
-                let mut copy = self.data.clone();
-                copy.backed_up = true;
-                copy.contacts.iter_mut().for_each(|c| c.messages.clear());
-                let app = copy.to_json().map_err(|e| e.to_string())?;
-                let bytes = self
-                    .core()
-                    .without_sessions()
-                    .save(&key, &app)
-                    .map_err(|e| e.to_string())?;
-                data::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
-                self.data.backed_up = true;
-                self.persist();
-                data::remember_backup(&self.path, &path, &bytes)
-                    .map_err(|e| format!("backup written, but a wipe will not know it: {e}"))?;
+                self.engine.backup(&path, f.new_password(1)?)?;
                 Ok(format!(
                     "Backup written to {}.\nMove it off this device: a wipe erases it only while it\nstays at this path. Restore: Ctrl+B on the first-run screen.",
                     path.display()
                 ))
             }
             Kind::Duress => {
-                let (current, duress) = (&*f.fields[0], &*f.fields[1]);
-                let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
-                if store::open(current.as_bytes(), &file).is_err() {
-                    return Err("current password is wrong".into());
-                }
-                if duress.is_empty() {
-                    set_duress(&mut self.key, None).map_err(|e| e.to_string())?;
-                    self.persist();
-                    return Ok("Duress password turned off.".into());
-                }
-                if password::distance(current, duress) < DURESS_DISTANCE {
-                    return Err(format!(
-                        "must differ from your password by at least {DURESS_DISTANCE} characters"
-                    ));
-                }
-                let duress = f.new_password(1, &[current, &self.data.nickname])?;
-                set_duress(&mut self.key, Some(duress.as_bytes())).map_err(|e| e.to_string())?;
-                self.persist();
-                Ok("Duress password set. Entering it at unlock erases everything.".into())
+                let duress = match f.fields[1].is_empty() {
+                    true => None,
+                    false => Some(f.new_password(1)?),
+                };
+                self.engine.set_duress(&f.fields[0], duress)
             }
             Kind::Password => {
-                let current = &*f.fields[0];
-                let file = std::fs::read(&self.path).map_err(|e| e.to_string())?;
-                if store::open(current.as_bytes(), &file).is_err() {
-                    return Err("current password is wrong".into());
-                }
-                let new = f.new_password(1, &[current, &self.data.nickname])?;
-                if new == current {
-                    return Err("that is the current password".into());
-                }
-                // The duress password itself is unknown here, only its slot.
-                if termchat_core::opens_duress(&self.key, new.as_bytes())
-                    .map_err(|e| e.to_string())?
-                {
-                    return Err("that is your duress password".into());
-                }
-                termchat_core::rekey(&mut self.key, new.as_bytes()).map_err(|e| e.to_string())?;
-                if !self.persist() {
-                    return Err(self.status.clone());
-                }
+                self.engine
+                    .change_password(&f.fields[0], f.new_password(1)?)?;
                 Ok("Password changed.".into())
             }
             Kind::Setup | Kind::Restore | Kind::Wipe => Ok(String::new()),
         }
-    }
-
-    /// Adds a contact from an invite string and starts the handshake.
-    fn add(&mut self, invite: &str) -> Result<(), String> {
-        let invite = Invite::decode(invite).map_err(|e| format!("invalid invite: {e}"))?;
-        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
-        let onion_matches =
-            matches!((&invite.onion_url, &self.data.onion_url), (Some(a), Some(b)) if same(a, b));
-        if !same(&invite.relay_url, &self.data.relay_url) && !onion_matches {
-            return Err(format!(
-                "they use another relay ({}); only one relay is supported for now",
-                crate::ui::clean(&invite.relay_url)
-            ));
-        }
-        let key = invite.identity.ed25519;
-        // Adding their invite is how a rejection is taken back.
-        self.data.rejected.retain(|k| *k != key);
-        if key == self.me() {
-            return Err("that is your own invite".into());
-        }
-        self.core()
-            .add_contact(&invite.identity)
-            .map_err(|e| format!("invalid invite: {e}"))?;
-        let i = match self.index(&key) {
-            Some(i) => i,
-            None => {
-                self.data.contacts.push(Contact {
-                    key,
-                    request_pending: true,
-                    added_at: now(),
-                    ..Default::default()
-                });
-                self.data.contacts.len() - 1
-            }
-        };
-        self.select(i);
-        self.persist();
-        self.claim(key);
-        Ok(())
     }
 }
 
@@ -1736,38 +982,5 @@ mod tests {
         assert_eq!(timer_step(None), "off → 5m");
         assert_eq!(timer_step(Some(3600)), "1h → 1d");
         assert_eq!(timer_step(Some(604_800)), "7d → off");
-    }
-
-    #[test]
-    fn plain_ws_only_for_local_or_onion() {
-        for ok in [
-            "wss://relay.example.org/",
-            "ws://localhost:8080/",
-            "ws://127.0.0.1:8080",
-            "ws://[::1]:8080/",
-            "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/",
-        ] {
-            assert!(relay_url_ok(ok), "{ok}");
-        }
-        for bad in [
-            "ws://relay.example.org/",
-            "ws://10.0.0.5:8080/",
-            "ws://localhost.evil.org/",
-            "http://localhost/",
-            "",
-            // The host after `@`, `?` or `#` is what the transport connects to.
-            "ws://localhost:8080@evil.org/",
-            "ws://[::1]@evil.org/",
-            "ws://evil.org#.onion",
-            "ws://evil.org?x=.onion",
-            "ws://evil.org/.onion",
-        ] {
-            assert!(!relay_url_ok(bad), "{bad}");
-        }
-        assert_eq!(ws_host("ws://x.onion/.onion/").as_deref(), Some("x.onion"));
-        assert_eq!(
-            ws_host("ws://evil.org/x.onion").as_deref(),
-            Some("evil.org")
-        );
     }
 }
