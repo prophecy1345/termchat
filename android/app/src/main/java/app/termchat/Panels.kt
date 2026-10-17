@@ -175,6 +175,15 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             "the app no longer locks itself in the background.",
     ) { m.stayOn(!m.stay) }
     val activity = LocalContext.current as android.app.Activity
+    val startPush = {
+        UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
+            if (ok) UnifiedPush.register(context)
+            else m.note = "Install a UnifiedPush distributor first, for example ntfy."
+        }
+    }
+    val allowThenPush = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) startPush() else m.note = "Without notifications a wake-up cannot show anything."
+    }
     MenuRow(
         "Wake-ups through UnifiedPush: ${if (m.push != null) "on" else "off"}",
         "Needs a distributor app such as ntfy. When a message waits, the relay pings " +
@@ -184,11 +193,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         if (m.push != null) {
             UnifiedPush.unregister(context)
             m.pushEndpoint(null)
+        } else if (android.os.Build.VERSION.SDK_INT >= 33) {
+            // A wake-up is shown as a notification: ask for that first.
+            allowThenPush.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
-                if (ok) UnifiedPush.register(context)
-                else m.note = "Install a UnifiedPush distributor first, for example ntfy."
-            }
+            startPush()
         }
     }
     Line()
