@@ -50,5 +50,23 @@ below are strict on purpose.
 - `crates/engine`: everything a client does besides drawing: transport, Tor,
   app data and its file, passwords (ADR-011).
 - `crates/client`: the terminal client (ratatui), a shell over `engine`.
+- `crates/ffi`: UniFFI bindings over `engine` for the Android app.
+- `android/`: the Android app (Kotlin, Compose; ADR-011).
 - `docs/`: threat model, protocol, self-hosting, ADRs.
 - `site/`: the project website.
+
+## Android
+
+Needs the Android SDK with the NDK and Command-line Tools (Android Studio's SDK
+Manager), the Rust targets and `cargo-ndk`:
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+cargo install cargo-ndk --locked
+export ANDROID_NDK_HOME=~/Library/Android/sdk/ndk/<version>
+android/build-rust.sh            # the Rust library and its Kotlin bindings
+cd android && ./gradlew assembleDebug
+```
+
+For a local relay on the emulator: `adb reverse tcp:18080 tcp:18080`, then
+`ws://localhost:18080/` in the app.
