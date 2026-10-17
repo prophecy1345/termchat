@@ -20,7 +20,9 @@ pub fn weakness(password: &str, avoid: &[&str]) -> Option<String> {
                 .or_else(|| f.suggestions().first().map(|s| s.to_string()))
         })
         .unwrap_or_default();
-    Some(format!("password too weak (Ctrl+G suggests one). {hint}"))
+    Some(format!(
+        "password too weak (termchat can suggest one). {hint}"
+    ))
 }
 
 /// Six random words, ~77 bits.

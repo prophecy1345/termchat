@@ -85,6 +85,8 @@ pub struct Engine {
     pub happened: Vec<Happened>,
     path: PathBuf,
     leaving: Option<Leaving>,
+    /// Erased: nothing may write the state file again.
+    gone: bool,
 }
 
 /// Goodbyes sent and not yet accepted, then `Unregister` (ADR-009).
@@ -251,6 +253,7 @@ impl Engine {
             happened,
             path,
             leaving: None,
+            gone: false,
         }))
     }
 
@@ -290,6 +293,9 @@ impl Engine {
 
     /// Must run after every change to the ratchet or the data.
     pub fn persist(&mut self) -> bool {
+        if self.gone {
+            return false;
+        }
         let saved = self
             .data
             .to_json()
@@ -537,7 +543,10 @@ impl Engine {
     pub fn finish_wipe(&mut self, note: &str) {
         self.leaving = None;
         self.happened.push(match data::wipe(&self.path) {
-            Ok(()) => Happened::Wiped(note.into()),
+            Ok(()) => {
+                self.gone = true;
+                Happened::Wiped(note.into())
+            }
             Err(e) => Happened::Notice(format!("wipe failed: {e}")),
         });
     }
@@ -646,7 +655,7 @@ impl Engine {
                 }
                 let text = match request {
                     Some(true) => format!(
-                        "contact request{}  —  Ctrl+Y accept, Ctrl+D reject",
+                        "contact request{}: accept it, or delete to reject",
                         match note.is_empty() {
                             true => String::new(),
                             false => format!(": {note}"),
@@ -789,13 +798,13 @@ impl Engine {
     /// Queues `text` to contact `i` and sends it as soon as there is a session.
     pub fn send(&mut self, i: usize, text: &str) -> Result<(), String> {
         let Some(c) = self.data.contacts.get(i) else {
-            return Err("add a contact first (Ctrl+A)".into());
+            return Err("add a contact first".into());
         };
         if text.len() > proto::MAX_TEXT_BYTES {
             return Err("message too long".into());
         }
         if c.blocked {
-            return Err("contact is blocked (Ctrl+B to unblock)".into());
+            return Err("contact is blocked; unblock them to write".into());
         }
         if c.left {
             return Err("this contact left".into());
