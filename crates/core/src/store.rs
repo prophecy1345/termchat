@@ -146,6 +146,12 @@ pub fn seal(key: &FileKey, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
     Ok([key.header.as_slice(), &nonce, &body].concat())
 }
 
+/// The first slot's salt: random per file, so it tells one backup from another
+/// without opening it (ADR-003). `None` if the file is too short.
+pub fn file_id(file: &[u8]) -> Option<[u8; SALT]> {
+    file.get(SLOTS_AT..SLOTS_AT + SALT)?.try_into().ok()
+}
+
 pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>), Error> {
     if file.len() < HEADER + NONCE + 16 {
         return Err(Error::CorruptState);

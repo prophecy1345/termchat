@@ -530,9 +530,11 @@ fn why(code: ErrorCode) -> String {
 
 /// A backup is a state file without sessions or messages: restoring is a copy.
 fn restore(f: &Form, path: &Path) -> Result<(), String> {
-    let bytes = std::fs::read(form::expand(&f.fields[0]))
-        .map_err(|e| format!("cannot read backup: {e}"))?;
-    data::write_atomic(path, &bytes).map_err(|e| e.to_string())
+    let backup = form::expand(&f.fields[0]);
+    let bytes = std::fs::read(&backup).map_err(|e| format!("cannot read backup: {e}"))?;
+    data::write_atomic(path, &bytes).map_err(|e| e.to_string())?;
+    // ADR-003: the copy brought onto this device is erased with it.
+    data::remember_backup(path, &backup, &bytes).map_err(|e| e.to_string())
 }
 
 pub enum Unlocked {
@@ -1512,6 +1514,9 @@ impl Main {
     fn submit(&mut self, f: &Form) -> Result<String, String> {
         match f.kind {
             Kind::Backup => {
+                if f.fields[0].trim().is_empty() {
+                    return Err("where should it go? A USB stick, for example".into());
+                }
                 let path = form::expand(&f.fields[0]);
                 let pw = f.new_password(1, &[&self.data.nickname])?;
                 let key = create_file_key(pw.as_bytes(), KdfParams::DEFAULT)
@@ -1528,8 +1533,10 @@ impl Main {
                 data::write_atomic(&path, &bytes).map_err(|e| e.to_string())?;
                 self.data.backed_up = true;
                 self.persist();
+                data::remember_backup(&self.path, &path, &bytes)
+                    .map_err(|e| format!("backup written, but a wipe will not know it: {e}"))?;
                 Ok(format!(
-                    "Backup written to {}.\nMove it off this device. Restore: Ctrl+B on the first-run screen.",
+                    "Backup written to {}.\nMove it off this device: a wipe erases it only while it\nstays at this path. Restore: Ctrl+B on the first-run screen.",
                     path.display()
                 ))
             }

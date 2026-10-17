@@ -121,12 +121,6 @@ impl Form {
             fields[1] = DEFAULT_ONION.into();
             fields[2] = "y".into();
         }
-        if kind == Kind::Backup {
-            let default = std::env::home_dir()
-                .unwrap_or_default()
-                .join("termchat-backup");
-            fields[0] = default.display().to_string().as_str().into();
-        }
         Self {
             kind,
             fields,

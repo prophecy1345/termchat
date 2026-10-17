@@ -4,7 +4,10 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::{Deserialize, Serialize};
+use termchat_core::store::file_id;
 use termchat_proto::Ed25519Key;
 use zeroize::Zeroizing;
 
@@ -158,20 +161,63 @@ pub fn tor_dir(state: &Path) -> PathBuf {
 /// The interface settings and the Tor directory go too, so nothing is left
 /// behind (ADR-004, ADR-008). Without the header the body is noise. On SSDs
 /// old blocks may survive until TRIM; see the ADR for what that means.
+/// Backups still at the path they were written to or restored from go as well.
 pub fn wipe(path: &Path) -> io::Result<()> {
     let settings = crate::settings::path(path);
     for p in [path.to_path_buf(), path.with_extension("tmp"), settings] {
-        let Ok(len) = fs::metadata(&p).map(|m| m.len()) else {
+        shred(&p)?;
+    }
+    let list = backups(path);
+    for line in fs::read_to_string(&list).unwrap_or_default().lines() {
+        let Some((id, p)) = line.split_once(' ') else {
             continue;
         };
-        let mut noise = vec![0u8; usize::try_from(len).unwrap_or(0)];
-        getrandom::fill(&mut noise).map_err(|e| io::Error::other(e.to_string()))?;
-        let mut file = OpenOptions::new().write(true).open(&p)?;
-        file.write_all(&noise)?;
-        file.sync_all()?;
-        fs::remove_file(&p)?;
+        // Only the file we wrote: a planted line must not erase anything else.
+        // A read-only or missing stick must not stop the wipe either.
+        if fs::read(p)
+            .ok()
+            .and_then(|b| file_id(&b))
+            .map(|f| B64.encode(f))
+            == Some(id.into())
+        {
+            let _ = shred(Path::new(p));
+        }
     }
+    shred(&list)?;
     remove_tor_dir(path)
+}
+
+fn shred(p: &Path) -> io::Result<()> {
+    let Ok(len) = fs::metadata(p).map(|m| m.len()) else {
+        return Ok(());
+    };
+    let mut noise = vec![0u8; usize::try_from(len).unwrap_or(0)];
+    getrandom::fill(&mut noise).map_err(|e| io::Error::other(e.to_string()))?;
+    let mut file = OpenOptions::new().write(true).open(p)?;
+    file.write_all(&noise)?;
+    file.sync_all()?;
+    fs::remove_file(p)
+}
+
+/// Where backups were written or restored from, for `wipe` (ADR-003). Plain,
+/// because the duress password cannot open the state file: `id path` per line.
+fn backups(state: &Path) -> PathBuf {
+    state.with_file_name("backups")
+}
+
+/// Notes `backup` (a file with `bytes`) in the list `wipe` reads.
+pub fn remember_backup(state: &Path, backup: &Path, bytes: &[u8]) -> io::Result<()> {
+    let Some(id) = file_id(bytes) else {
+        return Ok(());
+    };
+    let backup = fs::canonicalize(backup)?;
+    let line = format!("{} {}\n", B64.encode(id), backup.display());
+    let mut list = fs::read_to_string(backups(state)).unwrap_or_default();
+    if !list.contains(&line) {
+        list.push_str(&line);
+        write_atomic(&backups(state), list.as_bytes())?;
+    }
+    Ok(())
 }
 
 /// Also run on a first-run screen: Arti may still have been flushing its state
@@ -221,7 +267,17 @@ mod tests {
         }
         write_atomic(&crate::settings::path(&path), b"{}").unwrap();
         write_atomic(&tor_dir(&path).join("state").join("guards"), b"[]").unwrap();
+        // A known backup goes; one replaced by another file at its path stays.
+        let header = |b: u8| vec![b; 200];
+        let (ours, theirs) = (dir.join("ours"), dir.join("theirs"));
+        for (p, b) in [(&ours, 1), (&theirs, 2)] {
+            write_atomic(p, &header(b)).unwrap();
+            remember_backup(&path, p, &header(b)).unwrap();
+        }
+        write_atomic(&theirs, &header(3)).unwrap();
         wipe(&path).unwrap();
+        assert!(!ours.exists() && theirs.exists() && !backups(&path).exists());
+        fs::remove_file(&theirs).unwrap();
         assert!(!path.exists() && !path.with_extension("tmp").exists());
         assert!(!crate::settings::path(&path).exists());
         assert!(!tor_dir(&path).exists());
