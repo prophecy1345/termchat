@@ -81,11 +81,11 @@ jobs:
           rustup target add aarch64-linux-android x86_64-linux-android
           cargo install cargo-ndk@4.1.2 --locked
       - env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
           KEYSTORE_B64: ${{ secrets.TERMCHAT_KEYSTORE_B64 }}
           TERMCHAT_KEYSTORE_PASSWORD: ${{ secrets.TERMCHAT_KEYSTORE_PASSWORD }}
         run: |
           export JAVA_HOME="$JAVA_HOME_21_X64"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/30.0.16248370"
           # A manual run without the secrets still builds, unsigned.
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
