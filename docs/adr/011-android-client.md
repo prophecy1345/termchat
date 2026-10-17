@@ -30,7 +30,7 @@ chose UniFFI for mobile; this ADR fixes the rest.
 ### 2. The Android app
 - Kotlin + Jetpack Compose, in `android/`. minSdk 26 (Android 8).
 - No Google Play Services and no Firebase, so it runs on de-Googled phones
-  (GrapheneOS, LineageOS, Brax). Distributed as a signed APK on GitHub
+  (GrapheneOS, LineageOS). Distributed as a signed APK on GitHub
   releases (with build attestations) and through F-Droid.
 
 ### 3. On the device
@@ -70,7 +70,7 @@ The camera is used only to scan an invite QR code, and only after the user
 taps "scan".
 
 ### 5. Look
-Taken from the Brax Wink messenger (the owner's reference):
+termchat's own look, in the spirit of the terminal client:
 - **Colours and type.** A near-black background, a monospace font for
   messages, status lines and the input, and a bold sans for names. The accent
   colour is lime.
@@ -89,7 +89,7 @@ Taken from the Brax Wink messenger (the owner's reference):
     like Ctrl+T;
   - a bordered field `Encrypted message`;
   - a flat `SEND` button.
-- **What is dropped from the reference:** the attachment and call buttons.
+- No attachment or call buttons: text only (rule 9).
 
 The TUI themes stay; the Android look becomes a TUI theme too, so both
 clients can look alike.

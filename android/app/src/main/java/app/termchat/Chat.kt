@@ -22,7 +22,7 @@ import androidx.compose.ui.unit.dp
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
 
-/** One chat, laid out like the Brax Wink messenger (ADR-011, section 5). */
+/** One chat (ADR-011, section 5). */
 @Composable
 fun Chat(m: Model, index: UInt) {
     val a = m.account ?: return

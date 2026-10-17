@@ -9,7 +9,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-/** The look from the Brax Wink messenger (ADR-011, section 5). */
+/** The app's own dark look (ADR-011, section 5). */
 object Tc {
     val bg = Color(0xFF161616)
     val surface = Color(0xFF1E1F21)
