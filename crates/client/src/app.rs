@@ -45,7 +45,7 @@ fn update_command() -> Option<&'static str> {
     let exe = exe.unwrap_or_default();
     let exe = exe.to_string_lossy();
     if exe.contains("/Cellar/") {
-        Some("brew upgrade termchat")
+        Some("brew update && brew upgrade termchat")
     } else if cfg!(windows) {
         Some(
             "irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex",

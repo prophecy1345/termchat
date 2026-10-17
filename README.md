@@ -95,7 +95,7 @@ Pick one way.
 ```sh
 brew install prophecy1345/tap/termchat
 ```
-Updates come with `brew upgrade`.
+Update with `brew update && brew upgrade termchat` (without `brew update` Homebrew may not see the new version for up to a day).
 
 **One command** (macOS, Linux): downloads the right build, checks its checksum and puts
 `termchat` into `~/.local/bin`.

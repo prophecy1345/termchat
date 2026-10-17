@@ -26,7 +26,7 @@ Relay добавляет к ответу на WebSocket upgrade один HTTP-з
 
 - строка статуса пишет `termchat X is out: Ctrl+P, n`, пункт меню помечен, как непрочитанные новости;
 - окно «what's new» начинается с «termchat X is out» и того, как обновиться, по месту, где лежит запущенный бинарник:
-  - под префиксом Homebrew (`/Cellar/`): `brew upgrade termchat`;
+  - под префиксом Homebrew (`/Cellar/`): `brew update && brew upgrade termchat`;
   - в `~/.local/bin`: команда install.sh из README;
   - на Windows: команда install.ps1;
   - иначе: страница релизов.

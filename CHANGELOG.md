@@ -2,6 +2,11 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.1.12
+
+- The update notice for Homebrew says `brew update && brew upgrade termchat`:
+  without `brew update` Homebrew may not see the new version for up to a day.
+
 ## 0.1.11
 
 - **What's new** in the menu (Ctrl+P, n): this list. After an update the

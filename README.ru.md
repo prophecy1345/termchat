@@ -97,7 +97,7 @@ termchat работает в окне терминала. Можно польз�
 ```sh
 brew install prophecy1345/tap/termchat
 ```
-Обновления: `brew upgrade`.
+Обновление: `brew update && brew upgrade termchat` (без `brew update` Homebrew может до суток не видеть новую версию).
 
 **Одной командой** (macOS, Linux): скрипт скачает нужную сборку, проверит чексумму и положит `termchat` в `~/.local/bin`.
 ```sh

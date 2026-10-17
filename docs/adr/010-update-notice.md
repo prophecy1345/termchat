@@ -40,7 +40,7 @@ compare):
   marked, like unread news;
 - the "what's new" window starts with "termchat X is out" and how to update,
   chosen from where the running binary lives:
-  - under a Homebrew prefix (`/Cellar/`): `brew upgrade termchat`;
+  - under a Homebrew prefix (`/Cellar/`): `brew update && brew upgrade termchat`;
   - in `~/.local/bin`: the install.sh command from the README;
   - on Windows: the install.ps1 command;
   - anything else: the releases page.
