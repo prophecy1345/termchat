@@ -39,6 +39,17 @@ const DURESS_DISTANCE: usize = 4;
 /// Disappearing timer steps for Ctrl+T.
 const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
 
+fn next_timer(now: Option<u32>) -> Option<u32> {
+    let at = TIMERS.iter().position(|t| *t == now).unwrap_or(0);
+    TIMERS[(at + 1) % TIMERS.len()]
+}
+
+/// What Ctrl+T does, e.g. "off → 5m" or "7d → off".
+fn timer_step(now: Option<u32>) -> String {
+    let name = |t: Option<u32>| t.map_or("off".into(), |s| crate::ui::span(s.into()));
+    format!("{} → {}", name(now), name(next_timer(now)))
+}
+
 pub struct App {
     pub screen: Screen,
     pub path: PathBuf,
@@ -1110,8 +1121,7 @@ impl Main {
             }
             (true, KeyCode::Char('t')) => {
                 if let Some(c) = self.data.contacts.get_mut(self.selected) {
-                    let at = TIMERS.iter().position(|t| *t == c.expires_in).unwrap_or(0);
-                    c.expires_in = TIMERS[(at + 1) % TIMERS.len()];
+                    c.expires_in = next_timer(c.expires_in);
                     self.persist();
                 }
             }
@@ -1265,7 +1275,7 @@ impl Main {
         items.extend([
             ('r', "rename".into()),
             ('f', format!("safety number ({verified})")),
-            ('t', "disappearing messages: next".into()),
+            ('t', format!("disappearing: {}", timer_step(c.expires_in))),
             (
                 'e',
                 format!("no history: {}", if c.no_history { "on" } else { "off" }),
@@ -1655,6 +1665,13 @@ fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timer_step_names_the_next_press() {
+        assert_eq!(timer_step(None), "off → 5m");
+        assert_eq!(timer_step(Some(3600)), "1h → 1d");
+        assert_eq!(timer_step(Some(604_800)), "7d → off");
+    }
 
     #[test]
     fn plain_ws_only_for_local_or_onion() {

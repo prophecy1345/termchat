@@ -106,7 +106,7 @@ fn age(at: u64) -> String {
     }
 }
 
-fn span(s: u64) -> String {
+pub(crate) fn span(s: u64) -> String {
     match s {
         0..3600 => format!("{}m", s / 60),
         3600..86_400 => format!("{}h", s / 3600),
