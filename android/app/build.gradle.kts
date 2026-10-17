@@ -25,4 +25,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     // UniFFI's Kotlin bindings call the library through JNA.
     implementation("net.java.dev.jna:jna:5.19.1@aar")
+    // Drawing and scanning invite QR codes, without Google ML Kit (ADR-011).
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0") { isTransitive = false }
 }

@@ -5,9 +5,10 @@ set -eu
 cd "$(dirname "$0")/.."
 out=android/app/build/rust
 profile=${PROFILE:-release}
-dir=$profile
-[ "$profile" = dev ] && dir=debug
 cargo ndk -t arm64-v8a -t x86_64 -o "$out/jniLibs" build -p termchat-ffi --profile "$profile"
+# The release library is stripped of UniFFI's metadata; a host debug build has the same.
+cargo build -q -p termchat-ffi
+lib=target/debug/libtermchat_ffi.so
+[ "$(uname)" = Darwin ] && lib=target/debug/libtermchat_ffi.dylib
 cargo run -q -p termchat-ffi --features bindgen --bin uniffi-bindgen -- generate \
-    --library "target/aarch64-linux-android/$dir/libtermchat_ffi.so" \
-    --language kotlin --no-format --out-dir "$out/kotlin"
+    --library "$lib" --language kotlin --no-format --out-dir "$out/kotlin"

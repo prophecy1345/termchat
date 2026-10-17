@@ -1,132 +1,95 @@
 package app.termchat
 
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
-import app.termchat.engine.*
-import kotlin.concurrent.thread
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
 
-/** A2 smoke screen: proves the Rust engine works on Android. The real UI is A3. */
 class MainActivity : ComponentActivity() {
+    private lateinit var model: Model
+    private var hiddenSince = 0L
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // No screenshots, no preview in the recent apps list (ADR-011).
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
-        val dir = filesDir.absolutePath
-        setContent { MaterialTheme(colorScheme = darkColorScheme()) { Surface { App(dir) } } }
-    }
-}
-
-private class Ui : Listener {
-    var version by mutableIntStateOf(0)
-    var note by mutableStateOf("")
-    override fun onEvent(event: Event) {
-        when (event) {
-            is Event.Note -> note = event.text
-            is Event.Notice -> note = event.text
-            is Event.Wiped -> note = "wiped " + event.note
-            is Event.WipeAnyway -> note = event.why
-            is Event.Alert -> {}
+        // No screenshots, no preview in the recent apps list (ADR-011). Debug
+        // builds, never shipped, allow them so the UI can be checked.
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         }
+        model = Model(applicationContext)
+        setContent { TermchatTheme { NoLearning { Surface(Modifier.fillMaxSize()) { Root(model) } } } }
     }
-    override fun onChange() { version++ }
-}
 
-@Composable
-private fun App(dir: String) {
-    val ui = remember { Ui() }
-    var account by remember { mutableStateOf<Account?>(null) }
-    var error by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().safeDrawingPadding().padding(12.dp)) {
-        val a = account
-        if (a == null) {
-            Start(dir, ui) { result ->
-                result.onSuccess { account = it; error = "" }.onFailure { error = it.message ?: "$it" }
-            }
-            if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
-        } else {
-            Chat(a, ui)
-        }
+    // A recreated activity starts locked; the old account must not live on in
+    // the background with its keys and its relay connection.
+    override fun onDestroy() {
+        model.lock()
+        super.onDestroy()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        hiddenSince = System.currentTimeMillis()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Five minutes in the background lock it, like five idle minutes (ADR-011).
+        if (hiddenSince > 0 && System.currentTimeMillis() - hiddenSince >= AUTOLOCK_MS) model.lock()
     }
 }
 
 @Composable
-private fun Start(dir: String, ui: Ui, done: (Result<Account>) -> Unit) {
-    val exists = remember { stateExists(dir) }
-    var relay by remember { mutableStateOf("wss://relay.termchat.app/") }
-    var nick by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    if (!exists) {
-        OutlinedTextField(relay, { relay = it }, label = { Text("Relay URL") })
-        OutlinedTextField(nick, { nick = it }, label = { Text("Nickname") })
+private fun Root(m: Model) {
+    LaunchedEffect(Unit) {
+        while (true) { delay(10_000); m.lockIfIdle() }
     }
-    OutlinedTextField(
-        password, { password = it }, label = { Text("Password") },
-        visualTransformation = PasswordVisualTransformation(),
-    )
-    var busy by remember { mutableStateOf(false) }
-    Button(enabled = !busy, onClick = {
-        busy = true
-        // Argon2 takes about a second: never on the main thread.
-        thread {
-            val result = runCatching {
-                if (exists) unlock(dir, password, ui) ?: error("erased")
-                else setup(dir, relay, nick, password, ui)
-            }
-            busy = false
-            done(result)
+    BackHandler(enabled = m.screen != Screen.Chats && m.screen != Screen.Start) { m.screen = Screen.Chats }
+    Box(
+        Modifier.fillMaxSize().safeDrawingPadding().imePadding().pointerInput(Unit) {
+            awaitPointerEventScope { while (true) { awaitPointerEvent(); m.touch() } }
+        },
+    ) {
+        when (val s = m.screen) {
+            Screen.Start -> Start(m)
+            Screen.Chats -> Chats(m)
+            is Screen.Chat -> Chat(m, s.index)
+            Screen.Invite -> Invite(m)
+            Screen.Add -> Add(m)
+            Screen.Settings -> Settings(m)
+            Screen.News -> News(m)
         }
-    }) { Text(if (busy) "…" else if (exists) "Unlock" else "Create") }
-}
-
-@Composable
-private fun ColumnScope.Chat(a: Account, ui: Ui) {
-    @Suppress("UNUSED_VARIABLE") val tick = ui.version
-    val clipboard = LocalClipboardManager.current
-    var open by remember { mutableStateOf<UInt?>(null) }
-    var invite by remember { mutableStateOf("") }
-    var text by remember { mutableStateOf("") }
-    Text("${a.nickname()} · ${if (a.connected()) "online" else "offline"} · ${a.fingerprint().take(5)}")
-    if (ui.note.isNotEmpty()) Text(ui.note, color = MaterialTheme.colorScheme.tertiary)
-    Row {
-        Button(onClick = { clipboard.setText(AnnotatedString(a.invite())) }) { Text("Copy my invite") }
     }
-    Row {
-        OutlinedTextField(invite, { invite = it }, label = { Text("Their invite") }, modifier = Modifier.weight(1f))
-        Button(onClick = { runCatching { open = a.add(invite); invite = "" }.onFailure { ui.note = it.message ?: "" } }) { Text("Add") }
-    }
-    val contacts = a.contacts().sortedByDescending { it.lastAt }
-    contacts.forEach { c ->
-        Text(
-            "${if (c.index == open) "▸ " else ""}${c.name}${if (c.unread > 0u) " (${c.unread})" else ""}${if (c.request) " · request" else ""}",
-            Modifier.fillMaxWidth().clickable { open = c.index; a.open(c.index) }.padding(4.dp),
+    m.notice?.let { Dialog(it, "OK") { m.notice = null } }
+    m.wipeAnyway?.let {
+        AlertDialog(
+            onDismissRequest = { m.wipeAnyway = null },
+            containerColor = Tc.surface,
+        shape = corner,
+            title = { Text("Wipe without telling your contacts?", style = Tc.name) },
+            text = { Text(it, style = Tc.mono) },
+            confirmButton = { Flat("Wipe anyway", color = Tc.danger) { m.wipeAnyway = null; m.account?.wipeNow() } },
+            dismissButton = { Flat("Cancel", color = Tc.dim) { m.wipeAnyway = null } },
         )
     }
-    val i = open ?: return
-    val c = contacts.firstOrNull { it.index == i } ?: return
-    if (c.request) Button(onClick = { a.accept(i) }) { Text("Accept") }
-    LazyColumn(Modifier.weight(1f)) {
-        items(a.messages(i)) { m ->
-            Text(
-                (if (m.mine) "you: " else if (m.system) "· " else "") + m.text + if (m.mine) "  [${m.status}]" else "",
-                Modifier.padding(2.dp),
-            )
-        }
-    }
-    Row {
-        OutlinedTextField(text, { text = it }, label = { Text("Encrypted message") }, modifier = Modifier.weight(1f))
-        Button(onClick = { runCatching { a.send(i, text); text = "" }.onFailure { ui.note = it.message ?: "" } }) { Text("SEND") }
-    }
+    if (m.leaving) Dialog("Telling your contacts and the relay…", null) {}
 }
+
+@Composable
+private fun Dialog(text: String, ok: String?, close: () -> Unit) = AlertDialog(
+    onDismissRequest = { if (ok != null) close() },
+    containerColor = Tc.surface,
+        shape = corner,
+    text = { Text(text, style = Tc.mono) },
+    confirmButton = { if (ok != null) Flat(ok, onClick = close) },
+)
