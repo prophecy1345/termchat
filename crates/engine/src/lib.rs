@@ -6,6 +6,7 @@ pub mod data;
 pub mod engine;
 pub mod password;
 mod relay;
+pub mod themes;
 
 pub use engine::{Engine, Happened, Setup, Unlocked, clean};
 pub use relay::*;

@@ -159,6 +159,28 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
 
     val allow = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> m.notifyOn(ok) }
+    Text("THEME", style = Tc.caps)
+    var showThemes by remember { mutableStateOf(false) }
+    MenuRow("Colours: ${Tc.theme}", "The same themes as in the terminal") { showThemes = !showThemes }
+    if (showThemes) {
+        for (t in remember { app.termchat.engine.themes() }) {
+            Row(
+                Modifier.fillMaxWidth().clickable { m.useTheme(t.name) }.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // A swatch: background, bubble, accent.
+                for (i in listOf(1, 3, 0)) {
+                    Box(Modifier.size(18.dp).background(androidx.compose.ui.graphics.Color(0xFF000000 or t.colors[i].toLong())))
+                }
+                Text(
+                    (if (t.name == Tc.theme) "● " else "  ") + t.name,
+                    style = Tc.mono.copy(color = if (t.name == Tc.theme) Tc.lime else Tc.text),
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+            }
+        }
+    }
+    Line()
     Text("NOTIFICATIONS", style = Tc.caps)
     MenuRow(
         "New messages: ${if (m.notify) "on" else "off"}",

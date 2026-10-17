@@ -102,6 +102,25 @@ pub fn restore(dir: String, backup: String) -> Result<()> {
     Ok(engine::restore(&state(&dir), Path::new(&backup))?)
 }
 
+#[derive(uniffi::Record)]
+pub struct Theme {
+    pub name: String,
+    /// 17 RGB colours, in the order of `termchat_engine::themes::SLOTS`.
+    pub colors: Vec<u32>,
+}
+
+/// The colour themes the terminal client has too.
+#[uniffi::export]
+pub fn themes() -> Vec<Theme> {
+    termchat_engine::themes::THEMES
+        .iter()
+        .map(|(name, c)| Theme {
+            name: (*name).into(),
+            colors: c.to_vec(),
+        })
+        .collect()
+}
+
 /// "What's new": this build's CHANGELOG.md.
 #[uniffi::export]
 pub fn changelog() -> String {

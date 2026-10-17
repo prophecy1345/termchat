@@ -2,6 +2,15 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.1.13
+
+- **termchat for Android**, built on the same engine as the terminal client
+  (ADR-011): chats, invites with QR codes, backups, passwords, the duress
+  password, WIPE and MOVED, and the same colour themes.
+- **Push wake-ups** (ADR-012): the relay can ping a UnifiedPush server of your
+  choice when a message waits, so the phone shows "New message". Off by default.
+- New theme **termchat** in the terminal too: near-black with a lime accent.
+
 ## 0.1.12
 
 - The update notice for Homebrew says `brew update && brew upgrade termchat`:

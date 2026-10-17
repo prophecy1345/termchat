@@ -97,7 +97,14 @@ class Model(private val context: Context) : Listener {
         override fun run() { lockIfIdle(); main.postDelayed(this, 10_000) }
     }
 
+    /** Plain, like the TUI's settings.json, so the lock screen has it before the password. */
+    fun useTheme(name: String) {
+        Tc.use(name)
+        prefs.edit().putString("theme", name).apply()
+    }
+
     init {
+        Tc.use(prefs.getString("theme", DEFAULT_THEME) ?: DEFAULT_THEME)
         channels(context)
         main.postDelayed(idleCheck, 10_000)
     }
@@ -171,6 +178,7 @@ class Model(private val context: Context) : Listener {
         wipes++
         screen = Screen.Start
         prefs.edit().clear().apply()
+        Tc.use(DEFAULT_THEME)
         notify = false
         stay = false
         if (push != null) org.unifiedpush.android.connector.UnifiedPush.unregister(context)
