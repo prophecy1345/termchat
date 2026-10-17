@@ -19,6 +19,8 @@ pub const MAX_NOTE_BYTES: usize = 256;
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+/// HTTP header on the relay's upgrade response: its version (ADR-010).
+pub const VERSION_HEADER: &str = "x-termchat-version";
 /// One-time keys per `PublishKeys`: vodozemac keeps 50 on the server.
 pub const MAX_KEYS_PER_PUBLISH: usize = 100;
 /// How long the relay keeps an undelivered envelope (ADR-005). Clients keep an

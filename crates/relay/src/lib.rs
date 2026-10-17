@@ -17,7 +17,9 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
-use termchat_proto::{ClientFrame, Ed25519Key, ErrorCode, MAX_FRAME_BYTES, ServerFrame, VERSION};
+use termchat_proto::{
+    ClientFrame, Ed25519Key, ErrorCode, MAX_FRAME_BYTES, ServerFrame, VERSION, VERSION_HEADER,
+};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -339,8 +341,15 @@ async fn upgrade(
         true => Origin::Onion,
         false => Origin::Ip(client_ip(&shared.config, addr, &headers)),
     };
-    ws.max_message_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| connection(shared, socket, origin))
+    let mut response = ws
+        .max_message_size(MAX_FRAME_BYTES)
+        .on_upgrade(move |socket| connection(shared, socket, origin));
+    // ADR-010: clients tell their user when a newer version is out.
+    response.headers_mut().insert(
+        VERSION_HEADER,
+        axum::http::HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+    );
+    response
 }
 
 fn client_ip(config: &Config, addr: SocketAddr, headers: &HeaderMap) -> IpAddr {
