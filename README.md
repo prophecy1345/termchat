@@ -264,10 +264,14 @@ All of these act on the chosen contact; right-clicking it offers the same list:
 Your identity (keys) exists only on your device. **Without a backup, a lost or broken
 device means a lost identity** and your contacts must add you again.
 
-- **Make a backup:** **Ctrl+P**, then **b** (or settings → security). Choose where to save (default
-  `~/termchat-backup`) and a backup password. The backup holds your identity and
+- **Make a backup:** **Ctrl+P**, then **b** (or settings → security). Type where to save it
+  (a USB stick, for example) and a backup password. The backup holds your identity and
   contact list, not your messages. **Move it off this device** (USB stick, another
   computer).
+- termchat remembers where it wrote a backup, or restored one from. Any wipe,
+  the duress password included, erases a backup that is still at that path,
+  so one left on this disk does not give you away. A copy moved or copied
+  elsewhere is not touched; that copy is how you get your identity back.
 - **Restore:** on the first-run screen of a new device press **Ctrl+B**, enter the path
   to the backup, then unlock with the backup's password. Chats start fresh; contacts
   see "they restarted the conversation".
