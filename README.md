@@ -426,7 +426,8 @@ Not message contents, not nicknames, not IP history.
   [005 relay storage](docs/adr/005-relay-storage.md), [006 abuse](docs/adr/006-abuse-and-reports.md),
   [007 abuse resistance](docs/adr/007-abuse-resistance.md),
   [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md),
-  [009 leaving](docs/adr/009-leaving.md)
+  [009 leaving](docs/adr/009-leaving.md),
+  [010 update notice](docs/adr/010-update-notice.md)
 - [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
 
 ## Licence

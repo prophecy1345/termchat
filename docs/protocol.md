@@ -40,6 +40,10 @@ If the relay does not support it, it answers `Error { code: UnsupportedVersion }
 and closes the connection. The envelope carries `version` too, so clients of
 different versions can understand each other or refuse explicitly.
 
+The relay's HTTP upgrade response carries `x-termchat-version: X.Y.Z`, the
+relay's software version. Clients use it only to say that a newer termchat is
+out (ADR-010); it plays no part in the protocol.
+
 ## 3. Registration (challenge-response)
 
 ```

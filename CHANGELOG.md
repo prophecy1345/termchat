@@ -6,6 +6,10 @@ Shown inside termchat: Ctrl+P, n.
 
 - **What's new** in the menu (Ctrl+P, n): this list. After an update the
   status bar points here until you open it.
+- **Update notice.** When your relay runs a newer termchat, the status bar
+  says so, and "what's new" shows how to update: `brew upgrade termchat` for
+  Homebrew, the install command otherwise. No extra connection: the relay
+  reports its version when you connect (ADR-010).
 
 ## 0.1.10
 
