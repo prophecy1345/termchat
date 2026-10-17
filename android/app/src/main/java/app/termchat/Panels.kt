@@ -101,7 +101,7 @@ fun Add(m: Model) = Panel(m, "Add contact") {
     val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { add(it) } }
     Text("Scan their code, or paste their invite.", style = Tc.small)
     Flat("Scan QR code") {
-        scan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setPrompt(""))
+        scan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setPrompt("").setOrientationLocked(false))
     }
     Field(invite, { invite = it }, "termchat:…", Modifier.fillMaxWidth(), singleLine = false)
     Flat("Add", enabled = invite.isNotBlank()) { add(invite) }
