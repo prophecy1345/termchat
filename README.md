@@ -427,7 +427,8 @@ Not message contents, not nicknames, not IP history.
   [007 abuse resistance](docs/adr/007-abuse-resistance.md),
   [008 interface and notifications](docs/adr/008-ui-settings-and-notifications.md),
   [009 leaving](docs/adr/009-leaving.md),
-  [010 update notice](docs/adr/010-update-notice.md)
+  [010 update notice](docs/adr/010-update-notice.md),
+  [011 Android client](docs/adr/011-android-client.md), [012 push](docs/adr/012-push.md)
 - [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
 
 ## Licence

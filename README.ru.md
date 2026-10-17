@@ -343,7 +343,8 @@ termchat — для приватного общения. Он **не** пред�
   [007 устойчивость к злоупотреблениям](docs/adr/007-abuse-resistance.ru.md),
   [008 интерфейс и уведомления](docs/adr/008-ui-settings-and-notifications.ru.md),
   [009 уход](docs/adr/009-leaving.ru.md),
-  [010 уведомление об обновлении](docs/adr/010-update-notice.ru.md)
+  [010 уведомление об обновлении](docs/adr/010-update-notice.ru.md),
+  [011 клиент для Android](docs/adr/011-android-client.ru.md), [012 push](docs/adr/012-push.ru.md)
 - [Как участвовать](CONTRIBUTING.md) · [Как сообщить об уязвимости](SECURITY.md) (на английском)
 
 ## Лицензия
