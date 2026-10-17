@@ -204,12 +204,16 @@ impl Link {
     #[cfg(feature = "tor")]
     async fn tor_stream(&mut self, dir: &std::path::Path) -> Option<arti_client::DataStream> {
         if self.tor.is_none() {
-            let config = arti_client::config::TorClientConfigBuilder::from_directories(
+            #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+            let mut config = arti_client::config::TorClientConfigBuilder::from_directories(
                 dir.join("state"),
                 dir.join("cache"),
-            )
-            .build()
-            .ok()?;
+            );
+            // Android's app folder is group-writable (drwxrwx--x), which Arti's
+            // permission check refuses; the app sandbox keeps others out instead.
+            #[cfg(target_os = "android")]
+            config.storage().permissions().dangerously_trust_everyone();
+            let config = config.build().ok()?;
             self.tor = Some(
                 arti_client::TorClient::create_bootstrapped(config)
                     .await

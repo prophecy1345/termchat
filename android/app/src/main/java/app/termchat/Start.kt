@@ -12,7 +12,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.termchat.engine.defaultRelay
 import app.termchat.engine.generatePassword
+import app.termchat.engine.torAvailable
 import app.termchat.engine.restore
 import app.termchat.engine.setup
 import app.termchat.engine.stateExists
@@ -24,7 +26,10 @@ import java.io.File
 fun Start(m: Model) {
     var exists by remember(m.wipes) { mutableStateOf(stateExists(m.dir)) }
     var error by remember(m.wipes) { mutableStateOf(m.wipedNote) }
-    var relay by remember { mutableStateOf("wss://relay.termchat.app/") }
+    val defaults = remember { defaultRelay() }
+    var relay by remember { mutableStateOf(defaults[0]) }
+    var onion by remember { mutableStateOf(defaults[1]) }
+    var tor by remember { mutableStateOf(torAvailable()) }
     var nick by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
@@ -58,6 +63,19 @@ fun Start(m: Model) {
         if (!exists) {
             Text("No names, phones or emails: just a nickname. Keep the relay below or type your own.", style = Tc.small)
             Field(relay, { relay = it }, "Relay URL", Modifier.fillMaxWidth())
+            if (torAvailable()) {
+                Field(onion, { onion = it }, "Relay onion URL (for Tor)", Modifier.fillMaxWidth())
+                Text(
+                    "Use Tor: ${if (tor) "yes" else "no"}",
+                    style = Tc.mono.copy(color = if (tor) Tc.lime else Tc.dim),
+                    modifier = Modifier.clickable { tor = !tor }.padding(vertical = 6.dp),
+                )
+                Text(
+                    if (tor) "Only through Tor: the relay and your provider do not see your IP. The first connection takes 10-30 s."
+                    else "Direct: the relay and your provider see your IP address.",
+                    style = Tc.small,
+                )
+            }
             Field(nick, { nick = it }, "Nickname", Modifier.fillMaxWidth())
         }
         Field(password, { password = it }, "Password", Modifier.fillMaxWidth(), secret = true)
@@ -81,7 +99,7 @@ fun Start(m: Model) {
                 }
                 val pw = password
                 m.slow({
-                    if (exists) unlock(m.dir, pw, m) else setup(m.dir, relay, nick, pw, m)
+                    if (exists) unlock(m.dir, pw, m) else setup(m.dir, relay, onion, tor, nick, pw, m)
                 }) { result ->
                     password = ""
                     repeat = ""

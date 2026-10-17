@@ -5,7 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 out=android/app/build/rust
 profile=${PROFILE:-release}
-cargo ndk -t arm64-v8a -t x86_64 -o "$out/jniLibs" build -p termchat-ffi --profile "$profile"
+cargo ndk -t arm64-v8a -t x86_64 -o "$out/jniLibs" build -p termchat-ffi --features tor --profile "$profile"
 # The release library is stripped of UniFFI's metadata; a host debug build has the same.
 cargo build -q -p termchat-ffi
 lib=target/debug/libtermchat_ffi.so

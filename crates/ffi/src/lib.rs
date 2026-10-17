@@ -169,20 +169,38 @@ pub fn unlock(
     }
 }
 
-/// A new identity. Android has no Tor yet (ADR-011).
+/// The project's public relay and its onion address, prefilled on first run.
+#[uniffi::export]
+pub fn default_relay() -> Vec<String> {
+    vec![engine::DEFAULT_RELAY.into(), engine::DEFAULT_ONION.into()]
+}
+
+/// This build can connect through Tor (ADR-004).
+#[uniffi::export]
+pub fn tor_available() -> bool {
+    cfg!(feature = "tor")
+}
+
+/// A new identity. With `tor`, it connects only through Tor to `onion_url`.
 #[uniffi::export]
 pub fn setup(
     dir: String,
     relay_url: String,
+    onion_url: Option<String>,
+    tor: bool,
     nickname: String,
     password: String,
     listener: Arc<dyn Listener>,
 ) -> Result<Arc<Account>> {
     let _rt = runtime().enter();
+    let onion = onion_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|o| !o.is_empty());
     let setup = Setup {
         relay_url: relay_url.trim(),
-        onion_url: None,
-        tor: false,
+        onion_url: onion,
+        tor,
         nickname: nickname.trim(),
         password: &password,
     };
@@ -279,6 +297,16 @@ impl Account {
 
     pub fn fingerprint(&self) -> String {
         termchat_core::fingerprint(&self.lock().me())
+    }
+
+    pub fn tor(&self) -> bool {
+        self.lock().data.tor
+    }
+
+    /// Switches Tor on or off and reconnects; returns what to tell the user.
+    pub fn toggle_tor(&self) -> String {
+        let _rt = runtime().enter();
+        self.lock().toggle_tor()
     }
 
     pub fn connected(&self) -> bool {
@@ -460,6 +488,8 @@ mod tests {
         let a = setup(
             dir.clone(),
             relay,
+            None,
+            false,
             "ffi".into(),
             pw.clone(),
             Arc::new(Quiet),

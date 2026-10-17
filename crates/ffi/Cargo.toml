@@ -29,3 +29,5 @@ uniffi = "0.32.2"
 [features]
 # Only the bindings generator needs this; the library on the phone does not.
 bindgen = ["uniffi/cli"]
+# Tor via Arti (ADR-004, ADR-011).
+tor = ["termchat-engine/tor"]

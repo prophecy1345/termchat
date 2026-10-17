@@ -26,6 +26,12 @@ const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
 /// ADR-003: a typo in the real password must never hit the duress one.
 pub const DURESS_DISTANCE: usize = 4;
+/// The project's public relay, prefilled on first run; any other relay can be
+/// typed over it (docs/self-host.md).
+pub const DEFAULT_RELAY: &str = "wss://relay.termchat.app/";
+pub const DEFAULT_ONION: &str =
+    "ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/";
+
 /// The first relay version that knows `SetPush` (ADR-012); older ones close
 /// the connection on it.
 const PUSH_SINCE: (u32, u32, u32) = (0, 1, 13);

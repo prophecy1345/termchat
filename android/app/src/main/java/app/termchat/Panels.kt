@@ -208,7 +208,8 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
     MenuRow(
         "Wake-ups through UnifiedPush: ${if (m.push != null) "on" else "off"}",
-        "Needs a distributor app such as ntfy. When a message waits, the relay pings " +
+        "Needs a distributor app such as ntfy, with battery optimisation off for it. " +
+            "When a message waits, the relay pings " +
             "your push server, and the phone shows \"New message\". The relay keeps the " +
             "push address; the push server sees when you get messages, not from whom.",
     ) {
@@ -228,7 +229,10 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     MenuRow("Change password") { open("password") }
     MenuRow("Duress password", "Typing it at unlock erases everything") { open("duress") }
     MenuRow("Wipe everything from this phone", color = Tc.danger) { open("wipe") }
-    MenuRow("Tor", "Not on Android yet") {}
+    MenuRow(
+        "Tor: ${if (a.tor()) "on" else "off"}",
+        if (a.tor()) "Only through Tor: the relay does not see your IP" else "Direct: the relay and your provider see your IP",
+    ) { result = a.toggleTor(); m.changed() }
     Line()
     Text("ABOUT", style = Tc.caps)
     MenuRow("What's new") { m.screen = Screen.News }

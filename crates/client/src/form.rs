@@ -16,11 +16,7 @@ pub enum Kind {
     Wipe,
 }
 
-/// The project's public relay, prefilled on first run; any other relay can be
-/// typed over it (docs/self-host.md).
-pub const DEFAULT_RELAY: &str = "wss://relay.termchat.app/";
-pub const DEFAULT_ONION: &str =
-    "ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/";
+pub use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
 
 pub struct Form {
     pub kind: Kind,

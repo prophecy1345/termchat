@@ -57,8 +57,10 @@ chose UniFFI for mobile; this ADR fixes the rest.
 - **TLS roots.** Android has no certificate bundle that `rustls-native-certs`
   can read. On Android the transport uses the `webpki-roots` feature of
   tokio-tungstenite (Mozilla's list, updated with each release).
-- **Tor.** It comes later, in its own stage. The first Android release has no
-  Tor and says so in settings.
+- **Tor.** Arti as on the desktop (ADR-004), on by default at setup. Android's
+  app folder is group-writable, which Arti's permission check refuses; on
+  Android that check is off for the Tor folder, since the sandbox keeps other
+  apps out. The library grows from about 5 to 13 MB.
 
 ### 4. What the app does not do
 Text only (rule 9):
