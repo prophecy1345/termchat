@@ -23,7 +23,7 @@ use crate::notify;
 use crate::password;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
-use crate::{Dial, Event, Relay, theme};
+use crate::{Dial, Event, Relay, parse_version, theme};
 
 /// Idle time before the client locks itself.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
@@ -36,6 +36,29 @@ const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
 /// ADR-003: a typo in the real password must never hit the duress one.
 const DURESS_DISTANCE: usize = 4;
+const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
+
+/// How this copy was installed decides how to update it (ADR-010).
+fn update_command() -> Option<&'static str> {
+    // Homebrew runs it through a symlink into its Cellar.
+    let exe = std::env::current_exe().and_then(std::fs::canonicalize);
+    let exe = exe.unwrap_or_default();
+    let exe = exe.to_string_lossy();
+    if exe.contains("/Cellar/") {
+        Some("brew upgrade termchat")
+    } else if cfg!(windows) {
+        Some(
+            "irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex",
+        )
+    } else if exe.ends_with(".local/bin/termchat") {
+        Some(
+            "curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | sh",
+        )
+    } else {
+        None
+    }
+}
+
 /// Disappearing timer steps for Ctrl+T.
 const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
 
@@ -145,6 +168,8 @@ pub struct Main {
     relay: Relay,
     pub events: Receiver<Event>,
     pub connected: bool,
+    /// A newer version the relay runs (ADR-010).
+    pub update: Option<String>,
     pub selected: usize,
     /// History rows scrolled up from the bottom.
     pub scroll: usize,
@@ -618,6 +643,7 @@ impl Main {
             relay,
             events,
             connected: false,
+            update: None,
             selected: 0,
             scroll: 0,
             input: Input::default(),
@@ -747,6 +773,10 @@ impl Main {
 
     fn on_relay(&mut self, ev: Event) {
         match ev {
+            Event::RelayVersion(v) => {
+                let ours = parse_version(env!("CARGO_PKG_VERSION"));
+                self.update = (parse_version(&v) > ours).then_some(v);
+            }
             Event::Connected => {
                 self.connected = true;
                 let waiting: Vec<_> = self
@@ -1165,9 +1195,21 @@ impl Main {
         }
     }
 
-    /// This version's notes were not opened yet.
+    /// This version's notes were not opened yet, or a newer one is out.
     pub fn news_unread(&self) -> bool {
-        self.data.news_seen != env!("CARGO_PKG_VERSION")
+        self.update.is_some() || self.data.news_seen != env!("CARGO_PKG_VERSION")
+    }
+
+    /// Top of "what's new" when the relay runs a newer version (ADR-010).
+    pub fn update_note(&self) -> Option<String> {
+        let v = self.update.as_ref()?;
+        let how = match update_command() {
+            Some(cmd) => format!("To update, quit termchat and run:\n\n```\n{cmd}\n```"),
+            None => format!("Download it from {RELEASES}"),
+        };
+        Some(format!(
+            "## termchat {v} is out\n\n{how}\n\nWhat changed: {RELEASES}\n\n"
+        ))
     }
 
     /// Ctrl+P menu: hotkey and label.

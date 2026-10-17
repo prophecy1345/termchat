@@ -67,6 +67,7 @@ impl Peer {
             match self.next().await {
                 Event::Frame(ServerFrame::KeyCount { .. })
                 | Event::Connected
+                | Event::RelayVersion(_)
                 | Event::Disconnected => {}
                 Event::Frame(f) => return f,
             }
@@ -792,4 +793,14 @@ async fn queue_and_prekeys_survive_a_relay_restart() {
     for ext in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
     }
+}
+
+#[tokio::test]
+async fn relay_says_its_version_before_connected() {
+    let url = start_relay(Limits::default()).await;
+    let (a, _) = pair();
+    let mut alice = Peer::new(&url, a);
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    assert_eq!(alice.next().await, Event::RelayVersion(version));
+    assert_eq!(alice.next().await, Event::Connected);
 }

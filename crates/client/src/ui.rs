@@ -766,7 +766,12 @@ fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             Style::new().fg(t.peach),
         ));
     }
-    if m.news_unread() {
+    if let Some(v) = &m.update {
+        left.push(Span::styled(
+            format!("  termchat {v} is out: Ctrl+P, n"),
+            Style::new().fg(t.teal),
+        ));
+    } else if m.news_unread() {
         left.push(Span::styled(
             "  new in this version: Ctrl+P, n",
             Style::new().fg(t.teal),
@@ -1095,7 +1100,10 @@ fn popup_pane(
                         .collect(),
                 ),
                 Doc::Manual => ("manual", markdown(t, manual(), &q)),
-                Doc::News => ("what's new", markdown(t, news(), &q)),
+                Doc::News => {
+                    let text = m.update_note().unwrap_or_default() + news();
+                    ("what's new", markdown(t, &text, &q))
+                }
             };
             pager(f, t, h, title, lines, filter, *scroll);
         }

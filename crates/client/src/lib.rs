@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use termchat_proto::{ClientFrame, Identity, ServerFrame, Signature, VERSION};
+use termchat_proto::{ClientFrame, Identity, ServerFrame, Signature, VERSION, VERSION_HEADER};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -39,6 +39,8 @@ pub enum Event {
     Connected,
     Disconnected,
     Frame(ServerFrame),
+    /// The relay's version, sent before `Connected` if it said one (ADR-010).
+    RelayVersion(String),
 }
 
 /// How to reach the relay.
@@ -94,6 +96,7 @@ impl Relay {
             sign,
             events: events_tx,
             pending: BTreeMap::new(),
+            relay_version: None,
         };
         tokio::spawn(link.run(rx));
         Ok((Self { tx }, events))
@@ -127,6 +130,8 @@ struct Link {
     events: mpsc::Sender<Event>,
     /// Unanswered `Send` frames by `client_id`.
     pending: BTreeMap<u64, ClientFrame>,
+    /// From the last upgrade response, until `talk` reports it.
+    relay_version: Option<String>,
 }
 
 enum Ws {
@@ -187,17 +192,19 @@ impl Link {
 
     async fn connect(&mut self) -> Option<Ws> {
         match self.dial.clone() {
-            Dial::Direct => connect_async(self.url.as_str())
-                .await
-                .ok()
-                .map(|(ws, _)| Ws::Direct(Box::new(ws))),
+            Dial::Direct => {
+                let (ws, response) = connect_async(self.url.as_str()).await.ok()?;
+                self.relay_version = version(&response);
+                Some(Ws::Direct(Box::new(ws)))
+            }
             #[cfg(feature = "tor")]
             Dial::Tor(dir) => {
                 let stream = self.tor_stream(&dir).await?;
-                tokio_tungstenite::client_async(self.url.as_str(), stream)
+                let (ws, response) = tokio_tungstenite::client_async(self.url.as_str(), stream)
                     .await
-                    .ok()
-                    .map(|(ws, _)| Ws::Tor(Box::new(ws)))
+                    .ok()?;
+                self.relay_version = version(&response);
+                Some(Ws::Tor(Box::new(ws)))
             }
             #[cfg(not(feature = "tor"))]
             Dial::Tor(_) => None,
@@ -231,9 +238,15 @@ impl Link {
         mut ws: WebSocketStream<S>,
         out: &mut mpsc::UnboundedReceiver<ClientFrame>,
     ) -> End {
-        if self.handshake(&mut ws).await.is_none()
-            || self.events.send(Event::Connected).await.is_err()
+        if self.handshake(&mut ws).await.is_none() {
+            return End::Lost(false);
+        }
+        if let Some(v) = self.relay_version.take()
+            && self.events.send(Event::RelayVersion(v)).await.is_err()
         {
+            return End::Lost(false);
+        }
+        if self.events.send(Event::Connected).await.is_err() {
             return End::Lost(false);
         }
         for frame in self.pending.values() {
@@ -310,8 +323,51 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
+/// The relay's version header, only if it reads `digits.digits.digits`:
+/// nothing else from the relay is ever shown (ADR-010).
+fn version(
+    response: &tokio_tungstenite::tungstenite::handshake::client::Response,
+) -> Option<String> {
+    let v = response.headers().get(VERSION_HEADER)?.to_str().ok()?;
+    parse_version(v).map(|_| v.to_owned())
+}
+
+/// `major.minor.patch` as numbers, for comparing.
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = v.split('.').map(|p| {
+        p.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| p.parse().ok())
+            .flatten()
+    });
+    let version = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(version)
+}
+
 /// 50-100 % of `delay`, so clients do not reconnect in lockstep.
 fn jitter(delay: Duration) -> Duration {
     let r = f64::from(getrandom::u32().unwrap_or(u32::MAX)) / f64::from(u32::MAX);
     delay.mul_f64(0.5 + r / 2.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_are_three_plain_numbers() {
+        assert_eq!(parse_version("0.1.11"), Some((0, 1, 11)));
+        assert!(parse_version("0.1.11") > parse_version("0.1.9"));
+        for bad in [
+            "",
+            "1.2",
+            "1.2.3.4",
+            "1.2.x",
+            "+1.2.3",
+            "1.2.3-rc1",
+            " 1.2.3",
+        ] {
+            assert_eq!(parse_version(bad), None, "{bad}");
+        }
+    }
 }
