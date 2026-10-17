@@ -1,6 +1,6 @@
 # ADR-009: leaving: goodbye to contacts and removal from the relay
 
-Status: **accepted** (maintainer, 2026-10-16). Date: 2026-10-16. Русская версия: [009-leaving.ru.md](009-leaving.ru.md).
+Status: **accepted** (maintainer, 2026-10-16); section 6 accepted 2026-10-17. Date: 2026-10-16. Русская версия: [009-leaving.ru.md](009-leaving.ru.md).
 
 ## Context
 
@@ -66,12 +66,24 @@ Contacts learn later and only indirectly: once the relay forgets the idle key
   on the relay" instead of the error code. The contact is **not** marked as
   left automatically: a relay that lost its database answers the same way.
 
+### 6. Moving to another device is not leaving
+After a restore on a new device the old one must be wiped (one device at a
+time), but sections 1–3 would then say goodbye to every contact and remove the
+key the new device is using. The wipe form therefore offers two confirmations:
+
+- `WIPE` deletes the account: sections 1–3 as above.
+- `MOVED` wipes only this device: no goodbye, no `Unregister`, no network,
+  exactly like the duress wipe (ADR-003). The account lives on wherever the
+  backup was restored.
+
+A typed word, not a checkbox, so the choice is deliberate in both directions.
+
 ## Metadata, honestly
 
 - The relay sees a burst of small sends followed by `Unregister`. It learns that
   this key left and to whom it wrote last; it already sees who writes to whom.
 - A network observer sees ordinary traffic.
-- Nothing new on the duress path.
+- Nothing new on the duress path; `MOVED` sends nothing either.
 - `Unregister` removes data from the relay: it is a reduction of what the relay
   keeps (rule 14).
 
