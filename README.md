@@ -271,8 +271,24 @@ device means a lost identity** and your contacts must add you again.
 - **Restore:** on the first-run screen of a new device press **Ctrl+B**, enter the path
   to the backup, then unlock with the backup's password. Chats start fresh; contacts
   see "they restarted the conversation".
-- Use **one device at a time**. After restoring on a new device, wipe the old one
-  (settings → security → wipe).
+- Use **one device at a time**: both devices would fight over the same key.
+
+**Moving to another device** (say, from a Mac to a Linux laptop):
+
+1. On the old device, make a **fresh** backup (**Ctrl+P**, **b**): an older one
+   lacks the contacts you added since.
+2. Copy the backup to the new device and quit termchat on the old one (**Ctrl+Q**).
+3. Install termchat on the new device. On the first-run screen press **Ctrl+B**,
+   enter the path to the backup and unlock with the backup's password. Change it
+   later in settings → security if you like.
+4. Check that your contacts are there and send each a message. Their next
+   message starts a new conversation with this device; anything sent during the
+   move may be lost.
+5. On the old device: settings → security → wipe, and type **`MOVED`**, not
+   `WIPE`. `MOVED` erases only this device and tells nobody. `WIPE` would delete
+   your account: contacts would see that you left, on the new device too.
+6. Delete the backup file wherever you no longer need it, or keep it somewhere
+   safe as your next backup.
 
 ### 9. Locking, passwords and wiping
 
@@ -293,6 +309,8 @@ The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to th
   (their chat with you becomes read-only) and the relay forgets your key.
   Without a connection the client asks whether to wipe without telling them.
   The duress password never does this: it wipes silently.
+  Moved to another device? Type `MOVED` instead: it erases only this device,
+  silently (see [Moving to another device](#8-backup-and-restore)).
 - **Tor on/off later:** the `Tor` row.
 
 ### 10. Where data lives
