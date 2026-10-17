@@ -1,0 +1,1 @@
+Store texts moved to where F-Droid looks for them; no changes in the app.

@@ -2,6 +2,11 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.2.2
+
+- The app store texts, icon and screenshots move to `fastlane/` at the
+  repository root, where F-Droid reads them. No changes in the app.
+
 ## 0.2.1
 
 - The Android build works in F-Droid's build server: the signing setup no

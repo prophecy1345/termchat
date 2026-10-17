@@ -9,4 +9,4 @@ carry the same signature and can update each other.
 To submit: fork fdroiddata on GitLab, add the file as
 `metadata/app.termchat.yml`, check it with `fdroid lint app.termchat` and
 `fdroid build -v -l app.termchat`, then open a merge request. The store texts,
-icon and screenshots are read from `android/fastlane/metadata/android/en-US`.
+icon and screenshots are read from `fastlane/metadata/android/en-US` (repository root, where F-Droid looks).
