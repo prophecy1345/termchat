@@ -119,9 +119,8 @@ Then open a new terminal and run `termchat`.
 `termchat-<version>-android-arm64.apk` from the
 [releases](https://github.com/prophecy1345/termchat/releases) and open it;
 Android asks once to allow installs from your browser. The app shows a notice
-in the chat list when a newer version is out. An F-Droid build is on its way;
-APKs from F-Droid and from GitHub are signed with different keys, so stay with
-one source.
+in the chat list when a newer version is out. An F-Droid build is on its way,
+with the same signature as the APK here.
 
 **By hand.** Download the archive for your computer from the
 [releases](https://github.com/prophecy1345/termchat/releases):

@@ -1,0 +1,1 @@
+Reproducible builds: F-Droid ships the same signed APK as GitHub releases. Includes the security fixes of 0.1.14.

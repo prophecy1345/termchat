@@ -70,3 +70,14 @@ cd android && ./gradlew assembleDebug
 
 For a local relay on the emulator: `adb reverse tcp:18080 tcp:18080`, then
 `ws://localhost:18080/` in the app.
+
+## Versions
+
+While termchat is 0.x, one version covers every part (`Cargo.toml`):
+
+- **minor** (0.2.0, 0.3.0): new features, a new client, protocol or storage
+  changes;
+- **patch** (0.2.1): fixes only, nothing new to learn.
+
+1.0 comes after an independent security audit. The Android `versionCode` is
+`major * 10000 + minor * 100 + patch`, so minor and patch stay below 100.

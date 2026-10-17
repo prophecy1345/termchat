@@ -2,8 +2,9 @@
 
 `app.termchat.yml` is a draft of termchat's entry in
 [fdroiddata](https://gitlab.com/fdroid/fdroiddata). F-Droid builds the app
-from source and signs it with its own key, so an APK from F-Droid and one from
-GitHub releases cannot update each other: pick one source and stay with it.
+from source and, since the build is reproducible, ships the APK from our
+GitHub release when its own build matches it byte for byte. Both sources then
+carry the same signature and can update each other.
 
 To submit: fork fdroiddata on GitLab, add the file as
 `metadata/app.termchat.yml`, check it with `fdroid lint app.termchat` and

@@ -113,7 +113,7 @@ irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install
 
 После этого откройте новый терминал и запустите `termchat`.
 
-**Android** (8.0 и новее, сервисы Google не нужны): скачайте `termchat-<версия>-android-arm64.apk` со страницы [релизов](https://github.com/prophecy1345/termchat/releases) и откройте его; Android один раз спросит разрешение ставить приложения из браузера. О новой версии приложение скажет само, в списке чатов. Сборка в F-Droid готовится; APK из F-Droid и с GitHub подписаны разными ключами, поэтому держитесь одного источника.
+**Android** (8.0 и новее, сервисы Google не нужны): скачайте `termchat-<версия>-android-arm64.apk` со страницы [релизов](https://github.com/prophecy1345/termchat/releases) и откройте его; Android один раз спросит разрешение ставить приложения из браузера. О новой версии приложение скажет само, в списке чатов. Сборка в F-Droid готовится, с той же подписью, что и APK здесь.
 
 **Вручную.** Скачайте архив для своего компьютера со страницы [релизов](https://github.com/prophecy1345/termchat/releases):
 

@@ -2,6 +2,15 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.2.0
+
+- **Reproducible Android builds**: the APK can be rebuilt from source to the
+  same bytes, so F-Droid can ship our signed APK, and both sources update each
+  other.
+- Version numbers now follow the project's rules: new features raise the
+  minor number (CONTRIBUTING.md). The Android app should have been 0.2.0;
+  this is it.
+
 ## 0.1.14
 
 Android, after a security review:
