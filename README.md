@@ -289,6 +289,7 @@ All of these act on the chosen contact; right-clicking it offers the same list:
 |---|---|
 | **Ctrl+T** | Disappearing messages: off → 5 min → 1 h → 1 day → 1 week. Applies to what you send from now on; the message disappears on both sides when the time is up. The chat title shows `⏱`. |
 | **Ctrl+E** | No history: this chat is never written to disk. It is gone when you lock or quit. |
+| **Ctrl+S** | Search this chat: results show as you type, newest first. The search runs on your device only. |
 | **Ctrl+R** | Rename the contact. Only on your device; empty name resets it. |
 | **Ctrl+B** | Block / unblock. Their messages are thrown away unread; you cannot write to them. |
 | **Ctrl+D** | Delete the contact and the chat (asks for **y**). Deleting a request rejects it for good; adding that person's invite later takes the rejection back. |
@@ -421,6 +422,7 @@ removes the file too.
 | Ctrl+O | show your invite (**c** copies) |
 | Ctrl+Y | accept request |
 | Ctrl+F | safety number (**v** marks verified) |
+| Ctrl+S | search this chat |
 | Ctrl+T / Ctrl+E | disappearing messages / no history |
 | Ctrl+R / Ctrl+B / Ctrl+D / Ctrl+X | rename / block / delete or reject / report |
 | Ctrl+P | menu: **s** settings, **k** keys, **m** manual, **o** invite, **a** add, **b** backup |

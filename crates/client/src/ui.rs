@@ -1179,6 +1179,45 @@ fn popup_pane(
             ];
             window(f, t, h, "Tor bridges", text, &buttons, 70, false);
         }
+        Popup::Search(s) => {
+            let Some(c) = m.current() else { return };
+            let muted = Style::new().fg(t.subtext0);
+            let mut lines = vec![field(t, s, Some(s.cursor_chars()), 66), Line::from("")];
+            let q = s.trim().to_lowercase();
+            if !q.is_empty() {
+                // Newest first; the same text as on screen, lower-cased.
+                let found: Vec<_> = c
+                    .messages
+                    .iter()
+                    .rev()
+                    .filter(|msg| msg.status != Status::System)
+                    .filter(|msg| msg.text.to_lowercase().contains(&q))
+                    .collect();
+                for msg in found.iter().take(12) {
+                    let who = if msg.mine {
+                        "you".to_string()
+                    } else {
+                        name(m, c)
+                    };
+                    let text = fit(&clean(&msg.text), 52);
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{} · {}  ", who, age(msg.at)), muted),
+                        Span::raw(text),
+                    ]));
+                }
+                let more = found.len().saturating_sub(12);
+                lines.push(Line::styled(
+                    match (found.len(), more) {
+                        (0, _) => "nothing found".to_string(),
+                        (_, 0) => String::new(),
+                        (_, n) => format!("and {n} older"),
+                    },
+                    muted,
+                ));
+            }
+            let buttons = [("esc close", false, esc)];
+            window(f, t, h, "search this chat", lines, &buttons, 70, false);
+        }
         Popup::Incognito(s) => {
             let lines = vec![
                 Line::from("A new identity for one contact: its own keys and name."),

@@ -31,6 +31,8 @@ fun Chat(m: Model, index: UInt) {
     val messages = runCatching { a.messages(index) }.getOrDefault(emptyList())
     var text by remember { mutableStateOf("") }
     var dialog by remember { mutableStateOf<String?>(null) }
+    // Search runs here, over what is already on the phone; `null` is off.
+    var query by remember(index) { mutableStateOf<String?>(null) }
     DisposableEffect(index) {
         a.open(index)
         onDispose { a.open(null) }
@@ -38,15 +40,24 @@ fun Chat(m: Model, index: UInt) {
     LaunchedEffect(m.version) { a.open(index) }
 
     Column(Modifier.fillMaxSize()) {
-        Header(m, c) { dialog = it }
+        Header(m, c) { if (it == "search") query = "" else dialog = it }
         Line()
+        query?.let { q ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Field(q, { query = it }, "Search this chat", Modifier.weight(1f))
+                Text("×", style = Tc.name, modifier = Modifier.clickable { query = null }.padding(12.dp))
+            }
+        }
+        val shown = query?.takeIf { it.isNotBlank() }?.let { q ->
+            messages.filter { !it.system && it.text.contains(q.trim(), ignoreCase = true) }
+        } ?: messages
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
             reverseLayout = true,
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(vertical = 12.dp),
         ) {
-            items(messages.asReversed()) { Bubble(it) }
+            items(shown.asReversed()) { Bubble(it) }
         }
         if (c.request) {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -105,6 +116,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 val item = @Composable { label: String, go: () -> Unit ->
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
+                item("Search") { ask("search") }
                 item("Safety number") { ask("verify") }
                 item("Rename") { ask("rename") }
                 item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }

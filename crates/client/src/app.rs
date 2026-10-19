@@ -107,6 +107,8 @@ pub enum Popup {
     },
     /// The nickname for a new incognito identity.
     Incognito(Input),
+    /// Searching the open chat's history, on this device only.
+    Search(Input),
     /// Tor bridge lines being edited, and the line being typed (ADR-015).
     Bridges {
         lines: Vec<String>,
@@ -437,9 +439,9 @@ impl App {
             Screen::Main(m) => {
                 m.last_input = Instant::now();
                 match &mut m.popup {
-                    Some(Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s)) => {
-                        s.insert(&plain)
-                    }
+                    Some(
+                        Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s) | Popup::Search(s),
+                    ) => s.insert(&plain),
                     // One bridge per pasted line; terminals often paste `\r` for a newline.
                     Some(Popup::Bridges { lines, .. }) => lines.extend(
                         text.split(['\r', '\n'])
@@ -597,6 +599,9 @@ impl Main {
                 });
             }
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
+            (true, KeyCode::Char('s')) if key.is_some() => {
+                self.popup = Some(Popup::Search(Input::default()))
+            }
             (true, KeyCode::Char('r')) if key.is_some() => {
                 self.popup = Some(Popup::Rename(Input::default()))
             }
@@ -958,6 +963,11 @@ impl Main {
                     error,
                 })
             }
+            // Results update as you type; Enter or Esc closes.
+            Popup::Search(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
+                true => None,
+                false => Some(Popup::Search(s)),
+            },
             Popup::Incognito(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => match self.engine.incognito_invite(&s) {
                     Ok(text) => Some(Popup::Invite {
@@ -1019,7 +1029,11 @@ impl Main {
                 }
                 false => Some(Popup::Rename(s)),
             },
-            Popup::Add(_) | Popup::Rename(_) | Popup::Incognito(_) | Popup::Bridges { .. } => None,
+            Popup::Add(_)
+            | Popup::Rename(_)
+            | Popup::Incognito(_)
+            | Popup::Search(_)
+            | Popup::Bridges { .. } => None,
         };
         self.popup = keep;
     }
