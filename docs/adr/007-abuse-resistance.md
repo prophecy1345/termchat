@@ -128,6 +128,19 @@ run, plus a distance of at least 4 from the duress password if one is set.
   keys cannot ban; name spoofing is visible; a password change opens the file
   with the new password and duress still works.
 
+## 7. Amendments after the external review (2026-10-19, maintainer)
+
+- **All strangers together.** The per-stranger cap (20 envelopes, 256 KiB)
+  did not stop many fresh keys from filling a queue between them. Envelopes
+  from senders the recipient never wrote to now share, together, at most a
+  quarter of the recipient's queue, in count and in bytes. Contacts always
+  have room.
+- **Look-alike letters.** A nickname that mixes Latin, Cyrillic and Greek
+  letters (a Cyrillic "А" in "Аlice") always shows the fingerprint digits,
+  even for a verified contact. A name written entirely in look-alike letters
+  of one other script is not caught. That would need confusable tables, a new
+  dependency; it was not chosen.
+
 ## Decisions
 
 1. **Non-mutual sub-quota:** 20 envelopes and 256 KiB, as proposed.

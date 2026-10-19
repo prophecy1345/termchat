@@ -722,6 +722,45 @@ async fn a_stranger_gets_only_a_small_share_of_the_queue() {
     stranger.send_text(bob_key, 100, "thanks").await;
 }
 
+#[tokio::test]
+async fn strangers_together_get_a_quarter_of_the_queue() {
+    // A queue of 8: all strangers together may hold 2, whatever each may hold alone.
+    let limits = Limits {
+        queue_envelopes: 8,
+        ..Limits::default()
+    };
+    let url = start_relay(limits).await;
+    let (mut stranger, bob) = {
+        let (_, s, mut v) = mallory_and_victims(&url, 1).await;
+        (s, v.remove(0))
+    };
+    stranger.publish_keys().await;
+    let bob_key = bob.key();
+    for id in 0..2 {
+        stranger.send_text(bob_key, id, "hello?").await;
+    }
+    let envelope = stranger
+        .core
+        .lock()
+        .unwrap()
+        .encrypt(&bob_key, Body::Goodbye)
+        .unwrap();
+    stranger
+        .relay
+        .send(ClientFrame::Send {
+            client_id: 9,
+            envelope,
+        })
+        .unwrap();
+    assert_eq!(
+        stranger.frame().await,
+        ServerFrame::Error {
+            client_id: Some(9),
+            code: ErrorCode::QueueFull
+        }
+    );
+}
+
 async fn auth(ws: &mut Raw, client: &Mutex<Client>) -> ServerFrame {
     raw_send(ws, ClientFrame::Hello { version: VERSION }).await;
     let ServerFrame::Challenge { nonce } = raw_recv(ws).await else {

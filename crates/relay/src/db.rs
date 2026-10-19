@@ -197,6 +197,21 @@ impl Db {
         )
     }
 
+    /// Envelope count and bytes queued for `recipient`, per sender.
+    pub fn queue_by_sender(&self, recipient: &Ed25519Key) -> Result<Vec<(Ed25519Key, usize, u64)>> {
+        let mut q = self.conn.prepare(
+            "SELECT sender, COUNT(*), COALESCE(SUM(size), 0) FROM queue WHERE recipient = ?1 GROUP BY sender",
+        )?;
+        q.query_map([recipient], |r| {
+            Ok((
+                r.get(0)?,
+                r.get::<_, i64>(1)? as usize,
+                r.get::<_, i64>(2)? as u64,
+            ))
+        })?
+        .collect()
+    }
+
     /// Registration time, unix seconds.
     pub fn created_at(&self, key: &Ed25519Key) -> Result<Option<i64>> {
         self.conn

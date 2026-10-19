@@ -52,6 +52,12 @@ ntfy.sh). The app gets an endpoint URL from it.
 - `SetPush` counts toward the per-key frame budget. A ban drops the account,
   and the endpoint with it.
 
+- **Port 443 only, and no IPv4 hidden in IPv6** (amended 2026-10-19 after the
+  external review). An endpoint on another port is refused, so the relay
+  cannot be made to knock on other services of a public host. 6to4
+  (`2002::/16`) and Teredo (`2001:0::/32`) addresses are refused too, as they
+  can carry a private IPv4 address.
+
 ## Metadata, honestly
 
 - **The relay** stores one more thing per account, the endpoint URL. It names

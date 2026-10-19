@@ -564,6 +564,15 @@ fn handle(
             .is_some_and(|r| r.recipients.contains_key(&me)),
         _ => false,
     };
+    // Whom the recipient writes to: their senders are not strangers (ADR-007).
+    let known: Vec<Ed25519Key> = match &frame {
+        ClientFrame::Send { envelope, .. } if !mutual => relay
+            .mem
+            .get(&envelope.recipient)
+            .map(|r| r.recipients.keys().copied().collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
     let account = relay
         .mem
         .entry(me)
@@ -633,7 +642,16 @@ fn handle(
             let (count, bytes) = db(relay.db.queue_stats(&to, None))?;
             let stranger_full = !mutual && {
                 let (n, b) = db(relay.db.queue_stats(&to, Some(&me)))?;
-                n >= limits.stranger_queue_envelopes || b + size > limits.stranger_queue_bytes
+                // All strangers together get a quarter of the queue, so many
+                // fresh keys cannot fill it and lock out real contacts (ADR-007).
+                let (sn, sb) = db(relay.db.queue_by_sender(&to))?
+                    .into_iter()
+                    .filter(|(s, ..)| !known.contains(s))
+                    .fold((0, 0), |(n, b), (_, c, z)| (n + c, b + z));
+                n >= limits.stranger_queue_envelopes
+                    || b + size > limits.stranger_queue_bytes
+                    || sn >= limits.queue_envelopes / 4
+                    || sb + size > limits.queue_bytes as u64 / 4
             };
             if stranger_full
                 || count >= limits.queue_envelopes

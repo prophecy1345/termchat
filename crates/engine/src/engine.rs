@@ -306,6 +306,20 @@ pub fn set_pt_program(path: PathBuf) {
     let _ = PT_PROGRAM.set(path);
 }
 
+/// Latin, Cyrillic and Greek letters together: "Аlice" with a Cyrillic А
+/// looks like "Alice" (ADR-007, section 5). Such a name always shows its
+/// fingerprint digits.
+fn mixed_scripts(name: &str) -> bool {
+    let script = |c: char| match c {
+        'a'..='z' | 'A'..='Z' | '\u{00C0}'..='\u{024F}' => Some(0),
+        '\u{0370}'..='\u{03FF}' => Some(1),
+        '\u{0400}'..='\u{04FF}' => Some(2),
+        _ => None,
+    };
+    let mut seen = name.chars().filter_map(script);
+    seen.next().is_some_and(|first| seen.any(|s| s != first))
+}
+
 /// 0-30 s, so a device's identities do not connect in the same second (ADR-014).
 fn spread() -> Duration {
     Duration::from_millis(u64::from(getrandom::u32().unwrap_or(0) % 30_000))
@@ -1622,7 +1636,7 @@ impl Engine {
                 .contacts
                 .iter()
                 .any(|o| o.key != c.key && base(o) == name);
-        match !c.verified || collides {
+        match !c.verified || collides || mixed_scripts(&name) {
             true => format!("{name}·{}", &fp[..5]),
             false => name,
         }
@@ -1665,6 +1679,15 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_mixing_scripts_are_flagged() {
+        assert!(mixed_scripts("\u{0410}lice")); // Cyrillic А, then Latin
+        assert!(mixed_scripts("b\u{03BF}b")); // Greek ο between Latin b
+        assert!(!mixed_scripts("Alice 42"));
+        assert!(!mixed_scripts("Ёжик 🦔"));
+        assert!(!mixed_scripts("Ζωή"));
+    }
 
     #[test]
     fn message_text_keeps_lines_but_not_bidi_overrides() {

@@ -28,8 +28,12 @@ pub fn parse(url: &str) -> Option<(String, u16, String)> {
     if uri.scheme_str() != Some("https") || uri.authority()?.as_str().contains('@') {
         return None;
     }
+    // Port 443 only: the relay must not knock on other services of a host.
+    if uri.port_u16().is_some_and(|p| p != 443) {
+        return None;
+    }
     let path = uri.path_and_query().map_or("/", |p| p.as_str()).to_owned();
-    Some((uri.host()?.to_owned(), uri.port_u16().unwrap_or(443), path))
+    Some((uri.host()?.to_owned(), 443, path))
 }
 
 /// Only addresses on the public internet.
@@ -46,7 +50,9 @@ fn public(ip: IpAddr) -> bool {
                     || first & 0xfe00 == 0xfc00 // unique local
                     || first & 0xffc0 == 0xfe80 // link-local
                     || (first == 0x2001 && v6.segments()[1] == 0x0db8) // documentation
-                    || (first == 0x64 && v6.segments()[1] == 0xff9b)) // NAT64 can reach IPv4 anywhere
+                    || (first == 0x64 && v6.segments()[1] == 0xff9b) // NAT64 can reach IPv4 anywhere
+                    || first == 0x2002 // 6to4 carries an IPv4 address inside
+                    || (first == 0x2001 && v6.segments()[1] == 0)) // Teredo, likewise
             }
         },
     }
@@ -147,11 +153,18 @@ mod tests {
             "ftp://x/",
             "https://ntfy.sh/a b",
             "https://ntfy.sh/a\r\nX: y",
+            "https://ntfy.sh:22/up",
             "",
         ] {
             assert_eq!(parse(bad), None, "{bad:?}");
         }
-        for ip in ["1.1.1.1", "2606:4700:4700::1111", "::ffff:8.8.8.8"] {
+        assert!(parse("https://ntfy.sh:443/up").is_some());
+        for ip in [
+            "1.1.1.1",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+            "2001:4860:4860::8888",
+        ] {
             assert!(public(ip.parse().unwrap()), "{ip}");
         }
         for ip in [
@@ -169,6 +182,8 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
             "2001:db8::1",
+            "2002:a00:1::1",
+            "2001:0:4136:e378::1",
         ] {
             assert!(!public(ip.parse().unwrap()), "{ip}");
         }
