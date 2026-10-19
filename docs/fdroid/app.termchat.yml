@@ -15,13 +15,14 @@ Binaries:
   https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
 
 Builds:
-  - versionName: 0.2.3
-    versionCode: 203
-    commit: be4c692672a6730b8e8f996dde4db6019178cf13
+  - versionName: 0.3.0
+    versionCode: 300
+    commit: 4044bcf43a6af08246ea34333bd14df67309ba0e
     subdir: android/app
+    submodules: true
     sudo:
       - apt-get update
-      - apt-get install -y rustup build-essential
+      - apt-get install -y rustup build-essential golang-go
     gradle:
       - yes
     output: build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
@@ -35,5 +36,5 @@ AllowedAPKSigningKeys: bc6a742e73cfb755cd246bc0f273dfff718a78777d4ccb419a8dd4a64
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.2.3
-CurrentVersionCode: 203
+CurrentVersion: 0.3.0
+CurrentVersionCode: 300
