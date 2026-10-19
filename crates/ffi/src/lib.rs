@@ -322,8 +322,28 @@ impl Account {
         self.lock().update.clone()
     }
 
+    /// One-time: a new code on every call (ADR-013).
     pub fn invite(&self) -> String {
         self.lock().invite()
+    }
+
+    /// Reusable; `renew` replaces it and stops the old one.
+    pub fn public_invite(&self, renew: bool) -> String {
+        self.lock().public_invite(renew)
+    }
+
+    /// How many unused one-time invites stopped working.
+    pub fn revoke_invites(&self) -> u32 {
+        u32::try_from(self.lock().revoke_invites()).unwrap_or(u32::MAX)
+    }
+
+    /// Requests without an invite code are dropped.
+    pub fn codes_only(&self) -> bool {
+        self.lock().data.invites.codes_only
+    }
+
+    pub fn set_codes_only(&self, on: bool) {
+        self.lock().set_codes_only(on);
     }
 
     /// In a stable order: an index stays valid until a contact is deleted.

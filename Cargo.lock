@@ -4931,6 +4931,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "subtle",
  "termchat-core",
  "termchat-proto",
  "termchat-relay",

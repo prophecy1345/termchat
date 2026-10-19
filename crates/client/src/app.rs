@@ -100,7 +100,11 @@ pub enum Popup {
     Actions(usize),
     Form(Form),
     Add(Input),
-    Invite(String),
+    /// The invite shown, and whether it is the reusable one (ADR-013).
+    Invite {
+        text: String,
+        public: bool,
+    },
     Verify,
     Rename(Input),
     Delete,
@@ -559,7 +563,12 @@ impl Main {
             (false, KeyCode::Down) => self.select(self.selected + 1),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
             (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu(0)),
-            (true, KeyCode::Char('o')) => self.popup = Some(Popup::Invite(self.engine.invite())),
+            (true, KeyCode::Char('o')) => {
+                self.popup = Some(Popup::Invite {
+                    text: self.engine.invite(),
+                    public: false,
+                });
+            }
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
             (true, KeyCode::Char('r')) if key.is_some() => {
                 self.popup = Some(Popup::Rename(Input::default()))
@@ -669,6 +678,10 @@ impl Main {
                 row("change password", false),
                 row("duress password", false),
                 row("Tor", self.engine.data.tor),
+                row(
+                    "accept requests without an invite code (old invites)",
+                    !self.engine.data.invites.codes_only,
+                ),
                 row("wipe everything from this device", false),
             ],
         }
@@ -713,6 +726,11 @@ impl Main {
             (3, 1) => return Some(Popup::Form(Form::new(Kind::Password))),
             (3, 2) => return Some(Popup::Form(Form::new(Kind::Duress))),
             (3, 3) => return Some(Popup::Notice(self.engine.toggle_tor())),
+            (3, 4) => {
+                let on = self.engine.data.invites.codes_only;
+                self.engine.set_codes_only(!on);
+                return Some(Popup::Settings { tab, at });
+            }
             (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),
             (0, _) => {
                 s.theme = theme::THEMES
@@ -850,13 +868,30 @@ impl Main {
                     }
                 },
             },
-            Popup::Invite(invite) => {
-                if k.code == KeyCode::Char('c') {
-                    copy_to_clipboard(&invite);
+            Popup::Invite { text, public } => match k.code {
+                KeyCode::Char('c') => {
+                    copy_to_clipboard(&text);
                     self.status = "invite copied (if your terminal supports OSC 52)".into();
+                    None
                 }
-                None
-            }
+                KeyCode::Char('p') if !public => Some(Popup::Invite {
+                    text: self.engine.public_invite(false),
+                    public: true,
+                }),
+                KeyCode::Char('n') if public => {
+                    self.status = "new public invite: the old one no longer works".into();
+                    Some(Popup::Invite {
+                        text: self.engine.public_invite(true),
+                        public: true,
+                    })
+                }
+                KeyCode::Char('r') if !public => {
+                    let n = self.engine.revoke_invites();
+                    self.status = format!("{n} unused one-time invite(s) revoked");
+                    None
+                }
+                _ => None,
+            },
             Popup::Verify => {
                 if k.code == KeyCode::Char('v') {
                     self.engine.edit(i, |c| c.verified = !c.verified);

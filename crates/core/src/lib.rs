@@ -300,7 +300,9 @@ impl Client {
         if !self.contacts.contains_key(sender) {
             // A stranger may only send a contact request whose identity binds
             // the relay-reported key to the Curve25519 key of this session.
-            let Body::ContactRequest { identity, .. } = &inner.body else {
+            let (Body::ContactRequest { identity, .. } | Body::ContactRequestV2 { identity, .. }) =
+                &inner.body
+            else {
                 return Err(Error::UnknownSender);
             };
             if identity.ed25519 != *sender || identity.curve25519 != their_curve.to_bytes() {
@@ -521,7 +523,11 @@ impl SeqTracker {
 /// silently rename itself into someone else.
 fn remember_nickname(c: &mut Contact, body: &Body) {
     let nickname = match body {
-        Body::ContactRequest { nickname, .. } if c.is_request || c.nickname.is_none() => nickname,
+        Body::ContactRequest { nickname, .. } | Body::ContactRequestV2 { nickname, .. }
+            if c.is_request || c.nickname.is_none() =>
+        {
+            nickname
+        }
         Body::ContactAccept { nickname } if c.nickname.is_none() => nickname,
         _ => return,
     };

@@ -2,6 +2,18 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.3.0
+
+- **One-time invites.** Every invite you show carries a code that works once,
+  so a forwarded or leaked invite cannot be reused. "Revoke unused" stops all
+  the ones you handed out but nobody used.
+- **Public invite** for a profile or a post: reusable until you renew it, and
+  renewing stops the old one.
+- Invites from older versions have no code. Requests from them are accepted
+  while settings → security → "accept requests without an invite code" is on;
+  turn it off once your old contacts are added. New accounts start with it off.
+- Invites from this version need termchat 0.3.0 or later on the other side.
+
 ## 0.2.3
 
 - Android: the QR code scanner opens upright and follows the phone's rotation,

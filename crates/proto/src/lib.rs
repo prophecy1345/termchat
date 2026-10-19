@@ -238,13 +238,26 @@ pub struct Identity {
 }
 
 /// What a user hands out to be added: `termchat:<base64url(postcard)>` (protocol.md, section 9).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invite {
-    pub version: u16,
     pub relay_url: String,
     /// The same relay as a Tor onion service, if it has one (ADR-004).
     pub onion_url: Option<String>,
     pub identity: Identity,
+    /// Echoed in `ContactRequestV2`; `None` only in old (version 1) invites (ADR-013).
+    pub code: Option<InviteCode>,
+}
+
+pub type InviteCode = [u8; 16];
+
+/// On the wire: version 1 has no code, version 2 ends with one.
+#[derive(Serialize, Deserialize)]
+struct InviteWire<C> {
+    version: u16,
+    relay_url: String,
+    onion_url: Option<String>,
+    identity: Identity,
+    code: C,
 }
 
 const INVITE_PREFIX: &str = "termchat:";
@@ -252,8 +265,31 @@ const MAX_RELAY_URL: usize = 256;
 
 impl Invite {
     pub fn encode(&self) -> String {
-        let bytes = postcard::to_allocvec(self).unwrap_or_default();
-        format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(bytes))
+        let (relay_url, onion_url, identity) = (
+            self.relay_url.clone(),
+            self.onion_url.clone(),
+            self.identity.clone(),
+        );
+        let bytes = match self.code {
+            None => postcard::to_allocvec(&InviteWire {
+                version: 1,
+                relay_url,
+                onion_url,
+                identity,
+                code: (),
+            }),
+            Some(code) => postcard::to_allocvec(&InviteWire {
+                version: 2,
+                relay_url,
+                onion_url,
+                identity,
+                code,
+            }),
+        };
+        format!(
+            "{INVITE_PREFIX}{}",
+            URL_SAFE_NO_PAD.encode(bytes.unwrap_or_default())
+        )
     }
 
     /// Tolerates surrounding whitespace from copy-paste.
@@ -266,10 +302,29 @@ impl Invite {
             return Err(Error::TooLarge);
         }
         let bytes = URL_SAFE_NO_PAD.decode(b64).map_err(|_| Error::Malformed)?;
-        let invite: Self = decode_exact(&bytes)?;
-        if invite.version != VERSION {
-            return Err(Error::UnsupportedVersion);
-        }
+        let (version, _): (u16, _) =
+            postcard::take_from_bytes(&bytes).map_err(|_| Error::Malformed)?;
+        let invite = match version {
+            1 => {
+                let w: InviteWire<()> = decode_exact(&bytes)?;
+                Self {
+                    relay_url: w.relay_url,
+                    onion_url: w.onion_url,
+                    identity: w.identity,
+                    code: None,
+                }
+            }
+            2 => {
+                let w: InviteWire<InviteCode> = decode_exact(&bytes)?;
+                Self {
+                    relay_url: w.relay_url,
+                    onion_url: w.onion_url,
+                    identity: w.identity,
+                    code: Some(w.code),
+                }
+            }
+            _ => return Err(Error::UnsupportedVersion),
+        };
         if invite.relay_url.len() > MAX_RELAY_URL
             || invite
                 .onion_url
@@ -320,6 +375,13 @@ pub enum Body {
     },
     /// The sender wiped their account and will not read anything (ADR-009).
     Goodbye,
+    /// `ContactRequest` sent from a version 2 invite, echoing its code (ADR-013).
+    ContactRequestV2 {
+        identity: Identity,
+        nickname: String,
+        note: String,
+        code: InviteCode,
+    },
 }
 
 impl Inner {
@@ -355,12 +417,14 @@ impl Inner {
     fn check_limits(&self) -> Result<(), Error> {
         match &self.body {
             Body::Text { text, .. } if text.len() > MAX_TEXT_BYTES => Err(Error::TooLarge),
-            Body::ContactRequest { note, .. } if note.len() > MAX_NOTE_BYTES => {
+            Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
+                if note.len() > MAX_NOTE_BYTES =>
+            {
                 Err(Error::TooLarge)
             }
-            Body::ContactRequest { nickname, .. } | Body::ContactAccept { nickname } => {
-                check_nickname(nickname)
-            }
+            Body::ContactRequest { nickname, .. }
+            | Body::ContactRequestV2 { nickname, .. }
+            | Body::ContactAccept { nickname } => check_nickname(nickname),
             _ => Ok(()),
         }
     }
@@ -482,6 +546,20 @@ mod tests {
             ..text(0)
         };
         assert_eq!(long_note.to_padded(), Err(Error::TooLarge));
+        let mut v2 = Inner {
+            body: Body::ContactRequestV2 {
+                identity: identity.clone(),
+                nickname: "x".into(),
+                note: "hi".into(),
+                code: [5; 16],
+            },
+            ..text(0)
+        };
+        assert_eq!(Inner::from_padded(&v2.to_padded().unwrap()).unwrap(), v2);
+        if let Body::ContactRequestV2 { note, .. } = &mut v2.body {
+            *note = "n".repeat(MAX_NOTE_BYTES + 1);
+        }
+        assert_eq!(v2.to_padded(), Err(Error::TooLarge));
         let bye = Inner {
             body: Body::Goodbye,
             ..text(0)
@@ -562,8 +640,7 @@ mod tests {
 
     #[test]
     fn invite_roundtrip() {
-        let invite = Invite {
-            version: VERSION,
+        let mut invite = Invite {
             relay_url: "wss://relay.example.org/".into(),
             onion_url: Some(
                 "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/".into(),
@@ -573,12 +650,29 @@ mod tests {
                 curve25519: [2; 32],
                 signature: [3; 64],
             },
+            code: None,
         };
-        let s = invite.encode();
-        assert!(s.starts_with("termchat:") && s.len() < 350, "{s}");
-        assert_eq!(Invite::decode(&format!("  {s}\n")).unwrap(), invite);
+        let v1 = invite.encode();
+        assert!(v1.starts_with("termchat:") && v1.len() < 350, "{v1}");
+        assert_eq!(Invite::decode(&format!("  {v1}\n")).unwrap(), invite);
         assert_eq!(Invite::decode("termchat:!!!"), Err(Error::Malformed));
-        assert_eq!(Invite::decode(&s[1..]), Err(Error::Malformed));
+        assert_eq!(Invite::decode(&v1[1..]), Err(Error::Malformed));
+
+        invite.code = Some([9; 16]);
+        let v2 = invite.encode();
+        assert_eq!(Invite::decode(&v2).unwrap(), invite);
+        // Version 2 bytes must not parse as version 1 plus junk, nor the reverse.
+        let raw = |s: &str| URL_SAFE_NO_PAD.decode(&s[INVITE_PREFIX.len()..]).unwrap();
+        let swap = |mut b: Vec<u8>, v| {
+            b[0] = v;
+            format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(b))
+        };
+        assert_eq!(Invite::decode(&swap(raw(&v2), 1)), Err(Error::Malformed));
+        assert_eq!(Invite::decode(&swap(raw(&v1), 2)), Err(Error::Malformed));
+        assert_eq!(
+            Invite::decode(&swap(raw(&v2), 3)),
+            Err(Error::UnsupportedVersion)
+        );
     }
 
     #[test]

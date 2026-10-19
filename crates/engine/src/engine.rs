@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use termchat_core::proto::{
-    self, Body, ClientFrame, Ed25519Key, ErrorCode, Invite, ServerFrame, check_nickname,
+    self, Body, ClientFrame, Ed25519Key, ErrorCode, Invite, InviteCode, ServerFrame, check_nickname,
 };
 use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
@@ -42,6 +42,19 @@ pub const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400),
 pub fn next_timer(now: Option<u32>) -> Option<u32> {
     let at = TIMERS.iter().position(|t| *t == now).unwrap_or(0);
     TIMERS[(at + 1) % TIMERS.len()]
+}
+
+/// One-time codes kept unused; older ones stop working (ADR-013).
+const MAX_ONE_TIME_CODES: usize = 20;
+
+fn new_code() -> InviteCode {
+    let mut code = [0; 16];
+    // getrandom fails only on a broken OS; an all-zero code would still be
+    // one shared, guessable code, so refuse to go on.
+    if getrandom::fill(&mut code).is_err() {
+        std::process::abort();
+    }
+    code
 }
 
 pub fn now() -> u64 {
@@ -223,6 +236,10 @@ impl Engine {
             tor: s.tor,
             nickname: s.nickname.into(),
             news_seen: env!("CARGO_PKG_VERSION").into(),
+            invites: data::Invites {
+                codes_only: true,
+                ..Default::default()
+            },
             ..Data::default()
         };
         let mut engine = Self::open(Client::default(), key, data, path.to_owned())?;
@@ -283,12 +300,50 @@ impl Engine {
         self.core().identity().ed25519
     }
 
-    pub fn invite(&self) -> String {
+    /// A one-time invite: a fresh code that works for one request (ADR-013).
+    pub fn invite(&mut self) -> String {
+        let code = new_code();
+        let once = &mut self.data.invites.once;
+        once.push(code);
+        if once.len() > MAX_ONE_TIME_CODES {
+            once.remove(0);
+        }
+        self.persist();
+        self.invite_with(code)
+    }
+
+    /// The reusable invite; `renew` replaces it and stops the old one.
+    pub fn public_invite(&mut self, renew: bool) -> String {
+        let code = match self.data.invites.public {
+            Some(code) if !renew => code,
+            _ => {
+                let code = new_code();
+                self.data.invites.public = Some(code);
+                self.persist();
+                code
+            }
+        };
+        self.invite_with(code)
+    }
+
+    /// Every one-time invite handed out so far stops working.
+    pub fn revoke_invites(&mut self) -> usize {
+        let n = std::mem::take(&mut self.data.invites.once).len();
+        self.persist();
+        n
+    }
+
+    pub fn set_codes_only(&mut self, on: bool) {
+        self.data.invites.codes_only = on;
+        self.persist();
+    }
+
+    fn invite_with(&self, code: InviteCode) -> String {
         Invite {
-            version: proto::VERSION,
             relay_url: self.data.relay_url.clone(),
             onion_url: self.data.onion_url.clone(),
             identity: self.core().identity(),
+            code: Some(code),
         }
         .encode()
     }
@@ -362,10 +417,20 @@ impl Engine {
     fn flush(&mut self, i: usize) {
         let key = self.data.contacts[i].key;
         if self.data.contacts[i].request_pending {
-            let body = Body::ContactRequest {
-                identity: self.core().identity(),
-                nickname: self.data.nickname.clone(),
-                note: String::new(),
+            let (identity, nickname) = (self.core().identity(), self.data.nickname.clone());
+            let note = String::new();
+            let body = match self.data.contacts[i].invite_code {
+                Some(code) => Body::ContactRequestV2 {
+                    identity,
+                    nickname,
+                    note,
+                    code,
+                },
+                None => Body::ContactRequest {
+                    identity,
+                    nickname,
+                    note,
+                },
             };
             match self.transmit(&key, body) {
                 Ok(_) => self.data.contacts[i].request_pending = false,
@@ -615,6 +680,12 @@ impl Engine {
         };
         let i = match self.index(&sender) {
             Some(i) => i,
+            // Silently: they cannot tell a refusal from a request not yet seen.
+            None if !self.data.invites.admit(&got.body) => {
+                self.core().remove_contact(&sender);
+                self.persist();
+                return true;
+            }
             None => {
                 self.data.contacts.push(Contact {
                     key: sender,
@@ -671,7 +742,7 @@ impl Engine {
                 });
                 self.happened.push(alert(false));
             }
-            Body::ContactRequest { note, .. } => {
+            Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. } => {
                 let request = self.core().is_request(&sender);
                 if request == Some(true) {
                     self.happened.push(alert(true));
@@ -981,6 +1052,20 @@ impl Engine {
                 self.data.contacts.len() - 1
             }
         };
+        // A new code from someone who never answered: our request may have
+        // been dropped with its one-time key spent, so start over (ADR-013).
+        let c = &self.data.contacts[i];
+        if invite.code.is_some() && c.invite_code != invite.code && !c.request_pending {
+            let mut core = self.core();
+            if core.nickname(&key).is_none() {
+                core.remove_contact(&key);
+                core.add_contact(&invite.identity)
+                    .map_err(|e| format!("invalid invite: {e}"))?;
+                drop(core);
+                self.data.contacts[i].request_pending = true;
+            }
+        }
+        self.data.contacts[i].invite_code = invite.code;
         self.persist();
         self.claim(key);
         Ok(i)

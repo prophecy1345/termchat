@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
-use termchat_proto::Ed25519Key;
+use termchat_proto::{Body, Ed25519Key, InviteCode};
 use zeroize::Zeroizing;
 
 /// Everything the TUI keeps besides the crypto state. No personal data:
@@ -35,6 +36,19 @@ pub struct Data {
     pub news_seen: String,
     /// Where the relay wakes this account (UnifiedPush, ADR-012); told on every connect.
     pub push: Option<String>,
+    /// Codes of our invites that still let a stranger in (ADR-013).
+    pub invites: Invites,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Invites {
+    /// Unused one-time codes, oldest first.
+    pub once: Vec<InviteCode>,
+    pub public: Option<InviteCode>,
+    /// Drop requests without a code. Off for accounts older than ADR-013,
+    /// whose code-less invites are already out.
+    pub codes_only: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -46,6 +60,9 @@ pub struct Contact {
     pub verified: bool,
     /// Added from their invite; our `ContactRequest` is not sent yet.
     pub request_pending: bool,
+    /// The code from their invite, echoed in our request (ADR-013).
+    #[serde(default)]
+    pub invite_code: Option<InviteCode>,
     /// Disappearing timer for messages we send, seconds.
     pub expires_in: Option<u32>,
     /// Keep this chat in memory only, never on disk.
@@ -86,6 +103,28 @@ pub enum Status {
     Received,
     /// A notice from the app, not from the contact.
     System,
+}
+
+impl Invites {
+    /// Whether a stranger's request may in; spends a one-time code.
+    pub fn admit(&mut self, body: &Body) -> bool {
+        let code = match body {
+            Body::ContactRequestV2 { code, .. } => code,
+            _ => return !self.codes_only,
+        };
+        // Every code is compared, so the time does not tell which one matched.
+        let mut hit = None;
+        for (i, c) in self.once.iter().enumerate() {
+            if bool::from(c.ct_eq(code)) {
+                hit = Some(i);
+            }
+        }
+        let public = self.public.is_some_and(|c| bool::from(c.ct_eq(code)));
+        if let Some(i) = hit {
+            self.once.remove(i);
+        }
+        hit.is_some() || public
+    }
 }
 
 impl Data {
@@ -263,6 +302,47 @@ pub fn permission_warning(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_codes_admit_once_public_until_renewed_and_old_by_setting() {
+        let identity = termchat_proto::Identity {
+            ed25519: [1; 32],
+            curve25519: [2; 32],
+            signature: [3; 64],
+        };
+        let v2 = |code| Body::ContactRequestV2 {
+            identity: identity.clone(),
+            nickname: "x".into(),
+            note: String::new(),
+            code,
+        };
+        let old = Body::ContactRequest {
+            identity: identity.clone(),
+            nickname: "x".into(),
+            note: String::new(),
+        };
+        let mut inv = Invites {
+            once: vec![[1; 16], [2; 16]],
+            public: Some([7; 16]),
+            codes_only: true,
+        };
+        assert!(inv.admit(&v2([2; 16])));
+        assert!(!inv.admit(&v2([2; 16])), "a one-time code works once");
+        assert_eq!(inv.once, vec![[1; 16]]);
+        assert!(inv.admit(&v2([7; 16])) && inv.admit(&v2([7; 16])));
+        assert!(!inv.admit(&v2([9; 16])));
+        assert!(!inv.admit(&old));
+        inv.codes_only = false;
+        assert!(inv.admit(&old));
+        inv.public = None;
+        assert!(
+            !inv.admit(&v2([7; 16])),
+            "a renewed public code stops the old one"
+        );
+        // Accounts from before ADR-013 have no field: old invites keep working.
+        let data: Data = serde_json::from_str("{}").unwrap();
+        assert!(!data.invites.codes_only);
+    }
 
     #[test]
     fn write_is_private_and_wipe_removes_everything() {

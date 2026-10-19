@@ -160,6 +160,7 @@ Body =
   | ContactAccept { nickname: String }
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
   | Goodbye                                                                // ADR-009: the sender wiped their account
+  | ContactRequestV2 { identity: Identity, nickname: String, note: String, code: [u8; 16] }  // ADR-013
 ```
 
 Limits: `text` up to 16000 bytes, `nickname` up to 64 bytes, `note` up to 256
@@ -171,7 +172,8 @@ Checks on receipt:
    a contact: the Curve25519 key in the message equals `curve25519` in their
    verified `Identity`.
 3. A pre-key message from a stranger is accepted only if it is a
-   `ContactRequest`, its `identity.ed25519` equals `sender`, its
+   `ContactRequest` or `ContactRequestV2` with a live invite code (section 9),
+   its `identity.ed25519` equals `sender`, its
    `identity.curve25519` equals the Curve25519 key in the message, and the
    `identity` signature is valid. Such a sender goes to "requests".
 4. Anything else is dropped.
@@ -229,8 +231,16 @@ The serialized `Inner` is padded up to the nearest bucket: `0x80`, then zeros
 ```
 termchat:<base64url(postcard(Invite))>
 
-Invite { version: u16, relay_url: String, onion_url: Option<String>, identity: Identity }
+Invite { version: 2, relay_url: String, onion_url: Option<String>, identity: Identity, code: [u8; 16] }
+Invite { version: 1, relay_url: String, onion_url: Option<String>, identity: Identity }  // before ADR-013
 ```
+
+`code` is random. A request made from a version 2 invite echoes it in
+`ContactRequestV2`. The owner's client admits a stranger only with a live code:
+a one-time code is spent on arrival, and the public code works until it is
+renewed. A request without a code is admitted only while the owner allows old
+invites. Everything else is dropped silently. The relay never sees the code
+(ADR-013).
 
 The fallback key is not part of the invite: it rotates and would go stale. The
 one-time key is claimed with `ClaimKey`; its signature prevents substitution.

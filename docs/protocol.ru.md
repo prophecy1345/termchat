@@ -118,6 +118,7 @@ Body =
   | ContactAccept { nickname: String }
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
   | Goodbye                                                                // ADR-009: отправитель стёр аккаунт
+  | ContactRequestV2 { identity: Identity, nickname: String, note: String, code: [u8; 16] }  // ADR-013
 ```
 
 Лимиты: `text` до 16000 байт, `nickname` до 64 байт, `note` до 256 байт.
@@ -125,7 +126,7 @@ Body =
 Проверки при получении:
 1. `recipient` совпадает со своим ключом.
 2. `sender` совпадает с ключом, к которому привязана сессия Olm. Для pre-key сообщения от контакта: Curve25519 из сообщения совпадает с `curve25519` из его проверенной `Identity`.
-3. Pre-key сообщение от незнакомца принимается, только если это `ContactRequest`, его `identity.ed25519` равен `sender`, `identity.curve25519` равен Curve25519 из сообщения и подпись `identity` верна. Такой отправитель попадает в «запросы».
+3. Pre-key сообщение от незнакомца принимается, только если это `ContactRequest` или `ContactRequestV2` с действующим кодом приглашения (раздел 9), его `identity.ed25519` равен `sender`, `identity.curve25519` равен Curve25519 из сообщения и подпись `identity` верна. Такой отправитель попадает в «запросы».
 4. Иначе сообщение отбрасывается.
 
 Никнейм — единственное, что собеседник узнаёт о человеке. Он передаётся только здесь, внутри шифртекста: до 64 байт UTF-8, не пустой, без управляющих символов (иначе собеседник мог бы послать escape-последовательность в чужой терминал). Получатель хранит его в своём зашифрованном файле. Других полей о человеке в протоколе нет.
@@ -156,8 +157,11 @@ Body =
 ```
 termchat:<base64url(postcard(Invite))>
 
-Invite { version: u16, relay_url: String, onion_url: Option<String>, identity: Identity }
+Invite { version: 2, relay_url: String, onion_url: Option<String>, identity: Identity, code: [u8; 16] }
+Invite { version: 1, relay_url: String, onion_url: Option<String>, identity: Identity }  // до ADR-013
 ```
+
+`code` — случайный. Запрос по приглашению версии 2 повторяет его в `ContactRequestV2`. Клиент владельца пускает незнакомца только с действующим кодом: одноразовый тратится при получении, публичный работает, пока его не обновят. Запрос без кода принимается, только пока владелец разрешает старые приглашения. Всё остальное молча отбрасывается. Relay кода не видит (ADR-013).
 
 Fallback key в приглашение не кладётся: он ротируется и быстро устареет. One-time key берётся через `ClaimKey`, подпись защищает от подмены.
 

@@ -69,9 +69,15 @@ private fun qr(text: String): Bitmap {
 @Composable
 fun Invite(m: Model) = Panel(m, "Your invite") {
     val a = m.account ?: return@Panel
-    val invite = remember { a.invite() }
+    // One-time by default; the public one is reusable until renewed (ADR-013).
+    var public by remember { mutableStateOf(false) }
+    var invite by remember { mutableStateOf(a.invite()) }
     val context = LocalContext.current
-    Text("Show this code to a friend, or send them the text. It holds only public keys.", style = Tc.small)
+    Text(
+        if (public) "Reusable: anyone with it can ask to add you. Renew it to stop the old one."
+        else "Works once: show it to one friend, or send them the text.",
+        style = Tc.small,
+    )
     Image(
         qr(invite).asImageBitmap(), "invite QR code",
         filterQuality = FilterQuality.None,
@@ -83,6 +89,15 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
         Flat("Copy") { copy(context, invite); m.note = "invite copied" }
         Flat("Share", color = Tc.dim) {
             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, invite), null))
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (public) {
+            Flat("One-time", color = Tc.dim) { public = false; invite = a.invite() }
+            Flat("Renew", color = Tc.dim) { invite = a.publicInvite(true); m.note = "new public invite: the old one no longer works" }
+        } else {
+            Flat("Public", color = Tc.dim) { public = true; invite = a.publicInvite(false) }
+            Flat("Revoke unused", color = Tc.dim) { m.note = "${a.revokeInvites()} unused one-time invite(s) revoked"; invite = a.invite() }
         }
     }
 }
@@ -234,6 +249,10 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         "Tor: ${if (a.tor()) "on" else "off"}",
         if (a.tor()) "Only through Tor: the relay does not see your IP" else "Direct: the relay and your provider see your IP",
     ) { result = a.toggleTor(); m.changed() }
+    MenuRow(
+        "Requests without an invite code: ${if (a.codesOnly()) "dropped" else "accepted"}",
+        "Old invites carry no code. Drop such requests once your old contacts are added.",
+    ) { a.setCodesOnly(!a.codesOnly()); m.changed() }
     Line()
     Text("ABOUT", style = Tc.caps)
     MenuRow("What's new") { m.screen = Screen.News }

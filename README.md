@@ -232,8 +232,16 @@ There is no search and no directory: you add people by exchanging **invites**.
 1. **Ctrl+O** shows your invite: a long line starting with `termchat:`. Press **c**
    to copy it (iTerm2, kitty, WezTerm, Windows Terminal and others with OSC 52; not
    macOS Terminal), or select it with the mouse. It
-   contains only public keys, so it is safe to send by email, another messenger or a
-   QR code.
+   contains your public keys and a code that **works once**: every Ctrl+O makes a
+   new one, so send each to one person. It is safe to send by email, another
+   messenger or a QR code. **r** in that window revokes every unused one-time
+   invite.
+   - For a profile or a post, press **p** for your **public invite**: reusable
+     until you press **n**, which makes a new one and stops the old one.
+   - Invites from older versions have no code. Requests from them are accepted
+     while settings → security → "accept requests without an invite code" is
+     on. Turn it off once your old contacts are added: only then can nobody else
+     use an old invite. New accounts start with it off.
 2. Your friend presses **Ctrl+A**, pastes the invite and presses **Enter**.
 3. You now appear in each other's lists. On your side the friend arrives as a
    **request** (`?`). Press **Ctrl+Y** to accept, or **Ctrl+D** then **y** to reject.

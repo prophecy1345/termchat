@@ -1089,22 +1089,36 @@ fn popup_pane(
             let buttons = [("↵ add", true, key(KeyCode::Enter)), cancel];
             window(f, t, h, "add contact", lines, &buttons, 70, false);
         }
-        Popup::Invite(invite) => {
+        Popup::Invite { text, public } => {
+            let about = match public {
+                false => "Works once: send it to one friend.",
+                true => "Reusable: anyone with it can ask to add you.",
+            };
             let lines = vec![
-                Line::from("Send this to a friend. It holds only public keys."),
+                Line::from(about),
                 Line::from(""),
-                Line::styled(invite.as_str(), strong),
+                Line::styled(text.as_str(), strong),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Your fingerprint  ", Style::new().fg(t.subtext0)),
                     Span::raw(fingerprint(&m.engine.me())),
                 ]),
             ];
-            let buttons = [
-                ("c copy to clipboard", true, key(KeyCode::Char('c'))),
-                ("esc close", false, esc),
-            ];
-            window(f, t, h, "your invite", lines, &buttons, 70, false);
+            let mut buttons = vec![("c copy", true, key(KeyCode::Char('c')))];
+            match public {
+                false => buttons.extend([
+                    ("p public", false, key(KeyCode::Char('p'))),
+                    ("r revoke unused", false, key(KeyCode::Char('r'))),
+                ]),
+                true => buttons.push(("n renew", false, key(KeyCode::Char('n')))),
+            }
+            buttons.push(("esc close", false, esc));
+            let title = if *public {
+                "your public invite"
+            } else {
+                "your invite"
+            };
+            window(f, t, h, title, lines, &buttons, 70, false);
         }
         Popup::Verify => {
             let Some(c) = m.current() else { return };
