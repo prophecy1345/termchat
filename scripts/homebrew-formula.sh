@@ -41,7 +41,8 @@ class Termchat < Formula
   end
 
   def install
-    bin.install "termchat"
+    # lyrebird, for Tor bridges (ADR-015): termchat looks for it next to itself.
+    bin.install "termchat", "lyrebird"
   end
 
   test do

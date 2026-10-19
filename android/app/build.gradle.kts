@@ -45,6 +45,9 @@ android {
             isUniversalApk = false
         }
     }
+    // lyrebird (ADR-015) must be unpacked to run: Android starts programs
+    // only from the native library folder, and only if they are on disk.
+    packaging { jniLibs { useLegacyPackaging = true } }
     // Reproducible: no build timestamps or VCS info in the APK.
     dependenciesInfo { includeInApk = false; includeInBundle = false }
     // Built by ../build-rust.sh: libtermchat_ffi.so and its Kotlin bindings.

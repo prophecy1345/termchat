@@ -28,6 +28,7 @@ sealed interface Screen {
     data object Add : Screen
     data object Settings : Screen
     data object News : Screen
+    data object Bridges : Screen
 }
 
 /** Everything on screen; the engine reports through [Listener] on its own thread. */

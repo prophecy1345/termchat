@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
 #
 # Downloads the release archive, checks it against the release's SHA256SUMS,
-# copies termchat.exe to %LOCALAPPDATA%\Programs\termchat and adds that folder
+# copies termchat.exe (and lyrebird.exe, for Tor bridges, ADR-015) to
+# %LOCALAPPDATA%\Programs\termchat and adds that folder
 # to your user PATH. Nothing else is changed.
 #
 # Settings (environment variables):
@@ -39,6 +40,9 @@ try {
     $dest = Join-Path $env:LOCALAPPDATA 'Programs\termchat'
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item (Join-Path $tmp "termchat-$tag-x86_64-pc-windows-msvc\termchat.exe") $dest -Force
+    # Releases before 0.3.0 have no lyrebird.
+    $lyrebird = Join-Path $tmp "termchat-$tag-x86_64-pc-windows-msvc\lyrebird.exe"
+    if (Test-Path $lyrebird) { Copy-Item $lyrebird $dest -Force }
 
     $path = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (-not (($path -split ';') -contains $dest)) {

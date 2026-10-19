@@ -367,7 +367,7 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 
 | Problem | What to do |
 |---|---|
-| Stuck on `○ connecting…` | Check your internet. With Tor, the first connection can take up to a minute. If it never connects, turn Tor off in settings → security to go without Tor and see whether the relay is reachable. |
+| Stuck on `○ connecting…` | Check your internet. With Tor, the first connection can take up to a minute, through bridges a few minutes. If it never connects, Tor may be blocked where you are: add bridges (settings → security → Tor bridges). Or turn Tor off to see whether the relay is reachable at all. |
 | `SAVE FAILED` in the status bar | The disk is full or not writable. Messages are not acknowledged until they are saved, so nothing is lost; free some space. |
 | `wrong password` | Passwords are case-sensitive and depend on the keyboard layout. There is no recovery; restore from a backup if you have one. |
 | `they use another relay` when adding a contact | Your friend's invite is for a different relay. Both of you must use the same one (for now). |
@@ -393,7 +393,18 @@ moves, **Enter** or a click changes the value.
   and text never go there. The window title shows only the number of unread
   messages, `termchat (3)`.
 - **interface:** mouse on or off.
-- **security:** backup, password, duress password, Tor, wipe.
+- **security:** backup, password, duress password, Tor, Tor bridges, invite
+  codes, wipe.
+  - **Tor bridges** are for where Tor itself is blocked: unlisted entry relays
+    behind a disguise (obfs4, webtunnel, snowflake).
+  - Get bridge lines at bridges.torproject.org or from @GetBridgesBot in
+    Telegram. Paste them (one per line, or type one and press **Enter**), then
+    **Ctrl+S** saves.
+  - With bridges set, Tor enters the network only through them, by way of
+    lyrebird, the Tor Project's transport program. It ships next to `termchat`
+    and in the Android app.
+  - The network sees the disguise, not Tor. The bridge sees your IP address,
+    as any first Tor hop does (ADR-015).
 
 These settings live in `~/.termchat/settings.json`, unencrypted so that the lock
 screen can use your theme. They hold nothing about your contacts, and wiping

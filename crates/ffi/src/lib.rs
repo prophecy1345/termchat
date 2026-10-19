@@ -300,6 +300,12 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
     }
 }
 
+/// The app's own lyrebird, for Tor bridges (ADR-015); call before setup or unlock.
+#[uniffi::export]
+pub fn set_transport_program(path: String) {
+    engine::set_pt_program(path.into());
+}
+
 #[uniffi::export]
 impl Account {
     pub fn nickname(&self) -> String {
@@ -501,6 +507,17 @@ impl Account {
     /// "Wipe anyway" after a `WipeAnyway`.
     pub fn wipe_now(&self) {
         self.lock().finish_wipe("");
+    }
+
+    /// The Tor bridges: transport and address only (ADR-015).
+    pub fn bridges(&self) -> Vec<String> {
+        self.lock().bridges()
+    }
+
+    /// Replaces the bridge lines, one per line; returns what to tell the user.
+    pub fn set_bridges(&self, text: String) -> Result<String> {
+        let _rt = runtime().enter();
+        Ok(self.lock().set_bridges(&text)?)
     }
 
     /// Every identity's UnifiedPush instance name: the main one first, then

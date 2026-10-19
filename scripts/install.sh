@@ -4,7 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | sh
 #
 # Downloads the release archive for this system, checks it against the
-# release's SHA256SUMS, and installs the `termchat` binary. Nothing else is
+# release's SHA256SUMS, and installs the `termchat` binary, with lyrebird next
+# to it for Tor bridges (ADR-015). Nothing else is
 # changed. The checksum catches broken or truncated downloads; to also check
 # who built the archive, use `gh attestation verify` (README, "Verify a release").
 #
@@ -55,6 +56,9 @@ fi
 tar -xzf "$tmp/$archive" -C "$tmp"
 mkdir -p "$dest"
 install -m 755 "$tmp/termchat-$tag-$target/termchat" "$dest/termchat"
+# Releases before 0.3.0 have no lyrebird.
+lyrebird="$tmp/termchat-$tag-$target/lyrebird"
+[ -f "$lyrebird" ] && install -m 755 "$lyrebird" "$dest/lyrebird"
 echo "Installed termchat $tag to $dest/termchat"
 
 case ":$PATH:" in

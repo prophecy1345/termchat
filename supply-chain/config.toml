@@ -1885,6 +1885,10 @@ criteria = "safe-to-deploy"
 version = "0.47.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.tor-ptmgr]]
+version = "0.47.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.tor-relay-selection]]
 version = "0.47.0"
 criteria = "safe-to-deploy"

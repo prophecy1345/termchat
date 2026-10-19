@@ -40,6 +40,12 @@ pub struct Data {
     pub invites: Invites,
     /// Incognito identities, one per contact (ADR-014).
     pub profiles: Vec<Profile>,
+    /// Tor bridge lines; with any, Tor enters only through them (ADR-015).
+    pub bridges: Vec<String>,
+    /// The transport program, if not lyrebird next to termchat or on `PATH`.
+    pub pt_program: Option<String>,
+    /// Which Arti folder is current: a new one for each change of bridges.
+    pub tor_generation: u32,
 }
 
 /// An identity of its own, used with one contact only (ADR-014).
@@ -235,10 +241,35 @@ pub fn settings_path(state: &Path) -> PathBuf {
     state.with_file_name("settings.json")
 }
 
-/// Tor state and directory cache (ADR-004); holds no secrets, but shows that
-/// termchat was used over Tor.
+/// Tor state and directory cache (ADR-004); shows that termchat was used
+/// over Tor, and holds the bridge lines in use in the clear (ADR-015).
 pub fn tor_dir(state: &Path) -> PathBuf {
     state.with_file_name("arti")
+}
+
+/// Arti's folder for one set of bridges: a client that is still shutting
+/// down keeps its own (ADR-015).
+pub fn tor_dir_for(state: &Path, generation: u32) -> PathBuf {
+    tor_dir(state).join(format!("g{generation}"))
+}
+
+/// Erases every Arti folder but the current one; best effort, as an old
+/// client may still be closing.
+pub fn prune_tor_dirs(state: &Path, generation: u32) {
+    let keep = tor_dir_for(state, generation);
+    let Ok(entries) = fs::read_dir(tor_dir(state)) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p != keep {
+            let _ = if p.is_dir() {
+                fs::remove_dir_all(&p)
+            } else {
+                fs::remove_file(&p)
+            };
+        }
+    }
 }
 
 /// Crypto-erase (ADR-003): random bytes over the whole file, fsync, delete.

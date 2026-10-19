@@ -55,6 +55,7 @@ private fun Root(m: Model) {
             Screen.Add -> Add(m)
             Screen.Settings -> Settings(m)
             Screen.News -> News(m)
+            Screen.Bridges -> Bridges(m)
         }
     }
     m.notice?.let { Dialog(it, "OK") { m.notice = null } }

@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::http::Uri;
 use zeroize::Zeroize;
 
 use crate::data::{self, Contact, Data, Msg, Status};
-use crate::{Dial, Error, Event, Relay, parse_version, password};
+use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 use subtle::ConstantTimeEq;
 
 /// How long a wipe waits for the relay to take the goodbyes (ADR-009).
@@ -234,7 +234,14 @@ fn start(
             .auth_signature(host, nonce)
     });
     let (url, dial) = match (&data.onion_url, data.tor) {
-        (Some(onion), true) => (onion.as_str(), Dial::Tor(data::tor_dir(path))),
+        (Some(onion), true) => {
+            let bridges = Bridges {
+                lines: data.bridges.clone(),
+                program: pt_program(data),
+            };
+            let dir = data::tor_dir_for(path, data.tor_generation);
+            (onion.as_str(), Dial::Tor(dir, bridges))
+        }
         (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
         (_, false) => (data.relay_url.as_str(), Dial::Direct),
     };
@@ -266,6 +273,37 @@ fn start(
         connected: false,
         forward,
     })
+}
+
+/// Where the bridge transport program is (ADR-015): the setting, an app's
+/// own copy (Android: [`set_pt_program`]), next to this program, or `PATH`.
+pub fn pt_program(data: &Data) -> Option<PathBuf> {
+    if let Some(p) = &data.pt_program {
+        return Some(p.into());
+    }
+    if let Some(p) = PT_PROGRAM.get() {
+        return Some(p.clone());
+    }
+    let exe = |name: &str| format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe()
+        .ok()?
+        .with_file_name(exe("lyrebird"));
+    if beside.is_file() {
+        return Some(beside);
+    }
+    let path = std::env::var_os("PATH")?;
+    ["lyrebird", "obfs4proxy"].iter().find_map(|name| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(exe(name)))
+            .find(|p| p.is_file())
+    })
+}
+
+static PT_PROGRAM: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The app's own transport program, e.g. in Android's native library folder.
+pub fn set_pt_program(path: PathBuf) {
+    let _ = PT_PROGRAM.set(path);
 }
 
 /// 0-30 s, so a device's identities do not connect in the same second (ADR-014).
@@ -361,6 +399,8 @@ impl Engine {
             let c = Arc::new(Mutex::new(c));
             lives.push(start(c, &data, &path, &events_tx, spread(), true)?);
         }
+        // Folders of earlier bridges, and of versions before ADR-015.
+        data::prune_tor_dirs(&path, data.tor_generation);
         let happened = data::permission_warning(&path)
             .map(Happened::Notice)
             .into_iter()
@@ -1293,26 +1333,10 @@ impl Engine {
             return "This relay has no onion URL, so Tor is not available.".into();
         }
         self.data.tor = !self.data.tor;
-        let mut lives = Vec::new();
-        for (slot, live) in self.lives.iter().enumerate() {
-            let delay = if slot == 0 { Duration::ZERO } else { spread() };
-            match start(
-                Arc::clone(&live.core),
-                &self.data,
-                &self.path,
-                &self.events_tx,
-                delay,
-                slot > 0,
-            ) {
-                Ok(l) => lives.push(l),
-                Err(e) => {
-                    self.data.tor = !self.data.tor;
-                    return e;
-                }
-            }
+        if let Err(e) = self.relink() {
+            self.data.tor = !self.data.tor;
+            return e;
         }
-        self.lives = lives;
-        self.connected = false;
         self.persist();
         match self.data.tor {
             true => {
@@ -1320,6 +1344,93 @@ impl Engine {
             }
             false => "Tor off: the relay and your provider now see your IP address.".into(),
         }
+    }
+
+    /// Reconnects every identity with the current settings.
+    fn relink(&mut self) -> Result<(), String> {
+        let cores: Vec<_> = self.lives.iter().map(|l| Arc::clone(&l.core)).collect();
+        self.lives = self.start_all(&cores)?;
+        self.connected = false;
+        Ok(())
+    }
+
+    /// A link per identity, in slot order.
+    fn start_all(&self, cores: &[Arc<Mutex<Client>>]) -> Result<Vec<Live>, String> {
+        let mut lives = Vec::new();
+        for (slot, core) in cores.iter().enumerate() {
+            let delay = if slot == 0 { Duration::ZERO } else { spread() };
+            let (data, path, tx) = (&self.data, &self.path, &self.events_tx);
+            lives.push(start(Arc::clone(core), data, path, tx, delay, slot > 0)?);
+        }
+        Ok(lives)
+    }
+
+    /// Replaces the bridge lines, one per line; empty turns bridges off
+    /// (ADR-015). `Ok` says what happens now.
+    pub fn set_bridges(&mut self, text: &str) -> Result<String, String> {
+        let mut lines = Vec::new();
+        let mut kinds: Vec<String> = Vec::new();
+        let all = text.split(['\r', '\n']).map(str::trim);
+        for (n, line) in all.filter(|l| !l.is_empty()).enumerate() {
+            let line = line.trim_start_matches("Bridge ").trim();
+            let Some(kind) = crate::bridge_transport(line) else {
+                return Err(format!(
+                    "line {}: not a bridge line termchat can use ({})",
+                    n + 1,
+                    crate::TRANSPORTS.join(", ")
+                ));
+            };
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+            // Pasting the same list twice must not double it.
+            if !lines.iter().any(|l| l == line) {
+                lines.push(line.to_string());
+            }
+        }
+        if !lines.is_empty() && !cfg!(feature = "tor") {
+            return Err("this build has no Tor support".into());
+        }
+        if lines != self.data.bridges {
+            // Arti keeps the bridge lines in its folder in the clear. Stop
+            // every link and move to a new folder; the old one is erased
+            // below, once its client lets go.
+            let cores: Vec<_> = self.lives.iter().map(|l| Arc::clone(&l.core)).collect();
+            self.lives.clear();
+            crate::forget_tor();
+            self.data.tor_generation += 1;
+            let old = std::mem::replace(&mut self.data.bridges, lines);
+            match self.start_all(&cores) {
+                Ok(lives) => self.lives = lives,
+                // Back to the old bridges, which worked: never off Tor.
+                Err(e) => {
+                    self.data.bridges = old;
+                    self.lives = self.start_all(&cores)?;
+                    return Err(e);
+                }
+            }
+            self.connected = false;
+        }
+        self.persist();
+        data::prune_tor_dirs(&self.path, self.data.tor_generation);
+        let n = self.data.bridges.len();
+        Ok(match (n, pt_program(&self.data)) {
+            (0, _) => "No bridges: Tor connects directly to the Tor network.".into(),
+            (_, None) => format!(
+                "{n} bridge(s) saved, but lyrebird was not found: install it, or set its path."
+            ),
+            _ if !self.data.tor => format!("{n} bridge(s) saved; they are used once Tor is on."),
+            _ => format!(
+                "{n} bridge(s) ({}): Tor now enters only through them. The first connection can take a few minutes.",
+                kinds.join(", ")
+            ),
+        })
+    }
+
+    /// The bridges, without their secrets: transport and address.
+    pub fn bridges(&self) -> Vec<String> {
+        let shown = |l: &String| l.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
+        self.data.bridges.iter().map(shown).collect()
     }
 
     /// Writes a backup of the identities and contacts (no messages) to `to`.

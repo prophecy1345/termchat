@@ -107,6 +107,12 @@ pub enum Popup {
     },
     /// The nickname for a new incognito identity.
     Incognito(Input),
+    /// Tor bridge lines being edited, and the line being typed (ADR-015).
+    Bridges {
+        lines: Vec<String>,
+        input: Input,
+        error: String,
+    },
     Verify,
     Rename(Input),
     Delete,
@@ -434,6 +440,13 @@ impl App {
                     Some(Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s)) => {
                         s.insert(&plain)
                     }
+                    // One bridge per pasted line; terminals often paste `\r` for a newline.
+                    Some(Popup::Bridges { lines, .. }) => lines.extend(
+                        text.split(['\r', '\n'])
+                            .map(|l| l.chars().filter(|c| !c.is_control()).collect::<String>())
+                            .map(|l| l.trim().to_string())
+                            .filter(|l| !l.is_empty()),
+                    ),
                     Some(Popup::Form(f)) => f.paste(&plain),
                     Some(_) => {}
                     None => m.input.insert(&crate::ui::clean(text)),
@@ -693,6 +706,10 @@ impl Main {
                 row("duress password", false),
                 row("Tor", self.engine.data.tor),
                 row(
+                    &format!("Tor bridges ({})", self.engine.data.bridges.len()),
+                    !self.engine.data.bridges.is_empty(),
+                ),
+                row(
                     "accept requests without an invite code (old invites)",
                     !self.engine.data.invites.codes_only,
                 ),
@@ -741,6 +758,13 @@ impl Main {
             (3, 2) => return Some(Popup::Form(Form::new(Kind::Duress))),
             (3, 3) => return Some(Popup::Notice(self.engine.toggle_tor())),
             (3, 4) => {
+                return Some(Popup::Bridges {
+                    lines: self.engine.data.bridges.clone(),
+                    input: Input::default(),
+                    error: String::new(),
+                });
+            }
+            (3, 5) => {
                 let on = self.engine.data.invites.codes_only;
                 self.engine.set_codes_only(!on);
                 return Some(Popup::Settings { tab, at });
@@ -909,6 +933,31 @@ impl Main {
                 }
                 _ => None,
             },
+            Popup::Bridges {
+                mut lines,
+                mut input,
+                mut error,
+            } if k.code != KeyCode::Esc => {
+                let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+                match k.code {
+                    KeyCode::Char('s') if ctrl => {
+                        match self.engine.set_bridges(&lines.join("\n")) {
+                            Ok(done) => return self.popup = Some(Popup::Notice(done)),
+                            Err(e) => error = e,
+                        }
+                    }
+                    KeyCode::Char('x') if ctrl => lines.clear(),
+                    _ if input.on_key(k) && !input.trim().is_empty() => {
+                        lines.push(input.take().trim().to_string());
+                    }
+                    _ => {}
+                }
+                Some(Popup::Bridges {
+                    lines,
+                    input,
+                    error,
+                })
+            }
             Popup::Incognito(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => match self.engine.incognito_invite(&s) {
                     Ok(text) => Some(Popup::Invite {
@@ -970,7 +1019,7 @@ impl Main {
                 }
                 false => Some(Popup::Rename(s)),
             },
-            Popup::Add(_) | Popup::Rename(_) | Popup::Incognito(_) => None,
+            Popup::Add(_) | Popup::Rename(_) | Popup::Incognito(_) | Popup::Bridges { .. } => None,
         };
         self.popup = keep;
     }

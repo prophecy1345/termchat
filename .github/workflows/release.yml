@@ -19,9 +19,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: a
+          submodules: true
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: elsewhere/b
+          submodules: true
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
       - run: cargo install cargo-zigbuild@0.23.4 --locked
       - run: |
@@ -29,10 +31,15 @@ jobs:
             (cd "$d" && rustup target add x86_64-unknown-linux-musl &&
              BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-musl)
           done
+          for d in a elsewhere/b; do
+            (cd "$d" && scripts/build-lyrebird.sh linux amd64 target/lyrebird)
+          done
           for bin in termchat termchat-relay; do
             sha256sum a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
             cmp a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
           done
+          sha256sum a/target/lyrebird elsewhere/b/target/lyrebird
+          cmp a/target/lyrebird elsewhere/b/target/lyrebird
 
   build:
     needs: reproducible
@@ -40,14 +47,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux amd64 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux arm64 }
+          - { target: aarch64-apple-darwin, os: macos-latest, go: darwin arm64 }
+          - { target: x86_64-apple-darwin, os: macos-latest, go: darwin amd64 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe, go: windows amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          submodules: true
       - if: matrix.zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
       - if: matrix.zig
@@ -59,8 +68,12 @@ jobs:
           dir=termchat-${{ github.ref_name }}-${{ matrix.target }}
           mkdir "$dir"
           cp target/${{ matrix.target }}/release/termchat${{ matrix.exe }} target/${{ matrix.target }}/release/termchat-relay${{ matrix.exe }} LICENSE README.md "$dir/"
+          # Tor bridges (ADR-015), from the pinned source in third_party/lyrebird.
+          scripts/build-lyrebird.sh ${{ matrix.go }} "$dir/lyrebird${{ matrix.exe }}"
+          cp third_party/lyrebird/LICENSE "$dir/LICENSE.lyrebird"
+          cp third_party/lyrebird/LICENSE-GPL3.txt "$dir/LICENSE-GPL3.lyrebird.txt"
           sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
-          (cd "$dir" && sum termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} > BINARIES.sha256)
+          (cd "$dir" && sum termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} lyrebird${{ matrix.exe }} > BINARIES.sha256)
           # Windows Explorer opens .zip, not .tar.gz.
           if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip "$dir.zip" "$dir" >/dev/null; else tar -czf "$dir.tar.gz" "$dir"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -78,9 +91,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: a
+          submodules: true
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: elsewhere/b
+          submodules: true
       - run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370" >/dev/null
           cargo install cargo-ndk@4.1.2 --locked
@@ -100,6 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          submodules: true
       - run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "ndk;30.0.16248370" >/dev/null
           rustup target add aarch64-linux-android x86_64-linux-android

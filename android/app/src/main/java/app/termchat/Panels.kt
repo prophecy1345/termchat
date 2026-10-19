@@ -152,6 +152,29 @@ fun Add(m: Model) = Panel(m, "Add contact") {
 }
 
 @Composable
+fun Bridges(m: Model) = Panel(m, "Tor bridges") {
+    val a = m.account ?: return@Panel
+    // Starts empty: the saved lines hold secrets and are shown only in part.
+    var text by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
+    Text(
+        "Where Tor is blocked, it can enter through bridges: unlisted relays behind a disguise. " +
+            "Get them at bridges.torproject.org or from @GetBridgesBot in Telegram, and paste them here, one per line. " +
+            "Saving replaces the list; saving nothing turns bridges off.",
+        style = Tc.small,
+    )
+    for (b in a.bridges()) Text(b, style = Tc.mono)
+    Field(text, { text = it }, "obfs4 … / webtunnel … / snowflake …", Modifier.fillMaxWidth(), singleLine = false)
+    Flat("Save") {
+        m.slow({ a.setBridges(text) }) { r ->
+            result = r.fold({ it }, { it.message ?: "$it" })
+            if (r.isSuccess) text = ""
+        }
+    }
+    if (result.isNotEmpty()) Text(result, style = Tc.small)
+}
+
+@Composable
 fun News(m: Model) = Panel(m, "What's new") {
     val a = m.account
     LaunchedEffect(Unit) { a?.newsSeen() }
@@ -276,6 +299,10 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         "Tor: ${if (a.tor()) "on" else "off"}",
         if (a.tor()) "Only through Tor: the relay does not see your IP" else "Direct: the relay and your provider see your IP",
     ) { result = a.toggleTor(); m.changed() }
+    MenuRow(
+        "Tor bridges: ${a.bridges().size}",
+        "Where Tor itself is blocked: obfs4, webtunnel or snowflake bridges.",
+    ) { m.screen = Screen.Bridges }
     MenuRow(
         "Requests without an invite code: ${if (a.codesOnly()) "dropped" else "accepted"}",
         "Old invites carry no code. Drop such requests once your old contacts are added.",

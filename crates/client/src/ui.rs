@@ -1136,6 +1136,49 @@ fn popup_pane(
             };
             window(f, t, h, title, lines, &buttons, 70, false);
         }
+        Popup::Bridges {
+            lines,
+            input,
+            error,
+        } => {
+            let muted = Style::new().fg(t.subtext0);
+            let mut text = vec![
+                Line::from("Get bridges at bridges.torproject.org or from @GetBridgesBot"),
+                Line::from("in Telegram. Paste them, or type one and press Enter."),
+                Line::from(""),
+            ];
+            // Transport and address only: the rest of a line is its secret.
+            for l in lines {
+                let shown: Vec<&str> = l.split_whitespace().take(2).collect();
+                text.push(Line::styled(
+                    format!("  {}", clean(&shown.join(" "))),
+                    muted,
+                ));
+            }
+            if lines.is_empty() {
+                text.push(Line::styled("  no bridges: Tor connects directly", muted));
+            }
+            text.push(Line::from(""));
+            text.push(field(t, input, Some(input.cursor_chars()), 66));
+            if !error.is_empty() {
+                text.push(Line::styled(clean(error), Style::new().fg(t.red)));
+            }
+            let buttons = [
+                ("↵ add line", false, key(KeyCode::Enter)),
+                (
+                    "^s save",
+                    true,
+                    KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                ),
+                (
+                    "^x clear",
+                    false,
+                    KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+                ),
+                cancel,
+            ];
+            window(f, t, h, "Tor bridges", text, &buttons, 70, false);
+        }
         Popup::Incognito(s) => {
             let lines = vec![
                 Line::from("A new identity for one contact: its own keys and name."),

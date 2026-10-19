@@ -39,7 +39,44 @@ pub enum Dial {
     Direct,
     /// Only through Tor, with Arti's state in this folder (ADR-004). Never falls
     /// back to a direct connection, so the IP cannot leak.
-    Tor(PathBuf),
+    Tor(PathBuf, Bridges),
+}
+
+/// Tor bridges and the transport program that reaches them (ADR-015).
+/// Bridge lines hold secrets (`cert=`), so `Debug` shows only how many.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Bridges {
+    pub lines: Vec<String>,
+    /// lyrebird (or obfs4proxy, obfs4 only).
+    pub program: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for Bridges {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Bridges({} lines)", self.lines.len())
+    }
+}
+
+/// Transports lyrebird carries that termchat uses (ADR-015, section 3).
+pub const TRANSPORTS: [&str; 3] = ["obfs4", "webtunnel", "snowflake"];
+
+/// The transport a bridge line names, if Arti accepts the line. A leading
+/// `Bridge ` (as torrc writes it) is fine.
+#[cfg(feature = "tor")]
+pub fn bridge_transport(line: &str) -> Option<String> {
+    let b: arti_client::config::BridgeConfigBuilder = line.trim().parse().ok()?;
+    b.build().ok()?;
+    let name = line
+        .trim()
+        .trim_start_matches("Bridge ")
+        .split_whitespace()
+        .next()?;
+    TRANSPORTS.contains(&name).then(|| name.to_string())
+}
+
+#[cfg(not(feature = "tor"))]
+pub fn bridge_transport(_line: &str) -> Option<String> {
+    None
 }
 
 /// Handle to the background connection. Dropping it closes the connection.
@@ -81,7 +118,7 @@ impl Relay {
                 80
             });
         #[cfg(not(feature = "tor"))]
-        if matches!(dial, Dial::Tor(_)) {
+        if matches!(dial, Dial::Tor(..)) {
             return Err(Error::NoTor);
         }
         // Ignore the error: a provider may already be installed by the app.
@@ -219,8 +256,8 @@ impl Link {
                 Some(Ws::Direct(Box::new(ws)))
             }
             #[cfg(feature = "tor")]
-            Dial::Tor(dir) => {
-                let stream = self.tor_stream(&dir).await?;
+            Dial::Tor(dir, bridges) => {
+                let stream = self.tor_stream(&dir, &bridges).await?;
                 let (ws, response) = tokio_tungstenite::client_async(self.url.as_str(), stream)
                     .await
                     .ok()?;
@@ -228,15 +265,19 @@ impl Link {
                 Some(Ws::Tor(Box::new(ws)))
             }
             #[cfg(not(feature = "tor"))]
-            Dial::Tor(_) => None,
+            Dial::Tor(..) => None,
         }
     }
 
     #[cfg(feature = "tor")]
-    async fn tor_stream(&mut self, dir: &std::path::Path) -> Option<arti_client::DataStream> {
+    async fn tor_stream(
+        &mut self,
+        dir: &std::path::Path,
+        bridges: &Bridges,
+    ) -> Option<arti_client::DataStream> {
         if self.tor.is_none() {
             // Its own circuits: two identities never share one (ADR-014).
-            self.tor = Some(shared_tor(dir).await?.isolated_client());
+            self.tor = Some(shared_tor(dir, bridges).await?.isolated_client());
         }
         self.tor
             .as_ref()?
@@ -362,14 +403,31 @@ type Tor = std::sync::Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>
 /// One bootstrapped Tor client per process: Arti locks its state folder, and
 /// bootstrapping once is much faster. Each link takes an isolated handle.
 #[cfg(feature = "tor")]
-async fn shared_tor(dir: &std::path::Path) -> Option<Tor> {
-    static TOR: tokio::sync::Mutex<Option<(PathBuf, Tor)>> = tokio::sync::Mutex::const_new(None);
+type Shared = Option<(PathBuf, Bridges, Tor)>;
+#[cfg(feature = "tor")]
+static TOR: tokio::sync::Mutex<Shared> = tokio::sync::Mutex::const_new(None);
+
+/// Lets go of the shared Tor client, so its folder can be erased: Arti keeps
+/// bridge lines there in the clear (ADR-015). A client still bootstrapping
+/// is left alone; its links are gone, so it stops on its own.
+pub fn forget_tor() {
+    #[cfg(feature = "tor")]
+    if let Ok(mut tor) = TOR.try_lock() {
+        *tor = None;
+    }
+}
+
+#[cfg(feature = "tor")]
+async fn shared_tor(dir: &std::path::Path, bridges: &Bridges) -> Option<Tor> {
     let mut tor = TOR.lock().await;
-    if let Some((d, client)) = &*tor
+    if let Some((d, b, client)) = &*tor
         && d == dir
+        && b == bridges
     {
         return Some(client.clone());
     }
+    // A client with other bridges must let go of the state folder first.
+    *tor = None;
     #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
     let mut config = arti_client::config::TorClientConfigBuilder::from_directories(
         dir.join("state"),
@@ -379,11 +437,34 @@ async fn shared_tor(dir: &std::path::Path) -> Option<Tor> {
     // permission check refuses; the app sandbox keeps others out instead.
     #[cfg(target_os = "android")]
     config.storage().permissions().dangerously_trust_everyone();
+    // Bridges only (ADR-015): with them set, Arti enters the network through
+    // nothing else.
+    for line in &bridges.lines {
+        config.bridges().bridges().push(line.trim().parse().ok()?);
+    }
+    if let Some(program) = &bridges.program
+        && !bridges.lines.is_empty()
+    {
+        // obfs4proxy, lyrebird's predecessor, knows obfs4 alone.
+        let old = program
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with("obfs4proxy"));
+        let names = if old {
+            &TRANSPORTS[..1]
+        } else {
+            &TRANSPORTS[..]
+        };
+        let mut pt = arti_client::config::pt::TransportConfigBuilder::default();
+        pt.protocols(names.iter().filter_map(|t| t.parse().ok()).collect())
+            .path(arti_client::config::CfgPath::new_literal(program))
+            .run_on_startup(false);
+        config.bridges().transports().push(pt);
+    }
     let config = config.build().ok()?;
     let client = arti_client::TorClient::create_bootstrapped(config)
         .await
         .ok()?;
-    *tor = Some((dir.to_owned(), client.clone()));
+    *tor = Some((dir.to_owned(), bridges.clone(), client.clone()));
     Some(client)
 }
 
@@ -412,5 +493,41 @@ mod tests {
         ] {
             assert_eq!(parse_version(bad), None, "{bad}");
         }
+    }
+}
+
+#[cfg(all(test, feature = "tor"))]
+mod bridge_tests {
+    use super::*;
+
+    #[test]
+    fn bridge_lines_are_checked_by_arti() {
+        // Made up (from Arti's documentation): the format is all that matters.
+        let obfs4 = "obfs4 192.0.2.55:38114 316E643333645F6D79216558614D3931657A5F5F cert=YXJlIGZyZXF1ZW50bHkgZnVsbCBvZiBsaXR0bGUgbWVzc2FnZXMgeW91IGNhbiBmaW5kLg iat-mode=0";
+        assert_eq!(bridge_transport(obfs4).as_deref(), Some("obfs4"));
+        assert_eq!(
+            bridge_transport(&format!("Bridge {obfs4}")).as_deref(),
+            Some("obfs4")
+        );
+        // A plain bridge hides nothing; meek is left out (ADR-015, section 3).
+        assert_eq!(
+            bridge_transport("192.0.2.55:443 316E643333645F6D79216558614D3931657A5F5F"),
+            None
+        );
+        assert_eq!(
+            bridge_transport(&obfs4.replacen("obfs4", "meek_lite", 1)),
+            None
+        );
+        assert_eq!(bridge_transport("obfs4 not-an-address"), None);
+        assert!(
+            !format!(
+                "{:?}",
+                Bridges {
+                    lines: vec![obfs4.into()],
+                    program: None
+                }
+            )
+            .contains("cert")
+        );
     }
 }

@@ -16,6 +16,10 @@ Shown inside termchat: Ctrl+P, n.
   one contact from a new identity of your own: its own keys, name and relay
   account. Contacts of different identities cannot link you, and over Tor the
   relay cannot either. Deleting the contact deletes that identity.
+- **Tor bridges** for where Tor itself is blocked: paste obfs4, webtunnel or
+  snowflake bridge lines in settings → security, and Tor enters only through
+  them. lyrebird, the Tor Project's transport program, now ships next to
+  `termchat` and inside the Android app, built from source.
 - Invites from this version need termchat 0.3.0 or later on the other side.
 
 ## 0.2.3
