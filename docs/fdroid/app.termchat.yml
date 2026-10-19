@@ -11,8 +11,7 @@ AutoName: termchat
 
 RepoType: git
 Repo: https://github.com/prophecy1345/termchat.git
-Binaries: 
-  https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
+Binaries: https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
 
 Builds:
   - versionName: 0.3.0
