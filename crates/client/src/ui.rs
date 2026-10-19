@@ -12,10 +12,11 @@ use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
     ScrollbarOrientation, ScrollbarState, Wrap,
 };
+use termchat_core::proto::Invite;
 use termchat_core::{fingerprint, safety_number};
 
 use crate::app::{
-    App, Doc, Main, Popup, ROW_KEY, Screen, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock, now,
+    App, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock, now,
 };
 use crate::data::{Contact, Status};
 use crate::form::Form;
@@ -461,7 +462,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let request = m.engine.core().is_request(&c.key) == Some(true);
+            let request = m.engine.is_request(&c.key);
             let (mark, colour) = match () {
                 _ if c.blocked => ("×", t.red),
                 _ if c.left => ("-", t.overlay0),
@@ -597,7 +598,10 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut flag = |text: String, colour: Color| {
         title.push(Span::styled(format!("   {text}"), Style::new().fg(colour)));
     };
-    if m.engine.core().is_request(&c.key) == Some(true) {
+    if let Some(p) = m.engine.profile_of(c) {
+        flag(format!("incognito as {}", clean(&p.nickname)), t.mauve);
+    }
+    if m.engine.is_request(&c.key) {
         flag("request: Ctrl+Y accept, Ctrl+D reject".into(), t.peach);
     }
     if !c.verified {
@@ -1086,14 +1090,24 @@ fn popup_pane(
                 Line::from(""),
                 field(t, s, Some(s.cursor_chars()), 66),
             ];
-            let buttons = [("↵ add", true, key(KeyCode::Enter)), cancel];
+            let buttons = [
+                ("↵ add", true, key(KeyCode::Enter)),
+                (
+                    "^n add incognito",
+                    false,
+                    KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+                ),
+                cancel,
+            ];
             window(f, t, h, "add contact", lines, &buttons, 70, false);
         }
-        Popup::Invite { text, public } => {
-            let about = match public {
-                false => "Works once: send it to one friend.",
-                true => "Reusable: anyone with it can ask to add you.",
+        Popup::Invite { text, kind } => {
+            let about = match kind {
+                Share::Once => "Works once: send it to one friend.",
+                Share::Public => "Reusable: anyone with it can ask to add you.",
+                Share::Incognito => "Works once, from a new identity used only with them.",
             };
+            let me = Invite::decode(text).map(|i| i.identity.ed25519);
             let lines = vec![
                 Line::from(about),
                 Line::from(""),
@@ -1101,28 +1115,49 @@ fn popup_pane(
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Your fingerprint  ", Style::new().fg(t.subtext0)),
-                    Span::raw(fingerprint(&m.engine.me())),
+                    Span::raw(me.map(|k| fingerprint(&k)).unwrap_or_default()),
                 ]),
             ];
             let mut buttons = vec![("c copy", true, key(KeyCode::Char('c')))];
-            match public {
-                false => buttons.extend([
+            match kind {
+                Share::Once => buttons.extend([
                     ("p public", false, key(KeyCode::Char('p'))),
+                    ("i incognito", false, key(KeyCode::Char('i'))),
                     ("r revoke unused", false, key(KeyCode::Char('r'))),
                 ]),
-                true => buttons.push(("n renew", false, key(KeyCode::Char('n')))),
+                Share::Public => buttons.push(("n renew", false, key(KeyCode::Char('n')))),
+                Share::Incognito => {}
             }
             buttons.push(("esc close", false, esc));
-            let title = if *public {
-                "your public invite"
-            } else {
-                "your invite"
+            let title = match kind {
+                Share::Once => "your invite",
+                Share::Public => "your public invite",
+                Share::Incognito => "your incognito invite",
             };
             window(f, t, h, title, lines, &buttons, 70, false);
         }
+        Popup::Incognito(s) => {
+            let lines = vec![
+                Line::from("A new identity for one contact: its own keys and name."),
+                Line::from("The name they will see (empty: two random words):"),
+                Line::from(""),
+                field(t, s, Some(s.cursor_chars()), 66),
+                Line::from(""),
+                Line::styled(
+                    if m.engine.data.tor {
+                        "Over Tor the relay cannot tell it is you."
+                    } else {
+                        "Without Tor the relay can link it to you by IP address."
+                    },
+                    Style::new().fg(t.subtext0),
+                ),
+            ];
+            let buttons = [("↵ create", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "incognito invite", lines, &buttons, 70, false);
+        }
         Popup::Verify => {
             let Some(c) = m.current() else { return };
-            let number = safety_number(&m.engine.me(), &c.key);
+            let number = safety_number(&m.engine.me_for(c), &c.key);
             let groups: Vec<&str> = number.split(' ').collect();
             let mut lines = vec![
                 Line::from(format!(

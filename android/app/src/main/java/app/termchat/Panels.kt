@@ -69,13 +69,18 @@ private fun qr(text: String): Bitmap {
 @Composable
 fun Invite(m: Model) = Panel(m, "Your invite") {
     val a = m.account ?: return@Panel
-    // One-time by default; the public one is reusable until renewed (ADR-013).
-    var public by remember { mutableStateOf(false) }
+    // One-time by default; the public one is reusable until renewed (ADR-013);
+    // an incognito one comes from a new identity of its own (ADR-014).
+    var kind by remember { mutableStateOf("once") }
     var invite by remember { mutableStateOf(a.invite()) }
+    var nick by remember { mutableStateOf("") }
     val context = LocalContext.current
     Text(
-        if (public) "Reusable: anyone with it can ask to add you. Renew it to stop the old one."
-        else "Works once: show it to one friend, or send them the text.",
+        when (kind) {
+            "public" -> "Reusable: anyone with it can ask to add you. Renew it to stop the old one."
+            "incognito" -> "Works once, from a new identity used only with them: its own keys and its own name."
+            else -> "Works once: show it to one friend, or send them the text."
+        },
         style = Tc.small,
     )
     Image(
@@ -84,20 +89,39 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
         modifier = Modifier.fillMaxWidth().aspectRatio(1f).background(Tc.text).padding(12.dp),
     )
     SelectionContainer { Text(invite, style = Tc.small.copy(color = Tc.text)) }
-    Text("Your fingerprint  ${a.fingerprint()}", style = Tc.small)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Flat("Copy") { copy(context, invite); m.note = "invite copied" }
         Flat("Share", color = Tc.dim) {
             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, invite), null))
         }
     }
+    Text("Your fingerprint  ${runCatching { a.inviteFingerprint(invite) }.getOrDefault("")}", style = Tc.small)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (public) {
-            Flat("One-time", color = Tc.dim) { public = false; invite = a.invite() }
-            Flat("Renew", color = Tc.dim) { invite = a.publicInvite(true); m.note = "new public invite: the old one no longer works" }
-        } else {
-            Flat("Public", color = Tc.dim) { public = true; invite = a.publicInvite(false) }
-            Flat("Revoke unused", color = Tc.dim) { m.note = "${a.revokeInvites()} unused one-time invite(s) revoked"; invite = a.invite() }
+        when (kind) {
+            "public" -> {
+                Flat("One-time", color = Tc.dim) { kind = "once"; invite = a.invite() }
+                Flat("Renew", color = Tc.dim) { invite = a.publicInvite(true); m.note = "new public invite: the old one no longer works" }
+            }
+            "incognito" -> Flat("One-time", color = Tc.dim) { kind = "once"; invite = a.invite() }
+            else -> {
+                Flat("Public", color = Tc.dim) { kind = "public"; invite = a.publicInvite(false) }
+                Flat("Revoke unused", color = Tc.dim) { m.note = "${a.revokeInvites()} unused one-time invite(s) revoked"; invite = a.invite() }
+            }
+        }
+    }
+    if (kind == "once") {
+        Line()
+        Text("INCOGNITO", style = Tc.caps)
+        Text(
+            "A new identity for one contact, so contacts cannot link you. " +
+                if (a.tor()) "Over Tor the relay cannot tell it is you." else "Without Tor the relay can link it to you by IP address.",
+            style = Tc.small,
+        )
+        Field(nick, { nick = it }, "Name they will see (empty: random)", Modifier.fillMaxWidth())
+        Flat("Incognito invite") {
+            runCatching { a.incognitoInvite(nick) }
+                .onSuccess { invite = it; kind = "incognito"; m.syncPush() }
+                .onFailure { m.note = it.message ?: "$it" }
         }
     }
 }
@@ -107,19 +131,23 @@ fun Add(m: Model) = Panel(m, "Add contact") {
     val a = m.account ?: return@Panel
     var invite by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
-    val add = { text: String ->
-        runCatching { a.add(text) }
-            .onSuccess { m.screen = Screen.Chat(it) }
+    val add = { text: String, incognito: Boolean ->
+        runCatching { a.add(text, incognito) }
+            .onSuccess { if (incognito) m.syncPush(); m.screen = Screen.Chat(it) }
             .onFailure { error = it.message ?: "$it" }
     }
     // The camera is used only here, only after this tap (ADR-011).
-    val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { add(it) } }
+    val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { add(it, false) } }
     Text("Scan their code, or paste their invite.", style = Tc.small)
     Flat("Scan QR code") {
         scan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setPrompt("").setOrientationLocked(false))
     }
     Field(invite, { invite = it }, "termchat:…", Modifier.fillMaxWidth(), singleLine = false)
-    Flat("Add", enabled = invite.isNotBlank()) { add(invite) }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Flat("Add", enabled = invite.isNotBlank()) { add(invite, false) }
+        Flat("Add incognito", color = Tc.dim, enabled = invite.isNotBlank()) { add(invite, true) }
+    }
+    Text("Incognito: they get a new identity of yours, used only with them.", style = Tc.small)
     if (error.isNotEmpty()) Text(error, style = Tc.small.copy(color = Tc.warn))
 }
 
@@ -215,7 +243,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     val activity = LocalContext.current as android.app.Activity
     val startPush = {
         UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
-            if (ok) UnifiedPush.register(context)
+            if (ok) { UnifiedPush.register(context); m.syncPush() }
             else m.note = "Install a UnifiedPush distributor first, for example ntfy."
         }
     }
@@ -230,8 +258,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             "push address; the push server sees when you get messages, not from whom.",
     ) {
         if (m.push != null) {
-            UnifiedPush.unregister(context)
-            m.pushEndpoint(null)
+            m.stopPush()
         } else if (android.os.Build.VERSION.SDK_INT >= 33) {
             // A wake-up is shown as a notification: ask for that first.
             allowThenPush.launch(android.Manifest.permission.POST_NOTIFICATIONS)

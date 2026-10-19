@@ -1,5 +1,7 @@
 package app.termchat
 
+import org.unifiedpush.android.connector.INSTANCE_DEFAULT
+import org.unifiedpush.android.connector.UnifiedPush
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
@@ -65,10 +67,28 @@ class Model(private val context: Context) : Listener {
     var push by mutableStateOf(prefs.getString("push", null))
         private set
 
-    fun pushEndpoint(url: String?) {
-        push = url
-        prefs.edit().putString("push", url).apply()
-        account?.setPush(url)
+    /** `instance` is one identity's: "default" is the main one, else an incognito one (ADR-014). */
+    fun pushEndpoint(instance: String, url: String?) {
+        if (instance == INSTANCE_DEFAULT) {
+            push = url
+            prefs.edit().putString("push", url).apply()
+        }
+        account?.setPush(instance, url)
+    }
+
+    /** Wake-ups off for every identity. */
+    fun stopPush() {
+        for (instance in account?.pushInstances() ?: listOf(INSTANCE_DEFAULT)) {
+            UnifiedPush.unregister(context, instance)
+            pushEndpoint(instance, null)
+        }
+    }
+
+    /** With wake-ups on, every identity gets its own endpoint; a shared one would link them. */
+    fun syncPush() {
+        val a = account ?: return
+        if (push == null) return
+        for (instance in a.pushInstances()) UnifiedPush.register(context, instance)
     }
 
     /** A wake-up from the push server: a message waits on the relay. */
@@ -132,7 +152,8 @@ class Model(private val context: Context) : Listener {
 
     fun opened(a: Account) {
         account = a
-        if (a.push() != push) a.setPush(push)
+        if (a.push() != push) a.setPush(INSTANCE_DEFAULT, push)
+        syncPush()
         lastInput = System.currentTimeMillis()
         screen = Screen.Chats
         link()
@@ -184,7 +205,8 @@ class Model(private val context: Context) : Listener {
         Tc.use(DEFAULT_THEME)
         notify = false
         stay = false
-        if (push != null) org.unifiedpush.android.connector.UnifiedPush.unregister(context)
+        // ponytail: incognito instances stay with the distributor; the relay already forgot their keys.
+        if (push != null) UnifiedPush.unregister(context)
         push = null
         link()
     }

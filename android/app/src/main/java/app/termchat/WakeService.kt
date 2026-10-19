@@ -17,7 +17,7 @@ class WakeService : PushService() {
     private val main = Handler(Looper.getMainLooper())
 
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
-        main.post { model.pushEndpoint(endpoint.url) }
+        main.post { model.pushEndpoint(instance, endpoint.url) }
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
@@ -25,10 +25,10 @@ class WakeService : PushService() {
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
-        main.post { model.pushEndpoint(null); model.note = "push: the distributor said no ($reason)" }
+        main.post { model.pushEndpoint(instance, null); model.note = "push: the distributor said no ($reason)" }
     }
 
     override fun onUnregistered(instance: String) {
-        main.post { model.pushEndpoint(null) }
+        main.post { model.pushEndpoint(instance, null) }
     }
 }

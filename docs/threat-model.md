@@ -59,8 +59,15 @@ messages, or "who wrote to whom" beyond the queue.
 ## Partly protected
 
 - **Metadata.** Size is hidden by padding to buckets, but the relay sees the
-  social graph and timing. Sealed sender is postponed; the envelope has no
-  sender field so it can be added without a format change.
+  social graph and timing of each identity. **Incognito contacts** (ADR-014)
+  give one contact an identity of its own: its own keys, name and relay
+  account. The relay then sees two keys that talk only to each other.
+  - Under Tor, with separate circuits, the relay cannot link that pair to your
+    other keys from the network, though it may guess from timing.
+  - Without Tor, the shared IP address links them.
+  - Contacts of different identities cannot link you by key or fingerprint.
+  - Incognito is opt-in per contact; the main identity's contacts stay visible
+    to the relay as one circle. Sealed sender is not planned (ADR-014, section 5).
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice.
 - **Physical access to an unlocked device.** Auto-lock after idle time (5

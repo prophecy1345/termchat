@@ -12,6 +12,10 @@ Shown inside termchat: Ctrl+P, n.
 - Invites from older versions have no code. Requests from them are accepted
   while settings → security → "accept requests without an invite code" is on;
   turn it off once your old contacts are added. New accounts start with it off.
+- **Incognito contacts.** An incognito invite, or "add incognito", talks to
+  one contact from a new identity of your own: its own keys, name and relay
+  account. Contacts of different identities cannot link you, and over Tor the
+  relay cannot either. Deleting the contact deletes that identity.
 - Invites from this version need termchat 0.3.0 or later on the other side.
 
 ## 0.2.3

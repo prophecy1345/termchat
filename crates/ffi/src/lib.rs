@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
+use termchat_core::proto::Invite;
 use termchat_engine::data::{Contact, Status};
 use termchat_engine::engine::{self, Setup, next_timer};
 use termchat_engine::{Engine, Happened, Unlocked};
@@ -65,6 +66,13 @@ pub trait Listener: Send + Sync {
     fn on_change(&self);
 }
 
+/// UnifiedPush instance of the main identity: the connector's default (ADR-014).
+const MAIN_INSTANCE: &str = "default";
+
+fn hex(key: &[u8; 32]) -> String {
+    key.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[derive(uniffi::Record)]
 pub struct ContactView {
     pub index: u32,
@@ -79,6 +87,8 @@ pub struct ContactView {
     pub expires_in: Option<u32>,
     pub no_history: bool,
     pub last_at: u64,
+    /// The name they know us by, if we talk to them from an incognito identity (ADR-014).
+    pub incognito: Option<String>,
 }
 
 #[derive(uniffi::Record)]
@@ -282,7 +292,8 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         verified: c.verified,
         blocked: c.blocked,
         left: c.left,
-        request: e.core().is_request(&c.key) == Some(true),
+        request: e.is_request(&c.key),
+        incognito: e.profile_of(c).map(|p| p.nickname.clone()),
         expires_in: c.expires_in,
         no_history: c.no_history,
         last_at: c.last_at(),
@@ -396,10 +407,27 @@ impl Account {
         Ok(self.with(index, |e, i| e.send(i, &text))??)
     }
 
-    /// Adds a contact from their invite; returns its index.
-    pub fn add(&self, invite: String) -> Result<u32> {
-        let i = self.lock().add(invite.trim())?;
+    /// Adds a contact from their invite; returns its index. `incognito`
+    /// talks to them from a new identity of its own (ADR-014).
+    pub fn add(&self, invite: String, incognito: bool) -> Result<u32> {
+        // An incognito identity starts a relay link of its own.
+        let _rt = runtime().enter();
+        let i = self.lock().add(invite.trim(), incognito)?;
         Ok(i as u32)
+    }
+
+    /// The fingerprint of the identity an invite belongs to: ours differ per
+    /// incognito identity (ADR-014).
+    pub fn invite_fingerprint(&self, invite: String) -> Result<String> {
+        let invite = Invite::decode(&invite).map_err(|e| e.to_string())?;
+        Ok(termchat_core::fingerprint(&invite.identity.ed25519))
+    }
+
+    /// An invite from a new identity used only with whoever takes it; an
+    /// empty nickname picks two random words.
+    pub fn incognito_invite(&self, nickname: String) -> Result<String> {
+        let _rt = runtime().enter();
+        Ok(self.lock().incognito_invite(&nickname)?)
     }
 
     pub fn accept(&self, index: u32) -> Result<()> {
@@ -438,7 +466,8 @@ impl Account {
 
     pub fn safety_number(&self, index: u32) -> Result<String> {
         self.with(index, |e, i| {
-            termchat_core::safety_number(&e.me(), &e.data.contacts[i].key)
+            let c = &e.data.contacts[i];
+            termchat_core::safety_number(&e.me_for(c), &c.key)
         })
     }
 
@@ -474,9 +503,30 @@ impl Account {
         self.lock().finish_wipe("");
     }
 
-    /// The UnifiedPush endpoint, or `None` to stop wake-ups (ADR-012).
-    pub fn set_push(&self, endpoint: Option<String>) {
-        self.lock().set_push(endpoint);
+    /// Every identity's UnifiedPush instance name: the main one first, then
+    /// one per incognito identity, which needs an endpoint of its own (ADR-014).
+    pub fn push_instances(&self) -> Vec<String> {
+        let e = self.lock();
+        let mut all = vec![MAIN_INSTANCE.to_string()];
+        all.extend(e.data.profiles.iter().map(|p| hex(&p.key)));
+        all
+    }
+
+    /// The UnifiedPush endpoint of `instance`, or `None` to stop its wake-ups (ADR-012).
+    pub fn set_push(&self, instance: String, endpoint: Option<String>) {
+        let mut e = self.lock();
+        let who = match instance.as_str() {
+            MAIN_INSTANCE => Some(e.me()),
+            _ => e
+                .data
+                .profiles
+                .iter()
+                .find(|p| hex(&p.key) == instance)
+                .map(|p| p.key),
+        };
+        if let Some(who) = who {
+            e.set_push(&who, endpoint);
+        }
     }
 
     pub fn push(&self) -> Option<String> {
@@ -516,7 +566,10 @@ mod tests {
         )
         .unwrap();
         assert!(a.invite().starts_with("termchat:"));
-        assert!(a.contacts().is_empty() && a.add("nonsense".into()).is_err());
+        assert!(a.contacts().is_empty() && a.add("nonsense".into(), false).is_err());
+        let ghost = a.incognito_invite("ghost".into()).unwrap();
+        assert_ne!(a.invite_fingerprint(ghost).unwrap(), a.fingerprint());
+        assert_eq!(a.push_instances().len(), 2);
         let me = a.fingerprint();
         drop(a);
         assert!(state_exists(dir.clone()));

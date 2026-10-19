@@ -348,6 +348,24 @@ impl Client {
     /// Encrypted state file bytes, with the app's own data (settings, history)
     /// stored alongside. The caller writes them to disk atomically.
     pub fn save(&self, key: &FileKey, app: &str) -> Result<Vec<u8>, Error> {
+        store::seal(key, &self.state_json(app)?)
+    }
+
+    /// The crypto state alone, unencrypted: an extra identity kept inside the
+    /// app data of the main one, which is sealed with it (ADR-014).
+    pub fn export(&self) -> Result<Zeroizing<String>, Error> {
+        let json = self.state_json("")?;
+        String::from_utf8(json.to_vec())
+            .map(Zeroizing::new)
+            .map_err(|_| Error::CorruptState)
+    }
+
+    pub fn import(json: &str) -> Result<Self, Error> {
+        let state: State = serde_json::from_str(json).map_err(|_| Error::CorruptState)?;
+        Ok(Self::from_state(state).0)
+    }
+
+    fn state_json(&self, app: &str) -> Result<Zeroizing<Vec<u8>>, Error> {
         let state = StateRef {
             app,
             account: self.account.pickle(),
@@ -370,14 +388,20 @@ impl Client {
                 })
                 .collect(),
         };
-        let plain = Zeroizing::new(serde_json::to_vec(&state).map_err(|_| Error::CorruptState)?);
-        store::seal(key, &plain)
+        serde_json::to_vec(&state)
+            .map(Zeroizing::new)
+            .map_err(|_| Error::CorruptState)
     }
 
     /// Returns the client, the key to save it again, and the app data.
     pub fn load(password: &[u8], file: &[u8]) -> Result<(Self, FileKey, Zeroizing<String>), Error> {
         let (key, plain) = store::open(password, file)?;
         let state: State = serde_json::from_slice(&plain).map_err(|_| Error::CorruptState)?;
+        let (client, app) = Self::from_state(state);
+        Ok((client, key, app))
+    }
+
+    fn from_state(state: State) -> (Self, Zeroizing<String>) {
         let contacts = state
             .contacts
             .into_iter()
@@ -406,7 +430,7 @@ impl Client {
             account: Account::from_pickle(state.account),
             contacts,
         };
-        Ok((client, key, Zeroizing::new(state.app)))
+        (client, Zeroizing::new(state.app))
     }
 
     /// Accepts a pending contact request. `false` if there is none.

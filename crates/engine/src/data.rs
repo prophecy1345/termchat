@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
 use termchat_proto::{Body, Ed25519Key, InviteCode};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Everything the TUI keeps besides the crypto state. No personal data:
 /// only our own nickname and what we chose to call our contacts (rule 14).
@@ -38,6 +38,29 @@ pub struct Data {
     pub push: Option<String>,
     /// Codes of our invites that still let a stranger in (ADR-013).
     pub invites: Invites,
+    /// Incognito identities, one per contact (ADR-014).
+    pub profiles: Vec<Profile>,
+}
+
+/// An identity of its own, used with one contact only (ADR-014).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Profile {
+    /// Its Ed25519 key, which the contact and the relay know it by.
+    pub key: Ed25519Key,
+    /// What this contact sees as our name.
+    pub nickname: String,
+    /// `core::Client::export`, filled only while saving; the main state file seals it.
+    pub state: String,
+    /// Its own UnifiedPush endpoint: a shared one would link the identities.
+    pub push: Option<String>,
+    pub fallback_published: bool,
+    pub old_fallback_since: Option<u64>,
+    /// Its own `Send` numbering, from a random start: one counter for every
+    /// identity would show the relay which keys belong together.
+    pub next_client_id: u64,
+    /// The code of its invite until someone uses it; then the profile is theirs.
+    pub code: Option<InviteCode>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -63,6 +86,9 @@ pub struct Contact {
     /// The code from their invite, echoed in our request (ADR-013).
     #[serde(default)]
     pub invite_code: Option<InviteCode>,
+    /// Our incognito identity for this contact; `None` is the main one (ADR-014).
+    #[serde(default)]
+    pub profile: Option<Ed25519Key>,
     /// Disappearing timer for messages we send, seconds.
     pub expires_in: Option<u32>,
     /// Keep this chat in memory only, never on disk.
@@ -130,12 +156,21 @@ impl Invites {
 impl Data {
     /// JSON for the state file, without chats marked "no history". Zeroized
     /// on drop: it holds the whole history in the clear.
-    pub fn to_json(&self) -> Result<Zeroizing<String>, serde_json::Error> {
+    /// `states` are the incognito profiles' exported keys, in order.
+    pub fn to_json(
+        &self,
+        states: &[Zeroizing<String>],
+    ) -> Result<Zeroizing<String>, serde_json::Error> {
         let mut copy = self.clone();
         for c in copy.contacts.iter_mut().filter(|c| c.no_history) {
             c.messages.clear();
         }
-        serde_json::to_string(&copy).map(Zeroizing::new)
+        for (p, state) in copy.profiles.iter_mut().zip(states) {
+            p.state.clone_from(state);
+        }
+        let json = serde_json::to_string(&copy).map(Zeroizing::new);
+        copy.profiles.iter_mut().for_each(|p| p.state.zeroize());
+        json
     }
 
     /// After a restart, sends that were in flight have no transport to confirm them.
@@ -431,7 +466,7 @@ mod tests {
         secret.messages.push(msg(Status::Sent));
         data.contacts = vec![kept, secret];
 
-        let back = Data::from_json(&data.to_json().unwrap()).unwrap();
+        let back = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
         assert!(back.contacts[1].messages.is_empty());
         assert!(matches!(
             back.contacts[0].messages[0].status,

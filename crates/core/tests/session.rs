@@ -312,3 +312,18 @@ fn requests_are_flagged_names_stick_and_requests_are_capped() {
         }
     }
 }
+
+#[test]
+fn exported_identity_keeps_keys_and_sessions() {
+    let (mut alice, mut bob) = pair();
+    let env = alice.encrypt(&ed(&bob), text("before")).unwrap();
+    bob.decrypt(&ed(&alice), &env).unwrap();
+    let mut bob2 = Client::import(&bob.export().unwrap()).unwrap();
+    assert_eq!(bob2.identity(), bob.identity());
+    let env = alice.encrypt(&ed(&bob), text("after")).unwrap();
+    assert!(matches!(
+        bob2.decrypt(&ed(&alice), &env).unwrap().body,
+        Body::Text { text, .. } if text == "after"
+    ));
+    assert!(Client::import("{}").is_err());
+}

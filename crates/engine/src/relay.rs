@@ -56,6 +56,20 @@ impl Relay {
         sign: Signer,
         dial: Dial,
     ) -> Result<(Self, mpsc::Receiver<Event>), Error> {
+        Self::connect_after(url, identity, sign, dial, Duration::ZERO, false)
+    }
+
+    /// Like `connect`, but waits `delay` first, and with `spread` also a
+    /// random 0-30 s before every reconnect, so several identities of one
+    /// device do not come and go on the relay together (ADR-014).
+    pub fn connect_after(
+        url: &str,
+        identity: Identity,
+        sign: Signer,
+        dial: Dial,
+        delay: Duration,
+        spread: bool,
+    ) -> Result<(Self, mpsc::Receiver<Event>), Error> {
         let uri = url.parse::<Uri>().map_err(|_| Error::BadUrl)?;
         let host = uri.host().map(str::to_owned).ok_or(Error::BadUrl)?;
         #[cfg(feature = "tor")]
@@ -87,6 +101,8 @@ impl Relay {
             events: events_tx,
             pending: BTreeMap::new(),
             relay_version: None,
+            delay,
+            spread,
         };
         tokio::spawn(link.run(rx));
         Ok((Self { tx }, events))
@@ -122,6 +138,10 @@ struct Link {
     pending: BTreeMap<u64, ClientFrame>,
     /// From the last upgrade response, until `talk` reports it.
     relay_version: Option<String>,
+    /// Before the first connection.
+    delay: Duration,
+    /// Add 0-30 s to every reconnect.
+    spread: bool,
 }
 
 enum Ws {
@@ -138,7 +158,18 @@ enum End {
 }
 
 impl Link {
+    fn spread_delay(&self) -> Duration {
+        match self.spread {
+            true => Duration::from_millis(u64::from(getrandom::u32().unwrap_or(0) % 30_000)),
+            false => Duration::ZERO,
+        }
+    }
+
     async fn run(mut self, mut out: mpsc::UnboundedReceiver<ClientFrame>) {
+        tokio::select! {
+            _ = tokio::time::sleep(self.delay) => {}
+            _ = self.events.closed() => return,
+        }
         let mut delay = MIN_DELAY;
         loop {
             match self.session(&mut out).await {
@@ -155,7 +186,7 @@ impl Link {
             // Stop waiting as soon as the app is gone (e.g. locked): the signer
             // holds the keys and must not outlive it.
             tokio::select! {
-                _ = tokio::time::sleep(jitter(delay)) => {}
+                _ = tokio::time::sleep(jitter(delay) + self.spread_delay()) => {}
                 _ = self.events.closed() => return,
             }
             delay = (delay * 2).min(MAX_DELAY);
@@ -204,21 +235,8 @@ impl Link {
     #[cfg(feature = "tor")]
     async fn tor_stream(&mut self, dir: &std::path::Path) -> Option<arti_client::DataStream> {
         if self.tor.is_none() {
-            #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
-            let mut config = arti_client::config::TorClientConfigBuilder::from_directories(
-                dir.join("state"),
-                dir.join("cache"),
-            );
-            // Android's app folder is group-writable (drwxrwx--x), which Arti's
-            // permission check refuses; the app sandbox keeps others out instead.
-            #[cfg(target_os = "android")]
-            config.storage().permissions().dangerously_trust_everyone();
-            let config = config.build().ok()?;
-            self.tor = Some(
-                arti_client::TorClient::create_bootstrapped(config)
-                    .await
-                    .ok()?,
-            );
+            // Its own circuits: two identities never share one (ADR-014).
+            self.tor = Some(shared_tor(dir).await?.isolated_client());
         }
         self.tor
             .as_ref()?
@@ -336,6 +354,37 @@ pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     });
     let version = (parts.next()??, parts.next()??, parts.next()??);
     parts.next().is_none().then_some(version)
+}
+
+#[cfg(feature = "tor")]
+type Tor = std::sync::Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>;
+
+/// One bootstrapped Tor client per process: Arti locks its state folder, and
+/// bootstrapping once is much faster. Each link takes an isolated handle.
+#[cfg(feature = "tor")]
+async fn shared_tor(dir: &std::path::Path) -> Option<Tor> {
+    static TOR: tokio::sync::Mutex<Option<(PathBuf, Tor)>> = tokio::sync::Mutex::const_new(None);
+    let mut tor = TOR.lock().await;
+    if let Some((d, client)) = &*tor
+        && d == dir
+    {
+        return Some(client.clone());
+    }
+    #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+    let mut config = arti_client::config::TorClientConfigBuilder::from_directories(
+        dir.join("state"),
+        dir.join("cache"),
+    );
+    // Android's app folder is group-writable (drwxrwx--x), which Arti's
+    // permission check refuses; the app sandbox keeps others out instead.
+    #[cfg(target_os = "android")]
+    config.storage().permissions().dangerously_trust_everyone();
+    let config = config.build().ok()?;
+    let client = arti_client::TorClient::create_bootstrapped(config)
+        .await
+        .ok()?;
+    *tor = Some((dir.to_owned(), client.clone()));
+    Some(client)
 }
 
 /// 50-100 % of `delay`, so clients do not reconnect in lockstep.

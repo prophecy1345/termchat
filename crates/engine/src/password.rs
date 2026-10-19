@@ -27,12 +27,17 @@ pub fn weakness(password: &str, avoid: &[&str]) -> Option<String> {
 
 /// Six random words, ~77 bits.
 pub fn generate() -> Zeroizing<String> {
+    words(WORDS)
+}
+
+/// `n` random words from the EFF list, space-separated.
+pub fn words(n: usize) -> Zeroizing<String> {
     let words: Vec<&str> = WORDLIST
         .lines()
         .filter_map(|l| l.split('\t').nth(1))
         .collect();
     let mut out = Zeroizing::new(String::new());
-    for i in 0..WORDS {
+    for i in 0..n {
         if i > 0 {
             out.push(' ');
         }

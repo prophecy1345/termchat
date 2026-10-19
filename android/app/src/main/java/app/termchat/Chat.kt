@@ -97,6 +97,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 else -> "ENCRYPTED · NOT VERIFIED" to false
             }
             Text(state, style = Tc.caps.copy(color = if (ok) Tc.lime else Tc.warn))
+            c.incognito?.let { Text("INCOGNITO AS ${it.uppercase()}", style = Tc.caps.copy(color = Tc.dim)) }
         }
         Box {
             Text("⋮", style = Tc.name, modifier = Modifier.clickable { menu = true }.padding(8.dp))

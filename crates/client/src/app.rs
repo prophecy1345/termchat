@@ -15,7 +15,7 @@ use crate::input::Input;
 use crate::notify;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
-use crate::{Event, theme};
+use crate::{RelayEvent, theme};
 
 /// Idle time before the client locks itself.
 pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
@@ -100,16 +100,28 @@ pub enum Popup {
     Actions(usize),
     Form(Form),
     Add(Input),
-    /// The invite shown, and whether it is the reusable one (ADR-013).
+    /// The invite shown and its kind (ADR-013, ADR-014).
     Invite {
         text: String,
-        public: bool,
+        kind: Share,
     },
+    /// The nickname for a new incognito identity.
+    Incognito(Input),
     Verify,
     Rename(Input),
     Delete,
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Share {
+    /// Works once.
+    Once,
+    /// Reusable until renewed.
+    Public,
+    /// Works once, from a new identity of its own.
+    Incognito,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,7 +214,7 @@ impl App {
     }
 
     /// Next relay event while unlocked; never resolves otherwise.
-    pub async fn relay_event(&mut self) -> Event {
+    pub async fn relay_event(&mut self) -> RelayEvent {
         if let Screen::Main(m) = &mut self.screen
             && let Some(ev) = m.engine.events.recv().await
         {
@@ -211,7 +223,7 @@ impl App {
         std::future::pending().await
     }
 
-    pub fn on_relay(&mut self, ev: Event) {
+    pub fn on_relay(&mut self, ev: RelayEvent) {
         let Screen::Main(m) = &mut self.screen else {
             return;
         };
@@ -419,7 +431,9 @@ impl App {
             Screen::Main(m) => {
                 m.last_input = Instant::now();
                 match &mut m.popup {
-                    Some(Popup::Add(s) | Popup::Rename(s)) => s.insert(&plain),
+                    Some(Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s)) => {
+                        s.insert(&plain)
+                    }
                     Some(Popup::Form(f)) => f.paste(&plain),
                     Some(_) => {}
                     None => m.input.insert(&crate::ui::clean(text)),
@@ -531,7 +545,7 @@ impl Main {
         self.absorb();
     }
 
-    fn on_relay(&mut self, ev: Event) {
+    fn on_relay(&mut self, ev: RelayEvent) {
         self.engine.open = self.current().map(|c| c.key);
         self.engine.on_relay(ev);
         // A first contact shows up already open.
@@ -566,7 +580,7 @@ impl Main {
             (true, KeyCode::Char('o')) => {
                 self.popup = Some(Popup::Invite {
                     text: self.engine.invite(),
-                    public: false,
+                    kind: Share::Once,
                 });
             }
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
@@ -753,7 +767,7 @@ impl Main {
             return Vec::new();
         };
         let mut items = Vec::new();
-        if self.engine.core().is_request(&c.key) == Some(true) {
+        if self.engine.is_request(&c.key) {
             items.push(('y', "accept request".to_string()));
         }
         let verified = if c.verified {
@@ -868,29 +882,45 @@ impl Main {
                     }
                 },
             },
-            Popup::Invite { text, public } => match k.code {
+            Popup::Invite { text, kind } => match k.code {
                 KeyCode::Char('c') => {
                     copy_to_clipboard(&text);
                     self.status = "invite copied (if your terminal supports OSC 52)".into();
                     None
                 }
-                KeyCode::Char('p') if !public => Some(Popup::Invite {
+                KeyCode::Char('p') if kind == Share::Once => Some(Popup::Invite {
                     text: self.engine.public_invite(false),
-                    public: true,
+                    kind: Share::Public,
                 }),
-                KeyCode::Char('n') if public => {
+                KeyCode::Char('i') if kind == Share::Once => {
+                    Some(Popup::Incognito(Input::default()))
+                }
+                KeyCode::Char('n') if kind == Share::Public => {
                     self.status = "new public invite: the old one no longer works".into();
                     Some(Popup::Invite {
                         text: self.engine.public_invite(true),
-                        public: true,
+                        kind: Share::Public,
                     })
                 }
-                KeyCode::Char('r') if !public => {
+                KeyCode::Char('r') if kind == Share::Once => {
                     let n = self.engine.revoke_invites();
                     self.status = format!("{n} unused one-time invite(s) revoked");
                     None
                 }
                 _ => None,
+            },
+            Popup::Incognito(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
+                true => match self.engine.incognito_invite(&s) {
+                    Ok(text) => Some(Popup::Invite {
+                        text,
+                        kind: Share::Incognito,
+                    }),
+                    Err(e) => {
+                        self.status = e;
+                        None
+                    }
+                },
+                false => Some(Popup::Incognito(s)),
             },
             Popup::Verify => {
                 if k.code == KeyCode::Char('v') {
@@ -911,9 +941,19 @@ impl Main {
                 }
                 None
             }
+            // Ctrl+N: from a new identity of its own (ADR-014).
+            Popup::Add(s)
+                if k.code == KeyCode::Char('n') && k.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                match self.engine.add(&s, true) {
+                    Ok(i) => self.select(i),
+                    Err(e) => self.status = e,
+                }
+                None
+            }
             Popup::Add(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
-                    match self.engine.add(&s) {
+                    match self.engine.add(&s, false) {
                         Ok(i) => self.select(i),
                         Err(e) => self.status = e,
                     }
@@ -930,7 +970,7 @@ impl Main {
                 }
                 false => Some(Popup::Rename(s)),
             },
-            Popup::Add(_) | Popup::Rename(_) => None,
+            Popup::Add(_) | Popup::Rename(_) | Popup::Incognito(_) => None,
         };
         self.popup = keep;
     }

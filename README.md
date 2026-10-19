@@ -242,6 +242,11 @@ There is no search and no directory: you add people by exchanging **invites**.
      while settings → security → "accept requests without an invite code" is
      on. Turn it off once your old contacts are added: only then can nobody else
      use an old invite. New accounts start with it off.
+   - **i** makes an **incognito invite**: a new identity of yours, with its own
+     keys and a name you choose, used only with whoever takes it. Contacts of
+     different identities cannot link you, and over Tor the relay cannot
+     either. Pasting someone's invite, **Ctrl+N** instead of **Enter** adds
+     them as incognito. Deleting an incognito contact deletes that identity.
 2. Your friend presses **Ctrl+A**, pastes the invite and presses **Enter**.
 3. You now appear in each other's lists. On your side the friend arrives as a
    **request** (`?`). Press **Ctrl+Y** to accept, or **Ctrl+D** then **y** to reject.
