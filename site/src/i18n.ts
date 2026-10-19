@@ -40,7 +40,7 @@ const en = {
   featuresTitle: "What it can do",
   features: [
     ["End-to-end encryption", "Olm from vodozemac: an X3DH-style handshake and the Double Ratchet, the design behind Signal and Matrix."],
-    ["Tor built in", "One switch hides your IP address from the relay and your provider. No separate Tor install."],
+    ["Tor built in", "One switch hides your IP address from the relay and your provider. Where Tor is blocked, obfs4, webtunnel or snowflake bridges get through. No separate Tor install."],
     ["Offline delivery", "Messages wait on the relay, encrypted, for up to 14 days until your contact comes online."],
     ["Disappearing messages", "From 5 minutes to a week, per chat. Or keep a chat in memory only, never on disk."],
     ["Duress password", "A second password that silently erases everything and shows a fresh install."],
@@ -48,6 +48,9 @@ const en = {
     ["Backups and moving", "Back up your identity and restore it on a new device; the old one is wiped without telling anyone."],
     ["Safety numbers", "Compare 60 digits with a friend once and rule out anyone in the middle."],
     ["Requests, not inboxes", "Strangers wait until you accept. Block, reject or report to the relay operator."],
+    ["One-time invites", "Each invite works for one person. Revoke the unused ones, or renew a public invite to stop the old link."],
+    ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Contacts cannot link you, and over Tor neither can the relay."],
+    ["Search, on your device", "Find anything in a chat. Nothing is indexed or sent anywhere."],
     ["Android app", "The same engine and protection on your phone: Tor, the duress password, no Google services. Wake-ups through UnifiedPush if you want them."],
     ["Mouse and themes", "Click, scroll, right-click for actions. The same light and dark colour themes in both apps."],
     ["Your own relay", "One small binary with SQLite. Run it on any server, with an onion address if you like."],
@@ -68,7 +71,7 @@ const en = {
   partly: {
     title: "Partly",
     items: [
-      "Metadata: the relay sees which key writes to which and when, and the size rounded up to 512 / 4096 / 16384 bytes.",
+      "Metadata: the relay sees which key writes to which and when, and the size rounded up to 512 / 4096 / 16384 bytes. Incognito contacts over Tor give it pairs of keys it cannot link to you.",
       "Someone at your unlocked computer: auto-lock, disappearing messages, chats without history.",
       "Being forced to give a password: the duress password does not help if the disk was copied first.",
       "A lost device: only with a backup of your identity.",
@@ -85,7 +88,7 @@ const en = {
   threatModel: "Full threat model",
   howTitle: "How it works",
   how: [
-    ["Exchange invites", "Send your invite, a line starting with termchat:, by any channel. It holds only public keys."],
+    ["Exchange invites", "Send your invite, a line starting with termchat:, by any channel. It holds public keys and a code that works once."],
     ["Verify once", "Compare the safety number in person or by phone. Same digits: nobody is in the middle."],
     ["Talk", "Messages travel encrypted through the relay, with a new key for every message."],
   ] as Item[],
@@ -143,7 +146,7 @@ const ru: typeof en = {
   featuresTitle: "Что умеет",
   features: [
     ["Сквозное шифрование", "Olm из vodozemac: рукопожатие в стиле X3DH и Double Ratchet, та же схема, что в Signal и Matrix."],
-    ["Встроенный Tor", "Один переключатель скрывает ваш IP от relay и провайдера. Ставить Tor отдельно не нужно."],
+    ["Встроенный Tor", "Один переключатель скрывает ваш IP от relay и провайдера. Где Tor заблокирован, помогут мосты obfs4, webtunnel или snowflake. Ставить Tor отдельно не нужно."],
     ["Офлайн-доставка", "Сообщения ждут на relay в зашифрованном виде до 14 дней, пока собеседник не появится в сети."],
     ["Исчезающие сообщения", "От 5 минут до недели, для каждого чата. Или чат только в памяти, без записи на диск."],
     ["Пароль под принуждением", "Второй пароль, который молча стирает всё и показывает чистую установку."],
@@ -151,6 +154,9 @@ const ru: typeof en = {
     ["Копия и переезд", "Сохраните личность и восстановите её на новом устройстве; старое стирается, никого не оповещая."],
     ["Номер безопасности", "Один раз сверьте 60 цифр с другом и исключите посредника."],
     ["Запросы, а не входящие", "Незнакомцы ждут, пока вы их примете. Блокировка, отказ, жалоба оператору relay."],
+    ["Одноразовые приглашения", "Каждое приглашение срабатывает для одного человека. Неиспользованные можно отозвать, а публичное — обновить, чтобы старая ссылка перестала работать."],
+    ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут вас связать, а через Tor — и relay."],
+    ["Поиск на устройстве", "Найдите что угодно в чате. Ничего не индексируется и никуда не отправляется."],
     ["Приложение для Android", "Тот же движок и та же защита в телефоне: Tor, пароль под принуждением, без сервисов Google. Пробуждения через UnifiedPush — по желанию."],
     ["Мышь и темы", "Клики, прокрутка, действия по правой кнопке. Одни и те же светлые и тёмные темы в обоих приложениях."],
     ["Свой relay", "Один небольшой бинарник с SQLite. Запускается на любом сервере, можно с onion-адресом."],
@@ -171,7 +177,7 @@ const ru: typeof en = {
   partly: {
     title: "Частично",
     items: [
-      "Метаданные: relay видит, какой ключ кому пишет и когда, и размер, округлённый до 512 / 4096 / 16384 байт.",
+      "Метаданные: relay видит, какой ключ кому пишет и когда, и размер, округлённый до 512 / 4096 / 16384 байт. Инкогнито-контакты через Tor дают ему пары ключей, которые он не может связать с вами.",
       "Человек у вашего разблокированного компьютера: автоблокировка, исчезающие сообщения, чаты без истории.",
       "Принуждение выдать пароль: пароль под принуждением не поможет, если диск скопировали заранее.",
       "Потеря устройства: только при наличии резервной копии.",
@@ -188,7 +194,7 @@ const ru: typeof en = {
   threatModel: "Полная модель угроз",
   howTitle: "Как это работает",
   how: [
-    ["Обменяйтесь приглашениями", "Отправьте приглашение — строку, начинающуюся с termchat:, — любым способом. В нём только публичные ключи."],
+    ["Обменяйтесь приглашениями", "Отправьте приглашение — строку, начинающуюся с termchat:, — любым способом. В нём публичные ключи и одноразовый код."],
     ["Сверьте один раз", "Сравните номер безопасности лично или по телефону. Цифры совпали — посредника нет."],
     ["Переписывайтесь", "Сообщения идут через relay в зашифрованном виде, с новым ключом для каждого сообщения."],
   ],
