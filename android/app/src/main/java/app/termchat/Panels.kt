@@ -219,7 +219,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             f2 = ""; f3 = ""
             r.onSuccess {
                 m.rememberBackup(uri)
-                result = "Backup written. Move it off this phone: a wipe erases it only while it stays where you saved it."
+                result = "Backup written. Move it off this phone, to storage you control: a wipe erases it only while it stays where you saved it, and a cloud keeps copies of its own."
                 form = null
             }.onFailure { result = it.message ?: "$it" }
         }

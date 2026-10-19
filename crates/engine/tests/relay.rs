@@ -831,3 +831,19 @@ async fn set_push_takes_only_https_endpoints() {
         .unwrap();
     assert_eq!(alice.frame().await, ServerFrame::PushSet);
 }
+
+#[tokio::test]
+async fn transport_refuses_plain_ws_across_a_network() {
+    let core = Client::default();
+    let connect = |url: &str| {
+        let sign = Box::new(|_: &str, _: &[u8; 32]| [0; 64]);
+        Relay::connect(url, core.identity(), sign, termchat_engine::Dial::Direct).is_ok()
+    };
+    assert!(!connect("ws://relay.example.org/"));
+    assert!(!connect("http://relay.example.org/"));
+    assert!(connect("wss://relay.example.org/"));
+    assert!(connect("ws://127.0.0.1:1/"));
+    assert!(connect(
+        "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/"
+    ));
+}

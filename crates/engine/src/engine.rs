@@ -362,7 +362,14 @@ impl Engine {
         match Client::load(password, &bytes) {
             // Erase first, say nothing.
             Err(CoreError::Duress) => {
-                let _ = data::wipe(path);
+                // If shredding fails (read-only, locked file), still cut the
+                // state to nothing: the screen must look fresh either way
+                // (ADR-003), so the data must not survive behind it.
+                if data::wipe(path).is_err() {
+                    let cut = std::fs::OpenOptions::new().write(true).open(path);
+                    let _ = cut.and_then(|f| f.set_len(0).and_then(|()| f.sync_all()));
+                    let _ = std::fs::remove_file(path);
+                }
                 Ok(Unlocked::Wiped)
             }
             Err(CoreError::WrongPassword) => Err("wrong password".into()),
@@ -834,9 +841,19 @@ impl Engine {
                 one_time_left,
                 fallback_used,
             } => {
-                let published = *self.fallback_mut(slot).0;
-                // An empty relay (first run, or it lost its database) has no fallback key either.
-                let rotate = fallback_used || !published || one_time_left == 0;
+                let (published, since) = {
+                    let (p, s) = self.fallback_mut(slot);
+                    (*p, *s)
+                };
+                // ADR-002: a used fallback key is replaced, and the one before
+                // it kept until nothing sent to it can still be queued.
+                // vodozemac keeps only one previous key, so no new rotation
+                // while one is waiting: claims alone (the relay reports every
+                // one) must not push out a key a new contact may have used.
+                // An empty relay (first run, or it lost its database) has no
+                // fallback key either.
+                let used = fallback_used || one_time_left == 0;
+                let rotate = !published || (used && since.is_none());
                 let keys = self.core_at(slot).prekeys(one_time_left as usize, rotate);
                 if !keys.one_time.is_empty() || keys.fallback.is_some() {
                     let (p, s) = self.fallback_mut(slot);
@@ -1047,10 +1064,11 @@ impl Engine {
         let got = match result {
             Ok(got) => got,
             Err(CoreError::Duplicate) => return true,
+            // The status bar, not the chat: the sender is the relay's word,
+            // and a relay must not be able to plant doubts in any chat.
             Err(e) => {
-                if let Some(i) = self.index(&sender) {
-                    self.system(i, format!("a message could not be decrypted ({e})"));
-                    self.persist();
+                if self.index(&sender).is_some() {
+                    self.note(format!("a message could not be decrypted ({e})"));
                 }
                 return true;
             }
@@ -1442,7 +1460,12 @@ impl Engine {
             create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
         let mut copy = self.data.clone();
         copy.backed_up = true;
-        copy.contacts.iter_mut().for_each(|c| c.messages.clear());
+        // No messages at all, a pending request's held texts included.
+        copy.contacts.iter_mut().for_each(|c| {
+            c.messages.clear();
+            c.hidden.clear();
+            c.held_back = 0;
+        });
         let states = (1..self.lives.len())
             .map(|s| self.core_at(s).without_sessions().export())
             .collect::<Result<Vec<_>, _>>()

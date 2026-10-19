@@ -111,6 +111,18 @@ messages, or "who wrote to whom" beyond the queue.
 - **Windows.** Core-dump suppression and `0600` permissions on the state file
   exist only on Unix. On Windows the file is protected by the password but is
   readable by other processes of the same user, like any file in the profile.
+- **Android memory.** Passwords, message text and invites pass through Kotlin
+  strings and Compose state, which the JVM does not let the app wipe; Rust
+  wipes its own copies. Debug builds allow screenshots (`FLAG_SECURE` is on in
+  release builds only). "Stay connected in the background" turns off the
+  auto-lock, as the setting says.
+- **Copies on someone else's servers.** A backup saved through the Android file
+  picker to a cloud folder is erased by a wipe only while the app still has
+  access to it, and the provider may keep its own copies. Keep backups on
+  storage you control.
+- **What a report contains.** The reporter chooses the text it sends (ADR-006);
+  the relay cannot prove the reported key wrote it. Operators should treat a
+  report as a claim.
 
 ## Assumptions
 

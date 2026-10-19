@@ -167,8 +167,10 @@ pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>
         t: le(6),
         p: le(10),
     };
-    // Untrusted file: do not let it make us allocate gigabytes or spin for minutes.
-    if params.m_kib > 1024 * 1024 || params.t > 16 || params.p > 8 {
+    // Untrusted file (a backup from elsewhere): do not let it make us
+    // allocate gigabytes or spin for minutes, on a phone least of all. Four
+    // times the default memory leaves room to raise it later.
+    if params.m_kib > 4 * KdfParams::DEFAULT.m_kib || params.t > 8 || params.p > 4 {
         return Err(Error::CorruptState);
     }
 
@@ -345,6 +347,20 @@ mod tests {
         for other in [duress, wrong] {
             let ratio = main / other;
             assert!((0.5..2.0).contains(&ratio), "main {main} vs {other}");
+        }
+    }
+
+    #[test]
+    fn costly_kdf_params_from_a_file_are_refused() {
+        let file = seal(&create(b"pw", FAST).unwrap(), b"state").unwrap();
+        // m_kib at 2, t at 6, p at 10: each past its cap, refused before any work.
+        for (at, value) in [(2, 4 * 64 * 1024 + 1), (6, 9), (10, 5)] {
+            let mut bad = file.clone();
+            bad[at..at + 4].copy_from_slice(&u32::to_le_bytes(value));
+            assert!(
+                matches!(open(b"pw", &bad), Err(Error::CorruptState)),
+                "offset {at}"
+            );
         }
     }
 

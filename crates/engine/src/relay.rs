@@ -109,6 +109,15 @@ impl Relay {
     ) -> Result<(Self, mpsc::Receiver<Event>), Error> {
         let uri = url.parse::<Uri>().map_err(|_| Error::BadUrl)?;
         let host = uri.host().map(str::to_owned).ok_or(Error::BadUrl)?;
+        // Plain ws:// only where TLS adds nothing: this machine, or an onion
+        // service. The signed `Auth` must not cross a network in the clear.
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        let local = matches!(bare, "localhost" | "127.0.0.1" | "::1") || bare.ends_with(".onion");
+        match uri.scheme_str() {
+            Some("wss") => {}
+            Some("ws") if local => {}
+            _ => return Err(Error::BadUrl),
+        }
         #[cfg(feature = "tor")]
         let port = uri
             .port_u16()

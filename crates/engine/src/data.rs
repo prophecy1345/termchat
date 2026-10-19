@@ -14,7 +14,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 /// Everything the TUI keeps besides the crypto state. No personal data:
 /// only our own nickname and what we chose to call our contacts (rule 14).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Data {
     /// A backup of the identity exists; until then the status bar nags.
@@ -49,7 +49,7 @@ pub struct Data {
 }
 
 /// An identity of its own, used with one contact only (ADR-014).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
     /// Its Ed25519 key, which the contact and the relay know it by.
@@ -69,7 +69,7 @@ pub struct Profile {
     pub code: Option<InviteCode>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Invites {
     /// Unused one-time codes, oldest first.
@@ -80,7 +80,7 @@ pub struct Invites {
     pub codes_only: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Contact {
     pub key: Ed25519Key,
     /// Local name; never sent anywhere.
@@ -114,7 +114,7 @@ pub struct Contact {
     pub left: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Msg {
     pub mine: bool,
     pub text: String,
@@ -170,6 +170,7 @@ impl Data {
         let mut copy = self.clone();
         for c in copy.contacts.iter_mut().filter(|c| c.no_history) {
             c.messages.clear();
+            c.hidden.clear();
         }
         for (p, state) in copy.profiles.iter_mut().zip(states) {
             p.state.clone_from(state);

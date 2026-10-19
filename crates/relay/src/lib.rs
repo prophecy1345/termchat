@@ -404,8 +404,8 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
             None
         }
     };
-    if let Some((key, id, rx)) = session {
-        if let Err(code) = serve_client(&shared, &mut ws, key, rx).await {
+    if let Some((key, id, rx, queued)) = session {
+        if let Err(code) = serve_client(&shared, &mut ws, key, rx, queued).await {
             let _ = send(&mut ws, &error(None, code), timeout).await;
         }
         let mut relay = shared.lock();
@@ -427,7 +427,13 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
     }
 }
 
-type Session = (Ed25519Key, u64, mpsc::Receiver<ServerFrame>);
+/// The key, the connection id, live frames, and the queue to deliver first.
+type Session = (
+    Ed25519Key,
+    u64,
+    mpsc::Receiver<ServerFrame>,
+    Vec<ServerFrame>,
+);
 
 async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Session, ErrorCode> {
     let timeout = shared.config.limits.send_timeout;
@@ -492,10 +498,7 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
     };
 
     send(ws, &ServerFrame::AuthOk, timeout).await?;
-    for frame in &queued {
-        send(ws, frame, timeout).await?;
-    }
-    Ok((key, id, rx))
+    Ok((key, id, rx, queued))
 }
 
 async fn serve_client(
@@ -503,8 +506,14 @@ async fn serve_client(
     ws: &mut WebSocket,
     key: Ed25519Key,
     mut rx: mpsc::Receiver<ServerFrame>,
+    queued: Vec<ServerFrame>,
 ) -> Result<(), ErrorCode> {
     let limits = &shared.config.limits;
+    // Outside the auth timeout: a full queue over Tor takes longer than that,
+    // and cutting it off there would lock a slow client out for good.
+    for frame in &queued {
+        send(ws, frame, limits.send_timeout).await?;
+    }
     let mut ping = tokio::time::interval(limits.ping_interval);
     let mut last_seen = Instant::now();
     loop {
