@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-proto"
-version = "0.0.0"
+version = "0.2.3"
 dependencies = [
  "base64",
  "postcard",
