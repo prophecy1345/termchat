@@ -24,8 +24,8 @@ android {
         targetSdk = 37
         // Written out for F-Droid's update checker, which reads them here;
         // checked against the workspace's Cargo.toml at the end of this file.
-        versionName = "0.2.3"
-        versionCode = 203
+        versionName = "0.3.0"
+        versionCode = 300
     }
     buildFeatures { compose = true }
     buildTypes {

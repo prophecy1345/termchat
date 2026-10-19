@@ -22,6 +22,11 @@ Shown inside termchat: Ctrl+P, n.
   `termchat` and inside the Android app, built from source.
 - **Search a chat**: Ctrl+S in the terminal, "Search" in the chat menu on
   Android. It runs on your device only.
+- **Fixes from an external security review**, among them: a full queue no
+  longer locks a slow (Tor) client out of the relay; strangers together get
+  at most a quarter of anyone's queue; the fallback key is no longer rotated
+  by claims alone; backups leave out a request's held messages; nicknames
+  mixing alphabets always show fingerprint digits.
 - Invites from this version need termchat 0.3.0 or later on the other side.
 
 ## 0.2.3

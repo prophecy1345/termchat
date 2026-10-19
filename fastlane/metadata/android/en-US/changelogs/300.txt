@@ -1,0 +1,1 @@
+One-time and revocable invites, incognito contacts with an identity of their own, Tor bridges (obfs4, webtunnel, snowflake) for where Tor is blocked, and search in a chat. Plus fixes from an external security review.
