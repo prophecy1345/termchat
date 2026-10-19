@@ -1,0 +1,1 @@
+"Generate a passphrase" now shows the passphrase with a Copy button.

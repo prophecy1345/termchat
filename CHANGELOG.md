@@ -2,6 +2,11 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.3.1
+
+- Android: "Generate a passphrase" now shows the passphrase under the fields
+  with a Copy button, instead of a warning line that was easy to miss.
+
 ## 0.3.0
 
 - **One-time invites.** Every invite you show carries a code that works once,
