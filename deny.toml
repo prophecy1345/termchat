@@ -10,6 +10,10 @@ ignore = [
     # paste: proc-macro used at compile time by Arti crates (ADR-004); no runtime
     # code, no known vulnerability. Drop once Arti moves off it.
     { id = "RUSTSEC-2024-0436", reason = "unmaintained compile-time proc-macro pulled in by arti" },
+    # basic-toml: read at compile time by askama_derive, which UniFFI uses to
+    # generate the Kotlin bindings; no runtime code, no known vulnerability.
+    # Drop once UniFFI's askama moves to toml.
+    { id = "RUSTSEC-2026-0374", reason = "unmaintained compile-time dependency of uniffi's askama_derive" },
     # rsa "Marvin" timing attack needs private-key operations (decrypt/sign). rsa
     # comes in through Arti's key-format crates; a Tor *client* only verifies
     # legacy RSA relay signatures, and termchat never creates an RSA private key.
