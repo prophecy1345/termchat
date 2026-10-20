@@ -26,8 +26,12 @@ const en = {
       "Messages travel through a relay: relay.termchat.app by default, or one you run yourself. Messages are end-to-end encrypted; the relay cannot read them.",
       "The relay keeps: public keys, the time each key registered and was last seen; public prekeys; undelivered encrypted messages with their sender key, recipient key and time (deleted as soon as they are delivered, and after 14 days at the latest); the push address, if you turn on UnifiedPush; banned keys; and reports, with only what the reporter chose to disclose.",
       "The relay sees who writes to whom and when, but only as random keys, not names. It sees the IP address of a live connection; the relay software does not write IP addresses to disk. Turn on Tor to hide your IP address from the relay.",
-      "Deleting your account in the app removes your key, prekeys and the messages waiting for you from the relay. Unused accounts are removed after 90 days.",
+      "Unused accounts are removed from the relay after 90 days.",
     ]],
+    ["Deleting your account", [
+      "On Android: menu → Settings → Security → Wipe everything from this phone, then type WIPE. In the terminal: settings → security → wipe, then type WIPE.",
+      "This erases keys, contacts and history from the device, tells your contacts you left, and removes your key, prekeys and the messages waiting for you from the relay. Nothing about you is kept afterwards.",
+    ], "delete"],
     ["Other services", [
       "UnifiedPush (optional, off by default): the relay sends a wake-up with no content to the push server you chose. That server's own policy applies.",
       "Tor (optional): the app connects to the Tor network, and to the bridges you enter.",
@@ -63,8 +67,12 @@ const ru: typeof en = {
       "Сообщения идут через relay: по умолчанию relay.termchat.app или ваш собственный. Сообщения зашифрованы сквозным шифрованием, relay их прочитать не может.",
       "Relay хранит: публичные ключи, время регистрации и последнего подключения; публичные prekeys; недоставленные зашифрованные сообщения с ключами отправителя и получателя и временем (удаляются сразу после доставки и не позже чем через 14 дней); адрес push, если вы включили UnifiedPush; заблокированные ключи; жалобы, только с тем, что раскрыл жалующийся.",
       "Relay видит, кто кому и когда пишет, но только как случайные ключи, без имён. Он видит IP-адрес активного подключения; программа relay не пишет IP-адреса на диск. Включите Tor, чтобы скрыть IP-адрес от relay.",
-      "Удаление аккаунта в приложении стирает с relay ваш ключ, prekeys и сообщения, ждущие доставки вам. Неиспользуемые аккаунты удаляются через 90 дней.",
+      "Неиспользуемые аккаунты удаляются с relay через 90 дней.",
     ]],
+    ["Удаление аккаунта", [
+      "На Android: меню → Settings → Security → Wipe everything from this phone, затем введите WIPE. В терминале: settings → security → wipe, затем введите WIPE.",
+      "Это стирает ключи, контакты и историю с устройства, сообщает контактам, что вы ушли, и удаляет с relay ваш ключ, prekeys и сообщения, ждущие доставки вам. После этого о вас ничего не хранится.",
+    ], "delete"],
     ["Другие сервисы", [
       "UnifiedPush (по желанию, выключен по умолчанию): relay отправляет пустой сигнал пробуждения на выбранный вами push-сервер. Действует политика этого сервера.",
       "Tor (по желанию): приложение подключается к сети Tor и к введённым вами мостам.",
@@ -106,9 +114,9 @@ const csp =
       <section>
         <h1>{t.title}</h1>
         <p class="sub">{t.updated}</p>
-        {t.sections.map(([title, paragraphs]) => (
+        {t.sections.map(([title, paragraphs, id]) => (
           <>
-            <h2>{title}</h2>
+            <h2 id={id}>{title}</h2>
             {paragraphs.map((p) => <p>{p}</p>)}
           </>
         ))}
