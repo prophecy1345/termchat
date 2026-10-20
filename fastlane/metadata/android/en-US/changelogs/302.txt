@@ -1,0 +1,2 @@
+- An app bundle for Google Play in every release; the APKs are unchanged.
+- The store icon shows the termchat mark.

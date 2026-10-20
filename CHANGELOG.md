@@ -2,6 +2,12 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.3.2
+
+- Android: every release also ships an app bundle (.aab) for Google Play.
+  The APKs are unchanged.
+- The store icon now shows the termchat mark; it was blank.
+
 ## 0.3.1
 
 - Android: "Generate a passphrase" now shows the passphrase under the fields
