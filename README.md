@@ -77,7 +77,7 @@ Download the archive for your system from the
 4. **Android APK:** steps 1 and 2 work for the `.apk` too. Its signing
    certificate must be this one (`apksigner verify --print-certs <apk>`, or the
    app's details in Android): SHA-256
-   `BC:6A:74:2E:73:CF:B7:55:CD:24:6B:C0:F2:73:DF:FF:71:8A:78:77:7D:4C:CB:41:9A:8D:D4:A6:4A:76:BA:5E`.
+   `9F:FB:61:1C:DD:1B:3A:AE:63:30:3F:B7:12:0B:85:F7:67:0D:08:BD:B8:24:D6:7C:7C:85:37:09:88:0C:2A:7F`.
 
 Dependencies are checked with `cargo deny` (licences, known vulnerabilities) and
 `cargo vet` (imported audits from Mozilla, Google and others; the rest is listed as

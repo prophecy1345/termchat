@@ -98,6 +98,10 @@ messages, or "who wrote to whom" beyond the queue.
 
 ## Not protected
 
+- **Google, for installs from Google Play.** Play App Signing holds a copy of
+  the release key (ADR-016), so Google could sign an update, or an APK that
+  installs from elsewhere would accept. Install from F-Droid or GitHub and
+  compare the fingerprint if that trust is too much.
 - **Malware on the device**, a keylogger, a compromised terminal or OS. A program
   running as the user can read memory and keystrokes. We limit the damage: on
   disk everything is encrypted while the client is closed; core dumps are off;
