@@ -1,0 +1,1 @@
+New signing key (RSA 4096), the same on GitHub, F-Droid and Google Play. If you installed 0.3.2 or older, back up your identity, uninstall, then install this one.

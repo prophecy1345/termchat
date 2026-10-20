@@ -2,6 +2,14 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.3.3
+
+- **Android: new signing key** (RSA 4096, ADR-016), the one Google Play accepts,
+  so the app is signed the same on GitHub, F-Droid and Google Play. New
+  fingerprint: `9F:FB:61:1C:DD:1B:3A:AE:63:30:3F:B7:12:0B:85:F7:67:0D:08:BD:B8:24:D6:7C:7C:85:37:09:88:0C:2A:7F`.
+  If you installed 0.3.2 or older, uninstall it first (back up your identity
+  before), then install this one.
+
 ## 0.3.2
 
 - Android: every release also ships an app bundle (.aab) for Google Play.
