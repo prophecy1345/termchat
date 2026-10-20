@@ -113,6 +113,7 @@ const en = {
   footer: {
     licence: "AGPL-3.0",
     use: "Acceptable use",
+    privacy: "Privacy",
     help: "Need help now? findahelpline.com",
     note: "No cookies, no analytics, no third-party requests.",
     about:
@@ -219,6 +220,7 @@ const ru: typeof en = {
   footer: {
     licence: "AGPL-3.0",
     use: "Правила использования",
+    privacy: "Конфиденциальность",
     help: "Нужна помощь? findahelpline.com",
     note: "Без cookies, аналитики и сторонних запросов.",
     about:

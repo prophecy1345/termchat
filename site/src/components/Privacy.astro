@@ -1,0 +1,119 @@
+---
+import "../styles/site.css";
+import { REPO, type Lang } from "../i18n";
+
+// The privacy policy Google Play asks for. Keep in step with
+// docs/threat-model.md: it must not promise more than the threat model does.
+interface Props {
+  lang: Lang;
+}
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const en = {
+  title: "termchat: privacy policy",
+  home: "/",
+  updated: "Last updated: 20 October 2026",
+  sections: [
+    ["What termchat collects", [
+      "Nothing about you. There are no accounts, and termchat never asks for a name, phone number, email address, contacts, location or date of birth.",
+      "The apps contain no analytics, advertising, trackers or crash reporting, and use no Google services.",
+    ]],
+    ["On your device", [
+      "Your keys, contacts and messages are stored only on your device, encrypted with your password. Backups are made only when you ask for one and are encrypted the same way.",
+      "The camera is used only to scan invite QR codes. Pictures are not saved or sent.",
+      "Notifications never show a contact's name or the text of a message.",
+    ]],
+    ["On the relay server", [
+      "Messages travel through a relay: relay.termchat.app by default, or one you run yourself. Messages are end-to-end encrypted; the relay cannot read them.",
+      "The relay keeps: public keys, the time each key registered and was last seen; public prekeys; undelivered encrypted messages with their sender key, recipient key and time (deleted as soon as they are delivered, and after 14 days at the latest); the push address, if you turn on UnifiedPush; banned keys; and reports, with only what the reporter chose to disclose.",
+      "The relay sees who writes to whom and when, but only as random keys, not names. It sees the IP address of a live connection; the relay software does not write IP addresses to disk. Turn on Tor to hide your IP address from the relay.",
+      "Deleting your account in the app removes your key, prekeys and the messages waiting for you from the relay. Unused accounts are removed after 90 days.",
+    ]],
+    ["Other services", [
+      "UnifiedPush (optional, off by default): the relay sends a wake-up with no content to the push server you chose. That server's own policy applies.",
+      "Tor (optional): the app connects to the Tor network, and to the bridges you enter.",
+    ]],
+    ["Sharing", [
+      "No data is sold or shared. If the law requires it, the operator of a relay can hand over only what the relay keeps, listed above.",
+    ]],
+    ["Children", [
+      "termchat is not directed at children under 13.",
+    ]],
+    ["Changes and contact", [
+      "Changes are published on this page; its full history is on GitHub. Questions: open an issue on GitHub.",
+    ]],
+  ],
+  threatModel: "Threat model: what termchat protects and what it does not",
+  threatModelPath: "docs/threat-model.md",
+};
+const ru: typeof en = {
+  title: "termchat: политика конфиденциальности",
+  home: "/ru/",
+  updated: "Обновлено: 20 октября 2026",
+  sections: [
+    ["Что собирает termchat", [
+      "Ничего о вас. Аккаунтов нет, termchat никогда не спрашивает имя, телефон, email, контакты, местоположение или дату рождения.",
+      "В приложениях нет аналитики, рекламы, трекеров и отчётов о сбоях, и нет сервисов Google.",
+    ]],
+    ["На вашем устройстве", [
+      "Ключи, контакты и сообщения хранятся только на устройстве, зашифрованные вашим паролем. Резервная копия делается только по вашей команде и шифруется так же.",
+      "Камера нужна только для сканирования QR-кодов приглашений. Снимки не сохраняются и не отправляются.",
+      "Уведомления никогда не показывают имя контакта и текст сообщения.",
+    ]],
+    ["На relay-сервере", [
+      "Сообщения идут через relay: по умолчанию relay.termchat.app или ваш собственный. Сообщения зашифрованы сквозным шифрованием, relay их прочитать не может.",
+      "Relay хранит: публичные ключи, время регистрации и последнего подключения; публичные prekeys; недоставленные зашифрованные сообщения с ключами отправителя и получателя и временем (удаляются сразу после доставки и не позже чем через 14 дней); адрес push, если вы включили UnifiedPush; заблокированные ключи; жалобы, только с тем, что раскрыл жалующийся.",
+      "Relay видит, кто кому и когда пишет, но только как случайные ключи, без имён. Он видит IP-адрес активного подключения; программа relay не пишет IP-адреса на диск. Включите Tor, чтобы скрыть IP-адрес от relay.",
+      "Удаление аккаунта в приложении стирает с relay ваш ключ, prekeys и сообщения, ждущие доставки вам. Неиспользуемые аккаунты удаляются через 90 дней.",
+    ]],
+    ["Другие сервисы", [
+      "UnifiedPush (по желанию, выключен по умолчанию): relay отправляет пустой сигнал пробуждения на выбранный вами push-сервер. Действует политика этого сервера.",
+      "Tor (по желанию): приложение подключается к сети Tor и к введённым вами мостам.",
+    ]],
+    ["Передача данных", [
+      "Данные не продаются и не передаются. Если этого требует закон, оператор relay может выдать только то, что хранит relay, перечисленное выше.",
+    ]],
+    ["Дети", [
+      "termchat не предназначен для детей младше 13 лет.",
+    ]],
+    ["Изменения и связь", [
+      "Изменения публикуются на этой странице, полная история есть на GitHub. Вопросы: откройте issue на GitHub.",
+    ]],
+  ],
+  threatModel: "Модель угроз: что termchat защищает, а что нет",
+  threatModelPath: "docs/threat-model.ru.md",
+};
+const t = Astro.props.lang === "en" ? en : ru;
+const csp =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'";
+---
+
+<!doctype html>
+<html lang={Astro.props.lang}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content={csp} />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="color-scheme" content="dark" />
+    <title>{t.title}</title>
+    <link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href={url(t.home)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat</a>
+    </header>
+    <main>
+      <section>
+        <h1>{t.title}</h1>
+        <p class="sub">{t.updated}</p>
+        {t.sections.map(([title, paragraphs]) => (
+          <>
+            <h2>{title}</h2>
+            {paragraphs.map((p) => <p>{p}</p>)}
+          </>
+        ))}
+        <p class="more"><a href={`${REPO}/blob/main/${t.threatModelPath}`}>{t.threatModel} →</a></p>
+      </section>
+    </main>
+  </body>
+</html>
