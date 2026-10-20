@@ -139,13 +139,17 @@ jobs:
             export TERMCHAT_KEYSTORE="$RUNNER_TEMP/release.jks"
           fi
           android/build-rust.sh
-          (cd android && ./gradlew --no-daemon assembleRelease)
+          # The APK for GitHub and F-Droid, the bundle for Google Play.
+          (cd android && ./gradlew --no-daemon assembleRelease && ./gradlew --no-daemon bundleRelease)
           rm -f "$RUNNER_TEMP/release.jks"
           cp android/app/build/outputs/apk/release/app-arm64-v8a-release*.apk "termchat-${{ github.ref_name }}-android-arm64.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "termchat-${{ github.ref_name }}-android.aab"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android
-          path: termchat-*.apk
+          path: |
+            termchat-*.apk
+            termchat-*.aab
 
   # Run both installers against the archives just built, served locally.
   installers:
@@ -206,7 +210,7 @@ jobs:
         with:
           path: src
       - run: |
-          sha256sum termchat-*.tar.gz termchat-*.zip termchat-*.apk > SHA256SUMS
+          sha256sum termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab > SHA256SUMS
           src/scripts/homebrew-formula.sh "${{ github.ref_name }}" SHA256SUMS > termchat.rb
       # Signed (Sigstore) statement: these files came from this repo, this commit,
       # this workflow. Verify with: gh attestation verify <file> --repo <owner>/termchat
@@ -219,7 +223,8 @@ jobs:
             termchat-*.tar.gz
             termchat-*.zip
             termchat-*.apk
+            termchat-*.aab
             SHA256SUMS
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip termchat-*.apk SHA256SUMS termchat.rb --repo "${{ github.repository }}" --draft --generate-notes
+        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab SHA256SUMS termchat.rb --repo "${{ github.repository }}" --draft --generate-notes

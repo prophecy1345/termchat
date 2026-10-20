@@ -15,6 +15,10 @@ fun releaseKey(project: Project, path: String) =
             keyPassword = System.getenv("TERMCHAT_KEYSTORE_PASSWORD")
         }
 
+// The Play bundle is built without ABI splits (it cannot have them; Play splits
+// it itself), so its ABIs are limited to the two the Rust library is built for.
+val forPlay = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+
 android {
     namespace = "app.termchat"
     compileSdk = 37
@@ -26,6 +30,7 @@ android {
         // checked against the workspace's Cargo.toml at the end of this file.
         versionName = "0.3.1"
         versionCode = 301
+        if (forPlay) ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true }
     buildTypes {
@@ -39,7 +44,7 @@ android {
     // One APK per ABI: phones need only arm64; x86_64 is for the emulator.
     splits {
         abi {
-            isEnable = true
+            isEnable = !forPlay
             reset()
             include("arm64-v8a", "x86_64")
             isUniversalApk = false
