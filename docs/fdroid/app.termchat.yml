@@ -15,9 +15,9 @@ Binaries:
   https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
 
 Builds:
-  - versionName: 0.3.2
-    versionCode: 302
-    commit: 1686f3bbd646b95119e70d0f8e83e8e52acfbbf3
+  - versionName: 0.3.3
+    versionCode: 303
+    commit: 582c8258ba2dfcb42bc7f069781238fdc0979e19
     subdir: android/app
     submodules: true
     sudo:
@@ -32,9 +32,9 @@ Builds:
       - ANDROID_NDK_HOME=$$NDK$$ ../build-rust.sh
     ndk: 30.0.16248370
 
-AllowedAPKSigningKeys: bc6a742e73cfb755cd246bc0f273dfff718a78777d4ccb419a8dd4a64a76ba5e
+AllowedAPKSigningKeys: 9ffb611cdd1b3aae63303fb7120b85f7670d08bdb824d67c7c853709880c2a7f
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.3.2
-CurrentVersionCode: 302
+CurrentVersion: 0.3.3
+CurrentVersionCode: 303
