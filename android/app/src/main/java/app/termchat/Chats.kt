@@ -25,7 +25,7 @@ fun Chats(m: Model) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("termchat", style = Tc.name)
+                Text("termchat.app", style = Tc.name)
                 val link = if (a.connected()) "ONLINE" else "CONNECTING"
                 Text("$link · ${a.nickname()} · ${a.fingerprint().take(5)}", style = Tc.caps.copy(color = if (a.connected()) Tc.lime else Tc.warn))
             }
@@ -44,7 +44,7 @@ fun Chats(m: Model) {
                 }
             }
         }
-        if (update != null) Banner("termchat $update is out: tap for how to update") { m.screen = Screen.News }
+        if (update != null) Banner("termchat.app $update is out: tap for how to update") { m.screen = Screen.News }
         if (!a.backedUp()) Banner("No backup yet: a lost phone means a lost identity") { m.screen = Screen.Settings }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 16.dp))
         Line()

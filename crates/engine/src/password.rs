@@ -21,7 +21,7 @@ pub fn weakness(password: &str, avoid: &[&str]) -> Option<String> {
         })
         .unwrap_or_default();
     Some(format!(
-        "password too weak (termchat can suggest one). {hint}"
+        "password too weak (termchat.app can suggest one). {hint}"
     ))
 }
 

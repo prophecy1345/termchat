@@ -15,7 +15,7 @@ type Item = [title: string, text: string];
 
 const en = {
   lang: "en",
-  title: "termchat: private messages in your terminal and on Android",
+  title: "termchat.app: private messages in your terminal and on Android",
   description:
     "An end-to-end encrypted, text-only messenger for the terminal and Android. No accounts, no phone numbers, optional Tor.",
   other: { href: "/ru/", label: "RU" },
@@ -108,7 +108,7 @@ const en = {
   copy: "copy",
   copied: "copied",
   relayTitle: "Run your own relay",
-  relay: "The relay is one binary next to termchat in every release: SQLite, rate limits, an optional onion address. Your friends use your server; nobody else needs to know.",
+  relay: "The relay is one binary next to termchat.app in every release: SQLite, rate limits, an optional onion address. Your friends use your server; nobody else needs to know.",
   relayLink: "Self-hosting guide",
   footer: {
     licence: "AGPL-3.0",
@@ -117,13 +117,13 @@ const en = {
     help: "Need help now? findahelpline.com",
     note: "No cookies, no analytics, no third-party requests.",
     about:
-      "termchat is a free, non-commercial, open-source project created and maintained as a personal hobby. It has no advertising, subscriptions, paid features or commercial monetization. Anyone can run their own relay server.",
+      "termchat.app is a free, non-commercial, open-source project created and maintained as a personal hobby. It has no advertising, subscriptions, paid features or commercial monetization. Anyone can run their own relay server.",
   },
 };
 
 const ru: typeof en = {
   lang: "ru",
-  title: "termchat: приватные сообщения в терминале и на Android",
+  title: "termchat.app: приватные сообщения в терминале и на Android",
   description:
     "Мессенджер для терминала и Android со сквозным шифрованием и только текстом. Без аккаунтов и номеров телефона, Tor по желанию.",
   other: { href: "/", label: "EN" },
@@ -215,7 +215,7 @@ const ru: typeof en = {
   copy: "копировать",
   copied: "скопировано",
   relayTitle: "Свой relay",
-  relay: "Relay — один бинарник рядом с termchat в каждом релизе: SQLite, лимиты, onion-адрес по желанию. Ваши друзья пользуются вашим сервером, больше никому знать не нужно.",
+  relay: "Relay — один бинарник рядом с termchat.app в каждом релизе: SQLite, лимиты, onion-адрес по желанию. Ваши друзья пользуются вашим сервером, больше никому знать не нужно.",
   relayLink: "Инструкция по установке",
   footer: {
     licence: "AGPL-3.0",
@@ -224,7 +224,7 @@ const ru: typeof en = {
     help: "Нужна помощь? findahelpline.com",
     note: "Без cookies, аналитики и сторонних запросов.",
     about:
-      "termchat — бесплатный некоммерческий проект с открытым кодом, который создаётся и поддерживается как личное хобби. В нём нет рекламы, подписок, платных функций и монетизации. Любой может запустить свой relay-сервер.",
+      "termchat.app — бесплатный некоммерческий проект с открытым кодом, который создаётся и поддерживается как личное хобби. В нём нет рекламы, подписок, платных функций и монетизации. Любой может запустить свой relay-сервер.",
   },
 };
 

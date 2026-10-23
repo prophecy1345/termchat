@@ -1,4 +1,4 @@
-termchat is a private text messenger. There is no account: you are a pair of keys and a nickname you chose. No phone number, no email, no contact book.
+termchat.app is a private text messenger. There is no account: you are a pair of keys and a nickname you chose. No phone number, no email, no contact book.
 
 <ul>
 <li><b>End-to-end encrypted</b> with the Olm double ratchet (vodozemac, the library behind Matrix). The relay sees only ciphertext and who writes to whom, and keeps undelivered messages for 14 days at most.</li>
@@ -11,4 +11,4 @@ termchat is a private text messenger. There is no account: you are a pair of key
 <li>The same engine as the terminal client, and the same colour themes.</li>
 </ul>
 
-termchat is a free, non-commercial hobby project, licensed AGPL-3.0. It is not audited. Read the threat model before trusting it with your life: https://github.com/prophecy1345/termchat/blob/main/docs/threat-model.md
+termchat.app is a free, non-commercial hobby project, licensed AGPL-3.0. It is not audited. Read the threat model before trusting it with your life: https://github.com/prophecy1345/termchat/blob/main/docs/threat-model.md

@@ -46,7 +46,7 @@ sudo install -m 755 termchat-relay /usr/local/bin/
 
 ```ini
 [Unit]
-Description=termchat relay
+Description=termchat.app relay
 After=network-online.target
 
 [Service]

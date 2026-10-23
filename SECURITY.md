@@ -1,6 +1,6 @@
 # Security policy
 
-termchat protects private conversations, so security reports are the most
+termchat.app protects private conversations, so security reports are the most
 welcome contribution there is. Thank you for looking.
 
 ## Reporting a vulnerability
@@ -18,7 +18,7 @@ Helpful to include:
 
 ## What to expect
 
-termchat is a personal hobby project with one maintainer, so these are goals,
+termchat.app is a personal hobby project with one maintainer, so these are goals,
 not guarantees:
 
 - an acknowledgement within **7 days**;
@@ -57,5 +57,5 @@ Please do not run load tests or attacks against it; run your own relay
 
 ## Supported versions
 
-Only the latest release gets fixes. termchat has not had an external security
+Only the latest release gets fixes. termchat.app has not had an external security
 audit yet.

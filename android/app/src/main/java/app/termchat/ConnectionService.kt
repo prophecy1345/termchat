@@ -20,7 +20,7 @@ class ConnectionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val note = notification(this, CHANNEL_LINK, "termchat is connected", silent = true)
+        val note = notification(this, CHANNEL_LINK, "termchat.app is connected", silent = true)
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(ID_LINK, note, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         } else {

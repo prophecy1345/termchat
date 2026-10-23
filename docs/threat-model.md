@@ -1,4 +1,4 @@
-# termchat threat model
+# termchat.app threat model
 
 Status: accepted (M0, 2026-10-15). Русская версия: [threat-model.ru.md](threat-model.ru.md).
 
@@ -87,7 +87,7 @@ messages, or "who wrote to whom" beyond the queue.
   feature. Destroying data after a seizure can be a crime and can increase the
   pressure.
 - **Interface traces outside encryption (ADR-008).** The settings file (theme,
-  sound, mouse) is plain and says only that termchat is installed; it is wiped
+  sound, mouse) is plain and says only that termchat.app is installed; it is wiped
   with the data. The window title shows only the unread count. The system
   notification is off by default and always carries one fixed text, because the
   operating system keeps a notification history outside termchat. The card in

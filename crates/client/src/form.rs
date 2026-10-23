@@ -36,7 +36,7 @@ pub enum Action {
 impl Kind {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Setup => " termchat setup ",
+            Self::Setup => " termchat.app setup ",
             Self::Restore => " restore from backup ",
             Self::Backup => " back up your identity ",
             Self::Duress => " duress password ",

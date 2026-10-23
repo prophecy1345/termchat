@@ -1,6 +1,6 @@
-# Contributing to termchat
+# Contributing to termchat.app
 
-Thank you for helping. termchat protects people's conversations, so the rules
+Thank you for helping. termchat.app protects people's conversations, so the rules
 below are strict on purpose.
 
 ## Rules
@@ -73,7 +73,7 @@ For a local relay on the emulator: `adb reverse tcp:18080 tcp:18080`, then
 
 ## Versions
 
-While termchat is 0.x, one version covers every part (`Cargo.toml`):
+While termchat.app is 0.x, one version covers every part (`Cargo.toml`):
 
 - **minor** (0.2.0, 0.3.0): new features, a new client, protocol or storage
   changes;

@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/logo/termchat-mark-dark.svg" alt="termchat logo" width="128"></p>
+<p align="center"><img src="docs/logo/termchat-mark-dark.svg" alt="termchat.app logo" width="128"></p>
 
-# termchat
+# termchat.app
 
 По-русски: [README.ru.md](README.ru.md).
 
@@ -11,9 +11,9 @@ phone numbers, emails or names: you are a key pair and a nickname you choose.
 Website: [termchat.app](https://termchat.app).
 
 **Status: not audited.** The cryptography comes from vodozemac, which was audited in
-2022; termchat's own code has had no external review. Treat it as experimental.
+2022; termchat.app's own code has had no external review. Treat it as experimental.
 
-termchat is a free, non-commercial, open-source project created and maintained as a
+termchat.app is a free, non-commercial, open-source project created and maintained as a
 personal hobby. It has no advertising, subscriptions, paid features or commercial
 monetization. Anyone can run their own relay server.
 
@@ -85,7 +85,7 @@ not yet reviewed in `supply-chain/`).
 
 ## User guide
 
-termchat runs in a terminal window. Use the keyboard or the mouse; press **?** (or
+termchat.app runs in a terminal window. Use the keyboard or the mouse; press **?** (or
 **F1**) at any time for the list of keys, and **Ctrl+P** for the menu, which also
 holds this guide.
 
@@ -157,7 +157,7 @@ one in the app's settings:
 `termchat --version` prints the installed version. Before the first run you can check
 that the download is genuine; see [Verify a release](#verify-a-release).
 
-<!-- manual:start: shown inside termchat (menu, manual) -->
+<!-- manual:start: shown inside termchat.app (menu, manual) -->
 ### 2. First run
 
 The setup screen has six fields. **Tab** or **Enter** moves to the next one,
@@ -172,7 +172,7 @@ The setup screen has six fields. **Tab** or **Enter** moves to the next one,
 | Password | Encrypts everything on your disk. Must be strong; **Ctrl+G** generates six random words. Write it down: it cannot be recovered. |
 | Repeat password | The same again. |
 
-After setup termchat suggests making a backup right away (see
+After setup termchat.app suggests making a backup right away (see
 [Backup](#8-backup-and-restore)). Until you do, the status bar shows
 `! no backup: Ctrl+P`.
 
@@ -263,7 +263,7 @@ hand you their keys instead of your friend's when you first add them. Rule this 
 once:
 
 1. **Ctrl+F** shows a 60-digit safety number. Your friend opens the same screen.
-2. Compare the numbers in person, on a video call or by phone (not over termchat).
+2. Compare the numbers in person, on a video call or by phone (not over termchat.app).
 3. If they match, press **v**. The `!` and the digits after the name disappear.
 
 If the numbers differ, do not trust the contact: delete it (**Ctrl+D**) and exchange
@@ -304,7 +304,7 @@ device means a lost identity** and your contacts must add you again.
   (a USB stick, for example) and a backup password. The backup holds your identity and
   contact list, not your messages. **Move it off this device** (USB stick, another
   computer).
-- termchat remembers where it wrote a backup, or restored one from. Any wipe,
+- termchat.app remembers where it wrote a backup, or restored one from. Any wipe,
   the duress password included, erases a backup that is still at that path,
   so one left on this disk does not give you away. A copy moved or copied
   elsewhere is not touched; that copy is how you get your identity back.
@@ -317,8 +317,8 @@ device means a lost identity** and your contacts must add you again.
 
 1. On the old device, make a **fresh** backup (**Ctrl+P**, **b**): an older one
    lacks the contacts you added since.
-2. Copy the backup to the new device and quit termchat on the old one (**Ctrl+Q**).
-3. Install termchat on the new device. On the first-run screen press **Ctrl+B**,
+2. Copy the backup to the new device and quit termchat.app on the old one (**Ctrl+Q**).
+3. Install termchat.app on the new device. On the first-run screen press **Ctrl+B**,
    enter the path to the backup and unlock with the backup's password. Change it
    later in settings → security if you like.
 4. Check that your contacts are there and send each a message. Their next
@@ -332,7 +332,7 @@ device means a lost identity** and your contacts must add you again.
 
 ### 9. Locking, passwords and wiping
 
-- termchat **locks itself after 5 minutes** without a key press or click; **Ctrl+K** locks at
+- termchat.app **locks itself after 5 minutes** without a key press or click; **Ctrl+K** locks at
   once. Locking removes keys and messages from memory; unlock with your password.
 
 The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to the
@@ -340,7 +340,7 @@ The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to th
 
 - **Change password:** current password, new one twice.
 - **Duress password:** a second password. Typing it at the unlock
-  screen silently erases everything and shows the first-run screen, as if termchat
+  screen silently erases everything and shows the first-run screen, as if termchat.app
   had never been used. Read the warning on that screen first: it does not help if
   someone copied your disk beforehand, and destroying data after a seizure can be a
   crime in some countries. Leave the new field empty to turn it off.
@@ -357,7 +357,7 @@ The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to th
 
 Everything is in one encrypted file, `~/.termchat/state` (Windows:
 `C:\Users\<you>\.termchat\state`), plus Tor's cache in `~/.termchat/arti`. Set
-`TERMCHAT_HOME` to keep a separate profile elsewhere, for example to try termchat with
+`TERMCHAT_HOME` to keep a separate profile elsewhere, for example to try termchat.app with
 two identities on one computer:
 
 ```sh
@@ -390,7 +390,7 @@ moves, **Enter** or a click changes the value.
   click it to open the chat. **Sound** plays the system notification sound (on by
   default). **System notification** (off by default) asks the terminal to show a
   desktop notification that always says just "termchat: new message": the
-  operating system keeps a history of notifications outside termchat, so names
+  operating system keeps a history of notifications outside termchat.app, so names
   and text never go there. The window title shows only the number of unread
   messages, `termchat (3)`.
 - **interface:** mouse on or off.
@@ -452,10 +452,10 @@ binary with systemd, plus an onion address with Tor.
 
 ## Acceptable use
 
-termchat is for private conversations. It is **not** for trafficking people, weapons or
+termchat.app is for private conversations. It is **not** for trafficking people, weapons or
 drugs, planning violence, or pushing anyone towards self-harm, and using it for that is
 forbidden. We do not scan messages: that cannot work with end-to-end encryption and
-would be a backdoor for everyone. Instead termchat gives such activity no reach: no user
+would be a backdoor for everyone. Instead termchat.app gives such activity no reach: no user
 search, no directory, no public channels or broadcasts, strangers land in "requests",
 you can block anyone (Ctrl+B) and report them to the relay operator (Ctrl+X). See
 [ADR-006](docs/adr/006-abuse-and-reports.md).

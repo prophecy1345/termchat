@@ -179,7 +179,7 @@ fun News(m: Model) = Panel(m, "What's new") {
     val a = m.account
     LaunchedEffect(Unit) { a?.newsSeen() }
     a?.update()?.let {
-        Text("termchat $it is out", style = Tc.name.copy(color = Tc.lime))
+        Text("termchat.app $it is out", style = Tc.name.copy(color = Tc.lime))
         Text("Update from where you installed it: F-Droid, or the APK on github.com/prophecy1345/termchat/releases.", style = Tc.mono)
         Line()
     }
@@ -260,7 +260,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     MenuRow(
         "Stay connected in the background: ${if (m.stay) "on" else "off"}",
         "Messages arrive while the app is closed. Costs battery, shows a permanent " +
-            "\"termchat is connected\" notice, and keeps your keys in memory: " +
+            "\"termchat.app is connected\" notice, and keeps your keys in memory: " +
             "the app no longer locks itself in the background.",
     ) { m.stayOn(!m.stay) }
     val activity = LocalContext.current as android.app.Activity
@@ -310,7 +310,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     Line()
     Text("ABOUT", style = Tc.caps)
     MenuRow("What's new") { m.screen = Screen.News }
-    MenuRow("termchat ${app.termchat.engine.version()}", "Your fingerprint ${a.fingerprint()}") {}
+    MenuRow("termchat.app ${app.termchat.engine.version()}", "Your fingerprint ${a.fingerprint()}") {}
 
     if (result.isNotEmpty() && form == null) Text(result, style = Tc.small.copy(color = Tc.lime))
     val which = form ?: return@Panel

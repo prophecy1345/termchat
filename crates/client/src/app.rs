@@ -207,8 +207,8 @@ impl App {
             _ => 0,
         };
         match unread {
-            0 => "termchat".into(),
-            n => format!("termchat ({n})"),
+            0 => "termchat.app".into(),
+            n => format!("termchat.app ({n})"),
         }
     }
 
@@ -653,11 +653,11 @@ impl Main {
     pub fn update_note(&self) -> Option<String> {
         let v = self.engine.update.as_ref()?;
         let how = match update_command() {
-            Some(cmd) => format!("To update, quit termchat and run:\n\n```\n{cmd}\n```"),
+            Some(cmd) => format!("To update, quit termchat.app and run:\n\n```\n{cmd}\n```"),
             None => format!("Download it from {RELEASES}"),
         };
         Some(format!(
-            "## termchat {v} is out\n\n{how}\n\nWhat changed: {RELEASES}\n\n"
+            "## termchat.app {v} is out\n\n{how}\n\nWhat changed: {RELEASES}\n\n"
         ))
     }
 

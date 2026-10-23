@@ -7,7 +7,7 @@ SourceCode: https://github.com/prophecy1345/termchat
 IssueTracker: https://github.com/prophecy1345/termchat/issues
 Changelog: https://github.com/prophecy1345/termchat/blob/HEAD/CHANGELOG.md
 
-AutoName: termchat
+AutoName: termchat.app
 
 RepoType: git
 Repo: https://github.com/prophecy1345/termchat.git

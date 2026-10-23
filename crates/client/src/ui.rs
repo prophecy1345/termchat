@@ -406,7 +406,7 @@ fn unlock(f: &mut Frame, t: &Palette, h: &mut Hits, u: &Unlock) {
         ("↵ unlock", true, key(KeyCode::Enter)),
         ("^q quit", false, ctrl('q')),
     ];
-    window(f, t, h, "termchat · locked", lines, &buttons, 50, false);
+    window(f, t, h, "termchat.app · locked", lines, &buttons, 50, false);
 }
 
 fn main(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, settings: &Settings) {
@@ -567,7 +567,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
 
     let Some(c) = m.current() else {
         f.render_widget(
-            Paragraph::new(Line::styled(" termchat", bold)).style(bar),
+            Paragraph::new(Line::styled(" termchat.app", bold)).style(bar),
             head,
         );
         let key = Style::new().fg(t.accent).add_modifier(Modifier::BOLD);
@@ -745,7 +745,7 @@ fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     }
     if let Some(v) = &m.engine.update {
         left.push(Span::styled(
-            format!("  termchat {v} is out: Ctrl+P, n"),
+            format!("  termchat.app {v} is out: Ctrl+P, n"),
             Style::new().fg(t.teal),
         ));
     } else if m.news_unread() {

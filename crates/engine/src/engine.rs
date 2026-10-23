@@ -1407,7 +1407,7 @@ impl Engine {
             let line = line.trim_start_matches("Bridge ").trim();
             let Some(kind) = crate::bridge_transport(line) else {
                 return Err(format!(
-                    "line {}: not a bridge line termchat can use ({})",
+                    "line {}: not a bridge line termchat.app can use ({})",
                     n + 1,
                     crate::TRANSPORTS.join(", ")
                 ));

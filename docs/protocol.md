@@ -1,4 +1,4 @@
-# termchat protocol, version 1
+# termchat.app protocol, version 1
 
 Status: accepted (M0, 2026-10-15). Format changes increase `version`.
 Русская версия: [protocol.ru.md](protocol.ru.md).
@@ -41,7 +41,7 @@ and closes the connection. The envelope carries `version` too, so clients of
 different versions can understand each other or refuse explicitly.
 
 The relay's HTTP upgrade response carries `x-termchat-version: X.Y.Z`, the
-relay's software version. Clients use it only to say that a newer termchat is
+relay's software version. Clients use it only to say that a newer termchat.app is
 out (ADR-010); it plays no part in the protocol.
 
 ## 3. Registration (challenge-response)

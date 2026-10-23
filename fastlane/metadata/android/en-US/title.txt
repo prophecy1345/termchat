@@ -1,1 +1,1 @@
-termchat
+termchat.app

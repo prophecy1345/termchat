@@ -9,12 +9,12 @@ interface Props {
 }
 const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const en = {
-  title: "termchat: privacy policy",
+  title: "termchat.app: privacy policy",
   home: "/",
   updated: "Last updated: 20 October 2026",
   sections: [
-    ["What termchat collects", [
-      "Nothing about you. There are no accounts, and termchat never asks for a name, phone number, email address, contacts, location or date of birth.",
+    ["What termchat.app collects", [
+      "Nothing about you. There are no accounts, and termchat.app never asks for a name, phone number, email address, contacts, location or date of birth.",
       "The apps contain no analytics, advertising, trackers or crash reporting, and use no Google services.",
     ]],
     ["On your device", [
@@ -40,22 +40,22 @@ const en = {
       "No data is sold or shared. If the law requires it, the operator of a relay can hand over only what the relay keeps, listed above.",
     ]],
     ["Children", [
-      "termchat is not directed at children under 13.",
+      "termchat.app is not directed at children under 13.",
     ]],
     ["Changes and contact", [
       "Changes are published on this page; its full history is on GitHub. Questions: open an issue on GitHub.",
     ]],
   ],
-  threatModel: "Threat model: what termchat protects and what it does not",
+  threatModel: "Threat model: what termchat.app protects and what it does not",
   threatModelPath: "docs/threat-model.md",
 };
 const ru: typeof en = {
-  title: "termchat: политика конфиденциальности",
+  title: "termchat.app: политика конфиденциальности",
   home: "/ru/",
   updated: "Обновлено: 20 октября 2026",
   sections: [
-    ["Что собирает termchat", [
-      "Ничего о вас. Аккаунтов нет, termchat никогда не спрашивает имя, телефон, email, контакты, местоположение или дату рождения.",
+    ["Что собирает termchat.app", [
+      "Ничего о вас. Аккаунтов нет, termchat.app никогда не спрашивает имя, телефон, email, контакты, местоположение или дату рождения.",
       "В приложениях нет аналитики, рекламы, трекеров и отчётов о сбоях, и нет сервисов Google.",
     ]],
     ["На вашем устройстве", [
@@ -81,13 +81,13 @@ const ru: typeof en = {
       "Данные не продаются и не передаются. Если этого требует закон, оператор relay может выдать только то, что хранит relay, перечисленное выше.",
     ]],
     ["Дети", [
-      "termchat не предназначен для детей младше 13 лет.",
+      "termchat.app не предназначен для детей младше 13 лет.",
     ]],
     ["Изменения и связь", [
       "Изменения публикуются на этой странице, полная история есть на GitHub. Вопросы: откройте issue на GitHub.",
     ]],
   ],
-  threatModel: "Модель угроз: что termchat защищает, а что нет",
+  threatModel: "Модель угроз: что termchat.app защищает, а что нет",
   threatModelPath: "docs/threat-model.ru.md",
 };
 const t = Astro.props.lang === "en" ? en : ru;
@@ -108,7 +108,7 @@ const csp =
   </head>
   <body>
     <header class="top">
-      <a class="brand" href={url(t.home)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat</a>
+      <a class="brand" href={url(t.home)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
     </header>
     <main>
       <section>
