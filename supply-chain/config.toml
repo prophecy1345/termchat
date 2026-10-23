@@ -366,7 +366,7 @@ version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctutils]]
-version = "0.4.3"
+version = "0.4.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.curve25519-dalek]]
@@ -1414,7 +1414,7 @@ version = "1.15.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.15"
+version = "0.103.16"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustversion]]
@@ -2050,7 +2050,7 @@ version = "0.26.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]
-version = "1.0.9"
+version = "1.0.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.wezterm-bidi]]
