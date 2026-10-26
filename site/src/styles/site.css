@@ -122,7 +122,8 @@ label:focus-within {
   align-items: center;
   justify-content: center;
   gap: clamp(0.5rem, 2vw, 1.25rem);
-  font-size: clamp(2.8rem, 9vw, 5.5rem);
+  /* icon + 12 mono chars ≈ 8.6em; fit it in the viewport minus page padding */
+  font-size: clamp(1.6rem, calc((100vw - 4rem) / 8.6), 5.5rem);
 }
 
 .mark {
