@@ -2,6 +2,22 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.4.0
+
+- **Documents** (ADR-017). Send a file of up to 1 MiB, end-to-end encrypted
+  like a message: **Ctrl+L** in the terminal, the paperclip on Android. Save a
+  received one with **Ctrl+G** (or Save on Android, through the system dialog),
+  or discard it. termchat never opens, previews or renders a file, and never
+  overwrites one on save. Files from contacts can be harmful: check them before
+  you open them.
+- 200 KB takes about 10 s, 1 MiB about 3 min: chunks are paced under the
+  relay's send limit. The relay sees a run of 16 KB messages, so it can
+  estimate the size of a document.
+- Files work only between accepted contacts. **Both sides need 0.4.0**:
+  older versions show "a message could not be decrypted" for each chunk.
+- Dependencies: zstd, zstd-safe and zstd-sys updated for RUSTSEC-2026-0391,
+  -0398, -0403 and -0410.
+
 ## 0.3.3
 
 - **Android: new signing key** (RSA 4096, ADR-016), the one Google Play accepts,

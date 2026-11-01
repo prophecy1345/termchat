@@ -1,0 +1,1 @@
+Documents: send a file of up to 1 MiB with the paperclip, end-to-end encrypted like a message; save a received one through the system dialog. Both sides need 0.4.0.
