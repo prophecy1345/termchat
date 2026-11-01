@@ -2298,15 +2298,15 @@ version = "1.0.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.zstd]]
-version = "0.14.2"
+version = "0.14.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.zstd-safe]]
-version = "8.1.0"
+version = "8.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zstd-sys]]
-version = "2.1.1+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.zxcvbn]]
