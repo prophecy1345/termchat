@@ -4,7 +4,7 @@
 
 По-русски: [README.ru.md](README.ru.md).
 
-A private, text-only messenger for the terminal. End-to-end encrypted with
+A private messenger for the terminal: text, and documents up to 1 MiB. End-to-end encrypted with
 [vodozemac](https://github.com/matrix-org/vodozemac) (Olm: X3DH-style handshake and
 Double Ratchet, the design behind Signal and Matrix). Optional Tor. No accounts,
 phone numbers, emails or names: you are a key pair and a nickname you choose.
@@ -33,7 +33,8 @@ The goal is not "impossible to break" but "breaking the server is pointless".
 
 **Partly protected**
 - **Metadata.** The relay sees which key writes to which and when, and message size
-  rounded up to 512 / 4096 / 16384 bytes. Nicknames are never visible to it.
+  rounded up to 512 / 4096 / 16384 bytes. A document travels as a run of 16 KB
+  messages, so the relay can estimate its size. Nicknames are never visible to it.
 - **Someone with your unlocked computer.** Auto-lock after 5 minutes, Ctrl+K to lock
   now, disappearing messages, chats without history.
 - **Being forced to give a password.** An optional duress password silently erases
@@ -271,9 +272,17 @@ invites again by another way.
 
 ### 6. Messages
 
-- Type and press **Enter**. Text only, up to 16 000 bytes per message (about 8 000
+- Type and press **Enter**. Up to 16 000 bytes per message (about 8 000
   Cyrillic or 16 000 Latin characters). Pasting is safe: pasted text never acts as
   key presses.
+- **Documents** (ADR-017): **Ctrl+L** sends a file of up to 1 MiB, end-to-end
+  encrypted like a message. 200 KB takes about 10 s, 1 MiB about 3 min. **Ctrl+G**
+  saves the newest received file into a folder you pick (`~/Downloads` by default),
+  or discards it on `DISCARD`. termchat.app never opens, previews or renders a file,
+  and never overwrites one on save. Files from contacts can be harmful: check before
+  you open them. A saved file lives outside termchat.app; a wipe does not erase it.
+  Files work only between accepted contacts, and both sides need version 0.4.0 or
+  newer.
 - **Offline delivery:** if your friend is offline, the relay keeps the encrypted
   message for up to 14 days and delivers it when they come back.
 - **"⚠ N message(s) missing"** means something sent to you did not arrive (lost, or
@@ -424,6 +433,7 @@ removes the file too.
 | Ctrl+F | safety number (**v** marks verified) |
 | Ctrl+S | search this chat |
 | Ctrl+T / Ctrl+E | disappearing messages / no history |
+| Ctrl+L / Ctrl+G | send a file / save the newest received file |
 | Ctrl+R / Ctrl+B / Ctrl+D / Ctrl+X | rename / block / delete or reject / report |
 | Ctrl+P | menu: **s** settings, **k** keys, **m** manual, **o** invite, **a** add, **b** backup |
 | Ctrl+K | lock |

@@ -17,7 +17,7 @@ const en = {
   lang: "en",
   title: "termchat.app: private messages in your terminal and on Android",
   description:
-    "An end-to-end encrypted, text-only messenger for the terminal and Android. No accounts, no phone numbers, optional Tor.",
+    "An end-to-end encrypted messenger for text and documents, in the terminal and on Android. No accounts, no phone numbers, optional Tor.",
   other: { href: "/ru/", label: "RU" },
   // Documents in this language, relative to the repository root.
   docs: {
@@ -28,12 +28,12 @@ const en = {
   },
   nav: { features: "Features", protection: "Protection", install: "Install" },
   tagline: "Private messages, in your terminal and on your phone.",
-  lead: "End-to-end encrypted, text only, no accounts. You are a key pair and a nickname you choose; the server only ever sees ciphertext.",
+  lead: "End-to-end encrypted text and documents, no accounts. You are a key pair and a nickname you choose; the server only ever sees ciphertext.",
   status: "not audited · experimental",
   cta: { install: "Install", github: "GitHub", download: "Download" },
   whatTitle: "What it is",
   what: [
-    ["Text, in a terminal and on Android", "A chat where you already work, and an app for your phone on the same engine. No images, no link previews, no formatting: less to leak, less to exploit."],
+    ["Text and documents, in a terminal and on Android", "A chat where you already work, and an app for your phone on the same engine. Files are opaque bytes, never opened or previewed; no inline images, no link previews, no formatting: less to leak, less to exploit."],
     ["No one to sign up with", "No phone number, email or name. Your identity is a key pair made on your device, plus a nickname only your contacts see."],
     ["A server that knows nothing", "The relay passes along envelopes it cannot open. Seizing it gives ciphertext and public keys, nothing more."],
   ] as Item[],
@@ -42,6 +42,7 @@ const en = {
     ["End-to-end encryption", "Olm from vodozemac: an X3DH-style handshake and the Double Ratchet, the design behind Signal and Matrix."],
     ["Tor built in", "One switch hides your IP address from the relay and your provider. Where Tor is blocked, obfs4, webtunnel or snowflake bridges get through. No separate Tor install."],
     ["Offline delivery", "Messages wait on the relay, encrypted, for up to 14 days until your contact comes online."],
+    ["Documents", "Send a PDF, a config or a key of up to 1 MiB, encrypted end to end like any message. Saved only when you choose, never opened by the app."],
     ["Disappearing messages", "From 5 minutes to a week, per chat. Or keep a chat in memory only, never on disk."],
     ["Duress password", "A second password that silently erases everything and shows a fresh install."],
     ["Auto-lock", "Keys leave memory after 5 idle minutes, or at once with Ctrl+K."],
@@ -71,7 +72,7 @@ const en = {
   partly: {
     title: "Partly",
     items: [
-      "Metadata: the relay sees which key writes to which and when, and the size rounded up to 512 / 4096 / 16384 bytes. Incognito contacts over Tor give it pairs of keys it cannot link to you.",
+      "Metadata: the relay sees which key writes to which and when, and the size rounded up to 512 / 4096 / 16384 bytes; a document goes as a run of 16 KB messages, so its size can be estimated. Incognito contacts over Tor give it pairs of keys it cannot link to you.",
       "Someone at your unlocked computer: auto-lock, disappearing messages, chats without history.",
       "Being forced to give a password: the duress password does not help if the disk was copied first.",
       "A lost device: only with a backup of your identity.",
@@ -125,7 +126,7 @@ const ru: typeof en = {
   lang: "ru",
   title: "termchat.app: приватные сообщения в терминале и на Android",
   description:
-    "Мессенджер для терминала и Android со сквозным шифрованием и только текстом. Без аккаунтов и номеров телефона, Tor по желанию.",
+    "Мессенджер для текста и документов в терминале и на Android со сквозным шифрованием. Без аккаунтов и номеров телефона, Tor по желанию.",
   other: { href: "/", label: "EN" },
   docs: {
     threatModel: "docs/threat-model.ru.md",
@@ -135,12 +136,12 @@ const ru: typeof en = {
   },
   nav: { features: "Возможности", protection: "Защита", install: "Установка" },
   tagline: "Приватная переписка в терминале и в телефоне.",
-  lead: "Сквозное шифрование, только текст, никаких аккаунтов. Вы — это пара ключей и ник, который выбираете сами; сервер видит только шифртекст.",
+  lead: "Текст и документы со сквозным шифрованием, никаких аккаунтов. Вы — это пара ключей и ник, который выбираете сами; сервер видит только шифртекст.",
   status: "без аудита · экспериментально",
   cta: { install: "Установить", github: "GitHub", download: "Скачать" },
   whatTitle: "Что это",
   what: [
-    ["Текст в терминале и на Android", "Чат там, где вы и так работаете, и приложение для телефона на том же движке. Без картинок, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
+    ["Текст и документы в терминале и на Android", "Чат там, где вы и так работаете, и приложение для телефона на том же движке. Файлы — непрозрачные байты, приложение их не открывает и не показывает превью; без картинок в чате, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
     ["Не нужно регистрироваться", "Ни телефона, ни email, ни имени. Ваша личность — пара ключей, созданная на устройстве, и ник, который видят только ваши контакты."],
     ["Сервер ничего не знает", "Relay передаёт конверты, которые не может открыть. Изъятие сервера даст шифртекст и публичные ключи, не больше."],
   ],
@@ -149,6 +150,7 @@ const ru: typeof en = {
     ["Сквозное шифрование", "Olm из vodozemac: рукопожатие в стиле X3DH и Double Ratchet, та же схема, что в Signal и Matrix."],
     ["Встроенный Tor", "Один переключатель скрывает ваш IP от relay и провайдера. Где Tor заблокирован, помогут мосты obfs4, webtunnel или snowflake. Ставить Tor отдельно не нужно."],
     ["Офлайн-доставка", "Сообщения ждут на relay в зашифрованном виде до 14 дней, пока собеседник не появится в сети."],
+    ["Документы", "PDF, конфиг или ключ до 1 МиБ, со сквозным шифрованием, как любое сообщение. Сохраняется только по вашему решению, приложение файл не открывает."],
     ["Исчезающие сообщения", "От 5 минут до недели, для каждого чата. Или чат только в памяти, без записи на диск."],
     ["Пароль под принуждением", "Второй пароль, который молча стирает всё и показывает чистую установку."],
     ["Автоблокировка", "Ключи уходят из памяти после 5 минут бездействия или сразу по Ctrl+K."],
@@ -178,7 +180,7 @@ const ru: typeof en = {
   partly: {
     title: "Частично",
     items: [
-      "Метаданные: relay видит, какой ключ кому пишет и когда, и размер, округлённый до 512 / 4096 / 16384 байт. Инкогнито-контакты через Tor дают ему пары ключей, которые он не может связать с вами.",
+      "Метаданные: relay видит, какой ключ кому пишет и когда, и размер, округлённый до 512 / 4096 / 16384 байт; документ идёт серией сообщений по 16 КБ, поэтому его размер можно оценить. Инкогнито-контакты через Tor дают ему пары ключей, которые он не может связать с вами.",
       "Человек у вашего разблокированного компьютера: автоблокировка, исчезающие сообщения, чаты без истории.",
       "Принуждение выдать пароль: пароль под принуждением не поможет, если диск скопировали заранее.",
       "Потеря устройства: только при наличии резервной копии.",

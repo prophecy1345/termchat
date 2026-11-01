@@ -161,10 +161,18 @@ Body =
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
   | Goodbye                                                                // ADR-009: the sender wiped their account
   | ContactRequestV2 { identity: Identity, nickname: String, note: String, code: [u8; 16] }  // ADR-013
+  | File { id: u32, name: String, size: u32, index: u16, expires_in: Option<u32>, data: Vec<u8> }  // ADR-017
 ```
 
 Limits: `text` up to 16000 bytes, `nickname` up to 64 bytes, `note` up to 256
 bytes.
+
+`File` is one chunk of a document of `size` bytes, at most 1 MiB (ADR-017).
+Chunk `index` holds bytes from `index * 16000`: exactly 16000 of them, or the
+rest in the last chunk. `name` is 1-255 bytes with no control or bidi
+characters, no `/`, `\` or NUL, and is not `.` or `..`. The receiver takes
+chunks of one file strictly in order, only from accepted contacts, and drops
+the transfer on a gap.
 
 Checks on receipt:
 1. `recipient` equals our own key.

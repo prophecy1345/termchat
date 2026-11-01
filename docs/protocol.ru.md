@@ -119,9 +119,12 @@ Body =
   | Text { sent_at: u64, expires_in: Option<u32>, text: String }
   | Goodbye                                                                // ADR-009: отправитель стёр аккаунт
   | ContactRequestV2 { identity: Identity, nickname: String, note: String, code: [u8; 16] }  // ADR-013
+  | File { id: u32, name: String, size: u32, index: u16, expires_in: Option<u32>, data: Vec<u8> }  // ADR-017
 ```
 
 Лимиты: `text` до 16000 байт, `nickname` до 64 байт, `note` до 256 байт.
+
+`File` — один кусок документа размером `size` байт, не больше 1 МиБ (ADR-017). Кусок `index` содержит байты начиная с `index * 16000`: ровно 16000 или остаток в последнем куске. `name` — от 1 до 255 байт, без управляющих и bidi-символов, без `/`, `\` и NUL, не `.` и не `..`. Получатель принимает куски одного файла строго по порядку, только от принятых контактов, и бросает передачу при пропуске.
 
 Проверки при получении:
 1. `recipient` совпадает со своим ключом.

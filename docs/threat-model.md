@@ -60,7 +60,9 @@ messages, or "who wrote to whom" beyond the queue.
 ## Partly protected
 
 - **Metadata.** Size is hidden by padding to buckets, but the relay sees the
-  social graph and timing of each identity. **Incognito contacts** (ADR-014)
+  social graph and timing of each identity. A document (ADR-017) goes as a
+  run of full 16 KB messages, so the relay can estimate its size to about
+  16 KB. **Incognito contacts** (ADR-014)
   give one contact an identity of its own: its own keys, name and relay
   account. The relay then sees two keys that talk only to each other.
   - Under Tor, with separate circuits, the relay cannot link that pair to your
@@ -124,6 +126,10 @@ messages, or "who wrote to whom" beyond the queue.
   picker to a cloud folder is erased by a wipe only while the app still has
   access to it, and the provider may keep its own copies. Keep backups on
   storage you control.
+- **Saved documents and what opens them** (ADR-017). termchat.app never opens
+  a received file, but the program that later opens it may have holes, and
+  the file may be harmful. A saved file lives outside the encrypted state, so
+  a wipe or the duress password does not erase it.
 - **What a report contains.** The reporter chooses the text it sends (ADR-006);
   the relay cannot prove the reported key wrote it. Operators should treat a
   report as a claim.
