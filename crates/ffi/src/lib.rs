@@ -99,6 +99,10 @@ pub struct MessageView {
     pub system: bool,
     /// "queued", "sending", "sent", "received", "system" or the failure.
     pub status: String,
+    /// A document (ADR-017): its name; `text` then holds name, size, progress.
+    pub file_name: Option<String>,
+    /// A received document still waiting to be saved or discarded.
+    pub file_unsaved: bool,
 }
 
 #[uniffi::export]
@@ -382,7 +386,11 @@ impl Account {
                 .iter()
                 .map(|m| MessageView {
                     mine: m.mine,
-                    text: engine::clean_text(&m.text),
+                    text: engine::clean_text(
+                        &m.file
+                            .as_ref()
+                            .map_or_else(|| m.text.clone(), |f| f.label()),
+                    ),
                     at: m.at,
                     system: m.status == Status::System,
                     status: match &m.status {
@@ -393,6 +401,11 @@ impl Account {
                         Status::System => "system".into(),
                         Status::Failed(why) => why.clone(),
                     },
+                    file_name: m.file.as_ref().map(|f| engine::clean(&f.name)),
+                    file_unsaved: !m.mine
+                        && m.file
+                            .as_ref()
+                            .is_some_and(|f| f.complete() && f.data.is_some()),
                 })
                 .collect()
         })
@@ -411,6 +424,21 @@ impl Account {
 
     pub fn send(&self, index: u32, text: String) -> Result<()> {
         Ok(self.with(index, |e, i| e.send(i, &text))??)
+    }
+
+    /// Queues a document of at most 1 MiB (ADR-017).
+    pub fn send_file(&self, index: u32, name: String, bytes: Vec<u8>) -> Result<()> {
+        Ok(self.with(index, |e, i| e.send_file(i, &name, bytes))??)
+    }
+
+    /// The bytes of received document `msg`, for the system "Save as" dialog.
+    pub fn file_bytes(&self, index: u32, msg: u32) -> Result<Option<Vec<u8>>> {
+        self.with(index, |e, i| e.file_bytes(i, msg as usize).map(|(_, b)| b))
+    }
+
+    /// Forgets the bytes of received document `msg`, once saved or declined.
+    pub fn forget_file(&self, index: u32, msg: u32) -> Result<()> {
+        self.with(index, |e, i| e.discard_file(i, msg as usize))
     }
 
     /// Adds a contact from their invite; returns its index. `incognito`

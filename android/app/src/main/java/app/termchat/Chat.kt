@@ -1,5 +1,8 @@
 package app.termchat
 
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,9 +21,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
+
+/** ADR-017: the largest document, as in the Rust core. */
+private const val MAX_FILE = 1 shl 20
 
 /** One chat (ADR-011, section 5). */
 @Composable
@@ -38,6 +45,45 @@ fun Chat(m: Model, index: UInt) {
         onDispose { a.open(null) }
     }
     LaunchedEffect(m.version) { a.open(index) }
+    val context = LocalContext.current
+
+    // ADR-017: a document goes as opaque bytes, at most 1 MiB, read here in full.
+    val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val r = context.contentResolver
+            val name = r.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            } ?: "file"
+            val bytes = r.openInputStream(uri)!!.use { s ->
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(8192)
+                while (true) {
+                    val n = s.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    if (out.size() > MAX_FILE) error("files are limited to 1 MiB")
+                }
+                out.toByteArray()
+            }
+            a.sendFile(index, name, bytes)
+        }.onSuccess { m.note = "" }.onFailure { m.note = it.message ?: "$it" }
+        m.changed()
+    }
+    // The received document being saved: its bytes go where the user picked, then are forgotten.
+    var saving by remember { mutableStateOf<UInt?>(null) }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val msg = saving ?: return@rememberLauncherForActivityResult
+        saving = null
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val bytes = a.fileBytes(index, msg) ?: error("this file is gone")
+            context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(bytes) }
+            a.forgetFile(index, msg)
+        }.onSuccess { m.note = "Saved. termchat never opens files; check it before you do." }
+            .onFailure { m.note = it.message ?: "$it" }
+        m.changed()
+    }
 
     Column(Modifier.fillMaxSize()) {
         Header(m, c) { if (it == "search") query = "" else dialog = it }
@@ -48,16 +94,28 @@ fun Chat(m: Model, index: UInt) {
                 Text("×", style = Tc.name, modifier = Modifier.clickable { query = null }.padding(12.dp))
             }
         }
+        val all = messages.withIndex().toList()
         val shown = query?.takeIf { it.isNotBlank() }?.let { q ->
-            messages.filter { !it.system && it.text.contains(q.trim(), ignoreCase = true) }
-        } ?: messages
+            all.filter { !it.value.system && it.value.text.contains(q.trim(), ignoreCase = true) }
+        } ?: all
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
             reverseLayout = true,
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(vertical = 12.dp),
         ) {
-            items(shown.asReversed()) { Bubble(it) }
+            items(shown.asReversed()) { (i, msg) ->
+                Bubble(msg) { keep ->
+                    val at = i.toUInt()
+                    if (keep) {
+                        saving = at
+                        save.launch(msg.fileName ?: "file")
+                    } else {
+                        runCatching { a.forgetFile(index, at) }
+                        m.changed()
+                    }
+                }
+            }
         }
         if (c.request) {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -77,6 +135,11 @@ fun Chat(m: Model, index: UInt) {
                 if (c.expiresIn != null) Text(span(c.expiresIn), style = Tc.small.copy(color = Tc.lime))
             }
             val closed = c.left || c.blocked
+            Box(
+                Modifier.size(48.dp).border(1.dp, Tc.line, corner)
+                    .clickable(enabled = !closed && !c.request) { attach.launch(arrayOf("*/*")) },
+                contentAlignment = Alignment.Center,
+            ) { Text("📎", style = Tc.name) }
             Field(
                 text, { text = it },
                 when { c.left -> "This contact left"; c.blocked -> "Blocked"; else -> "Encrypted message" },
@@ -130,7 +193,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-private fun Bubble(msg: MessageView) {
+private fun Bubble(msg: MessageView, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
@@ -151,6 +214,12 @@ private fun Bubble(msg: MessageView) {
                     .background(if (msg.mine) Tc.mine else Tc.theirs, corner)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
+        }
+        if (msg.fileUnsaved) {
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Flat("Save", color = Tc.lime) { file(true) }
+                Flat("Discard", color = Tc.dim) { file(false) }
+            }
         }
         val failed = msg.mine && msg.status !in setOf("sent", "sending", "queued")
         val meta = when {
