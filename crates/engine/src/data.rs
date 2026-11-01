@@ -146,6 +146,19 @@ impl FileMsg {
         usize::from(self.done) == termchat_proto::file_chunks(self.size)
     }
 
+    /// One line for the chat: name, size and, while it travels, progress.
+    pub fn label(&self) -> String {
+        let size = match self.size {
+            n if n < 1024 => format!("{n} B"),
+            n => format!("{} KB", n.div_ceil(1024)),
+        };
+        let total = termchat_proto::file_chunks(self.size);
+        match self.complete() {
+            true => format!("📄 {} · {size}", self.name),
+            false => format!("📄 {} · {size} · {}/{total}", self.name, self.done),
+        }
+    }
+
     /// Chunk number `done`, the next one to send; `None` once all are out.
     pub fn next_chunk(&self, expires_in: Option<u32>) -> Option<Body> {
         let len = termchat_proto::chunk_len(self.size, self.done)?;

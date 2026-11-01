@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
-use termchat_core::proto::Ed25519Key;
+use termchat_core::proto::{self, Ed25519Key};
 
 use crate::data::{self, Contact};
 use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
@@ -630,6 +630,13 @@ impl Main {
                 }
             }
             (true, KeyCode::Char('e')) => self.engine.edit(i, |c| c.no_history = !c.no_history),
+            (true, KeyCode::Char('l')) if key.is_some() => {
+                self.popup = Some(Popup::Form(Form::new(Kind::SendFile)))
+            }
+            (true, KeyCode::Char('g')) if key.is_some() => match self.engine.unsaved_file(i) {
+                Some(_) => self.popup = Some(Popup::Form(Form::new(Kind::SaveFile))),
+                None => self.status = "no unsaved file in this chat".into(),
+            },
             _ if self.input.on_key(k) => self.send(),
             _ => {}
         }
@@ -804,6 +811,10 @@ impl Main {
         } else {
             "not verified"
         };
+        items.push(('l', "send a file".into()));
+        if self.engine.unsaved_file(self.selected).is_some() {
+            items.push(('g', "save the file".into()));
+        }
         items.extend([
             ('r', "rename".into()),
             ('f', format!("safety number ({verified})")),
@@ -1063,6 +1074,32 @@ impl Main {
                 self.engine
                     .change_password(&f.fields[0], f.new_password(1)?)?;
                 Ok("Password changed.".into())
+            }
+            Kind::SendFile => {
+                let path = form::expand(&f.fields[0]);
+                let too_big = |n: u64| n > u64::from(proto::MAX_FILE_BYTES);
+                let meta = std::fs::metadata(&path).map_err(|e| format!("cannot read: {e}"))?;
+                if !meta.is_file() || too_big(meta.len()) {
+                    return Err("pick a file of at most 1 MiB".into());
+                }
+                let bytes = std::fs::read(&path).map_err(|e| format!("cannot read: {e}"))?;
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                let name = name.ok_or("pick a file, not a folder")?;
+                self.engine.send_file(self.selected, &name, bytes)?;
+                Ok(format!("Sending {name}; progress shows in the chat."))
+            }
+            Kind::SaveFile => {
+                let i = self.selected;
+                let m = self
+                    .engine
+                    .unsaved_file(i)
+                    .ok_or("no unsaved file in this chat")?;
+                if f.fields[0].trim() == "DISCARD" {
+                    self.engine.discard_file(i, m);
+                    return Ok("File discarded.".into());
+                }
+                let path = self.engine.save_file(i, m, &form::expand(&f.fields[0]))?;
+                Ok(format!("Saved to {}.", path.display()))
             }
             Kind::Setup | Kind::Restore | Kind::Wipe => Ok(String::new()),
         }

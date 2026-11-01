@@ -14,6 +14,8 @@ pub enum Kind {
     Duress,
     Password,
     Wipe,
+    SendFile,
+    SaveFile,
 }
 
 pub use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
@@ -42,6 +44,8 @@ impl Kind {
             Self::Duress => " duress password ",
             Self::Password => " change password ",
             Self::Wipe => " wipe everything ",
+            Self::SendFile => " send a file ",
+            Self::SaveFile => " save a file ",
         }
     }
 
@@ -73,6 +77,8 @@ impl Kind {
                 ("Repeat", true),
             ],
             Self::Wipe => &[("Type WIPE or MOVED", false)],
+            Self::SendFile => &[("File", false)],
+            Self::SaveFile => &[("Save into folder, or type DISCARD", false)],
         }
     }
 
@@ -93,6 +99,12 @@ impl Kind {
             Self::Password => {
                 "The data stays as it is; only the key slot changes.\nIf you set a duress password, keep the new one far from it:\na typo that hits the duress password erases everything.   Ctrl+G: generate"
             }
+            Self::SendFile => {
+                "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about\n10 s, 1 MiB about 3 min. The relay sees roughly how big it is."
+            }
+            Self::SaveFile => {
+                "The newest unsaved file in this chat. Files from contacts can be\nharmful: termchat never opens them, check before you do.\nAn existing file is never overwritten. Esc: keep it for later."
+            }
             Self::Wipe => {
                 "Erases keys, contacts and history from this device. No undo.\nWIPE deletes the account: contacts are told you left and the\nrelay forgets your key. MOVED (restored on another device):\nerases only this device and tells nobody."
             }
@@ -104,7 +116,7 @@ impl Kind {
         match self {
             Self::Setup => Some(4),
             Self::Backup | Self::Duress | Self::Password => Some(1),
-            Self::Restore | Self::Wipe => None,
+            Self::Restore | Self::Wipe | Self::SendFile | Self::SaveFile => None,
         }
     }
 }
@@ -116,6 +128,9 @@ impl Form {
             fields[0] = DEFAULT_RELAY.into();
             fields[1] = DEFAULT_ONION.into();
             fields[2] = "y".into();
+        }
+        if kind == Kind::SaveFile {
+            fields[0] = "~/Downloads".into();
         }
         Self {
             kind,

@@ -43,6 +43,8 @@ Ctrl+X       report contact to the relay operator (and block)
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
+Ctrl+L       send a file (up to 1 MiB)
+Ctrl+G       save the newest received file
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe
 Ctrl+K       lock now (also after 5 min idle)
 Ctrl+Q       quit
@@ -628,7 +630,13 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let mut prev: Option<&crate::data::Msg> = None;
     for msg in &c.messages {
-        let text = clean(&msg.text);
+        let text = match &msg.file {
+            Some(f) if !msg.mine && f.complete() && f.data.is_some() => {
+                clean(&format!("{} · unsaved, Ctrl+G", f.label()))
+            }
+            Some(f) => clean(&f.label()),
+            None => clean(&msg.text),
+        };
         if msg.status == Status::System {
             lines.push(Line::styled(text, muted.add_modifier(Modifier::ITALIC)));
             prev = None;

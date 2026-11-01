@@ -1481,6 +1481,17 @@ impl Engine {
         Some((f.name.clone(), f.data.clone()?))
     }
 
+    /// The newest received file of contact `i` that waits to be saved.
+    pub fn unsaved_file(&self, i: usize) -> Option<usize> {
+        let c = self.data.contacts.get(i)?;
+        c.messages.iter().rposition(|m| {
+            !m.mine
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.complete() && f.data.is_some())
+        })
+    }
+
     /// Forgets the bytes of received file `m`; the line stays in the chat.
     pub fn discard_file(&mut self, i: usize, m: usize) {
         let msg = self
