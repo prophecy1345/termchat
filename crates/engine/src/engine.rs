@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_tungstenite::tungstenite::http::Uri;
 use zeroize::Zeroize;
 
-use crate::data::{self, Contact, Data, Msg, Status};
+use crate::data::{self, Contact, Data, FileMsg, Msg, Status};
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 use subtle::ConstantTimeEq;
 
@@ -26,6 +26,10 @@ const NOT_REMOVED: &str =
 /// ADR-007: what a not-yet-accepted request may leave behind.
 const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
+/// ADR-017: file chunks go in a burst of this many, then one per `FILE_EVERY`,
+/// so the relay's send limit (30, then one per 2 s) never refuses one.
+const FILE_BURST: f64 = 10.0;
+const FILE_EVERY: f64 = 3.0;
 /// ADR-003: a typo in the real password must never hit the duress one.
 pub const DURESS_DISTANCE: usize = 4;
 /// The project's public relay, prefilled on first run; any other relay can be
@@ -121,6 +125,8 @@ pub struct Engine {
     leaving: Option<Leaving>,
     /// Erased: nothing may write the state file again.
     gone: bool,
+    /// File chunks we may send now, and when that was counted (ADR-017).
+    chunk_budget: (f64, Instant),
 }
 
 /// A relay event and the key of our identity it is for (ADR-014).
@@ -184,10 +190,7 @@ fn ws_host(url: &str) -> Option<String> {
 pub fn clean(s: &str) -> String {
     s.chars()
         .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
-        .filter(|&c| {
-            !c.is_control()
-                && !matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-        })
+        .filter(|&c| !proto::is_unsafe_char(c))
         .collect()
 }
 
@@ -442,6 +445,7 @@ impl Engine {
             path,
             leaving: None,
             gone: false,
+            chunk_budget: (FILE_BURST, Instant::now()),
         }))
     }
 
@@ -694,6 +698,7 @@ impl Engine {
             at: now(),
             expires_at: None,
             status: Status::System,
+            file: None,
         });
     }
 
@@ -767,7 +772,7 @@ impl Engine {
         let expires_in = self.data.contacts[i].expires_in;
         for m in 0..self.data.contacts[i].messages.len() {
             let msg = &self.data.contacts[i].messages[m];
-            if msg.status != Status::Queued {
+            if msg.status != Status::Queued || msg.file.is_some() {
                 continue;
             }
             let body = Body::Text {
@@ -781,6 +786,7 @@ impl Engine {
             };
         }
         self.persist();
+        self.send_chunks();
     }
 
     /// One relay event of our identity `who`.
@@ -1134,6 +1140,7 @@ impl Engine {
                         at: now(),
                         expires_at: None,
                         status: Status::Received,
+                        file: None,
                     }),
                     false => c.held_back = c.held_back.saturating_add(1),
                 }
@@ -1149,6 +1156,7 @@ impl Engine {
                     at,
                     expires_at: expires_in.map(|s| at + u64::from(s)),
                     status: Status::Received,
+                    file: None,
                 });
                 self.happened.push(alert(false));
             }
@@ -1170,6 +1178,14 @@ impl Engine {
                 self.system(i, text);
             }
             Body::ContactAccept { .. } => self.system(i, "accepted your request"),
+            // ADR-017: no files before the request is accepted.
+            Body::File { .. } if got.request => return self.persist(),
+            body @ Body::File { .. } => {
+                if !self.data.take_chunk(i, body, now()) {
+                    return self.persist();
+                }
+                self.happened.push(alert(false));
+            }
             Body::Goodbye if got.request => {}
             Body::Goodbye => {
                 self.system(i, "deleted their account; this chat is read-only now");
@@ -1187,6 +1203,7 @@ impl Engine {
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
         self.expire();
+        self.send_chunks();
         self.leave_timeout();
         let t = Instant::now();
         self.retiring.retain(|(_, _, until)| *until > t);
@@ -1326,20 +1343,24 @@ impl Engine {
         self.persist();
     }
 
-    /// Queues `text` to contact `i` and sends it as soon as there is a session.
-    pub fn send(&mut self, i: usize, text: &str) -> Result<(), String> {
-        let Some(c) = self.data.contacts.get(i) else {
-            return Err("add a contact first".into());
-        };
-        if text.len() > proto::MAX_TEXT_BYTES {
-            return Err("message too long".into());
-        }
+    /// Contact `i`, if we may write to them.
+    fn writable(&self, i: usize) -> Result<&Contact, String> {
+        let c = self.data.contacts.get(i).ok_or("add a contact first")?;
         if c.blocked {
             return Err("contact is blocked; unblock them to write".into());
         }
         if c.left {
             return Err("this contact left".into());
         }
+        Ok(c)
+    }
+
+    /// Queues `text` to contact `i` and sends it as soon as there is a session.
+    pub fn send(&mut self, i: usize, text: &str) -> Result<(), String> {
+        if text.len() > proto::MAX_TEXT_BYTES {
+            return Err("message too long".into());
+        }
+        let c = self.writable(i)?;
         let (key, expires_in) = (c.key, c.expires_in);
         let at = now();
         self.data.contacts[i].messages.push(Msg {
@@ -1348,6 +1369,7 @@ impl Engine {
             at,
             expires_at: expires_in.map(|s| at + u64::from(s)),
             status: Status::Queued,
+            file: None,
         });
         match self.has_session(&key) {
             true => self.flush(i),
@@ -1357,6 +1379,129 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Queues a document to contact `i` (ADR-017); its chunks go out at the
+    /// pace `send_chunks` allows.
+    pub fn send_file(&mut self, i: usize, name: &str, bytes: Vec<u8>) -> Result<(), String> {
+        let c = self.writable(i)?;
+        let name = name.trim();
+        proto::check_file_name(name).map_err(|_| "this file name cannot be sent")?;
+        if bytes.is_empty() {
+            return Err("the file is empty".into());
+        }
+        let size = match u32::try_from(bytes.len()) {
+            Ok(n) if n <= proto::MAX_FILE_BYTES => n,
+            _ => return Err("files are limited to 1 MiB".into()),
+        };
+        let busy = |m: &Msg| m.mine && m.file.as_ref().is_some_and(|f| f.data.is_some());
+        if c.messages.iter().any(busy) {
+            return Err("wait until the previous file is sent".into());
+        }
+        let mut id = [0; 4];
+        getrandom::fill(&mut id).map_err(|e| e.to_string())?;
+        let (key, expires_in) = (c.key, c.expires_in);
+        let at = now();
+        self.data.contacts[i].messages.push(Msg {
+            mine: true,
+            text: name.to_string(),
+            at,
+            expires_at: expires_in.map(|s| at + u64::from(s)),
+            status: Status::Queued,
+            file: Some(FileMsg {
+                id: u32::from_le_bytes(id),
+                name: name.to_string(),
+                size,
+                done: 0,
+                data: Some(bytes),
+            }),
+        });
+        match self.has_session(&key) {
+            true => self.send_chunks(),
+            false => {
+                self.persist();
+                self.claim(key);
+            }
+        }
+        Ok(())
+    }
+
+    /// Sends queued file chunks as the budget allows (ADR-017), one file per
+    /// contact at a time. The last chunk's relay answer marks the file sent.
+    fn send_chunks(&mut self) {
+        let (tokens, at) = &mut self.chunk_budget;
+        *tokens = (*tokens + at.elapsed().as_secs_f64() / FILE_EVERY).min(FILE_BURST);
+        *at = Instant::now();
+        let mut sent = false;
+        for i in 0..self.data.contacts.len() {
+            let c = &self.data.contacts[i];
+            let (key, expires_in) = (c.key, c.expires_in);
+            let queued = |m: &Msg| m.status == Status::Queued && m.file.is_some();
+            let Some(m) = c.messages.iter().position(queued) else {
+                continue;
+            };
+            if c.blocked || c.left || !self.has_session(&key) {
+                continue;
+            }
+            while self.chunk_budget.0 >= 1.0 {
+                let Some(f) = self.data.contacts[i].messages[m].file.as_mut() else {
+                    break;
+                };
+                let Some(body) = f.next_chunk(expires_in) else {
+                    break;
+                };
+                // Counted before the send, so a restart never repeats a chunk.
+                f.done += 1;
+                let last = f.complete();
+                self.chunk_budget.0 -= 1.0;
+                sent = true;
+                let result = self.transmit(&key, body);
+                let msg = &mut self.data.contacts[i].messages[m];
+                match result {
+                    Ok(id) if last => msg.status = Status::Sending(id),
+                    Ok(_) => continue,
+                    Err(e) => msg.status = Status::Failed(e),
+                }
+                if let Some(f) = msg.file.as_mut() {
+                    f.data = None;
+                }
+                break;
+            }
+        }
+        if sent {
+            self.persist();
+        }
+    }
+
+    /// Name and bytes of a received file `m` of contact `i` that is whole and
+    /// not yet saved or discarded.
+    pub fn file_bytes(&self, i: usize, m: usize) -> Option<(String, Vec<u8>)> {
+        let msg = self.data.contacts.get(i)?.messages.get(m)?;
+        let f = msg.file.as_ref().filter(|f| !msg.mine && f.complete())?;
+        Some((f.name.clone(), f.data.clone()?))
+    }
+
+    /// Forgets the bytes of received file `m`; the line stays in the chat.
+    pub fn discard_file(&mut self, i: usize, m: usize) {
+        let msg = self
+            .data
+            .contacts
+            .get_mut(i)
+            .and_then(|c| c.messages.get_mut(m));
+        if let Some(f) = msg.filter(|m| !m.mine).and_then(|m| m.file.as_mut()) {
+            f.data = None;
+            self.persist();
+        }
+    }
+
+    /// Writes received file `m` into `dir` under a name not taken yet, mode
+    /// 0600, then forgets its bytes (ADR-017). Never overwrites a file.
+    pub fn save_file(&mut self, i: usize, m: usize, dir: &Path) -> Result<PathBuf, String> {
+        let (name, bytes) = self.file_bytes(i, m).ok_or("no file to save")?;
+        let path =
+            data::save_new(dir, &clean(&name), &bytes).map_err(|e| format!("cannot save: {e}"))?;
+        self.discard_file(i, m);
+        Ok(path)
     }
 
     /// Switches Tor on or off and reconnects every identity; returns what to tell the user.

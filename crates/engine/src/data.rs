@@ -122,6 +122,178 @@ pub struct Msg {
     pub at: u64,
     pub expires_at: Option<u64>,
     pub status: Status,
+    /// A document instead of a text; `text` holds its name (ADR-017).
+    #[serde(default)]
+    pub file: Option<FileMsg>,
+}
+
+/// A document in a chat (ADR-017).
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct FileMsg {
+    pub id: u32,
+    pub name: String,
+    pub size: u32,
+    /// Chunks sent so far, or received so far.
+    pub done: u16,
+    /// The bytes: ours until the last chunk is sent, theirs until saved or
+    /// discarded. Base64 in the state file.
+    #[serde(with = "b64_bytes")]
+    pub data: Option<Vec<u8>>,
+}
+
+impl FileMsg {
+    pub fn complete(&self) -> bool {
+        usize::from(self.done) == termchat_proto::file_chunks(self.size)
+    }
+
+    /// Chunk number `done`, the next one to send; `None` once all are out.
+    pub fn next_chunk(&self, expires_in: Option<u32>) -> Option<Body> {
+        let len = termchat_proto::chunk_len(self.size, self.done)?;
+        let start = usize::from(self.done) * termchat_proto::FILE_CHUNK;
+        Some(Body::File {
+            id: self.id,
+            name: self.name.clone(),
+            size: self.size,
+            index: self.done,
+            expires_in,
+            data: self.data.as_ref()?.get(start..start + len)?.to_vec(),
+        })
+    }
+}
+
+/// ADR-017: received files waiting to be saved or discarded, in total.
+pub const MAX_UNSAVED: usize = 8 << 20;
+
+impl Data {
+    /// One received chunk for contact `i` (ADR-017): in order, one file per
+    /// contact at a time. `true` once the file is whole.
+    pub fn take_chunk(&mut self, i: usize, chunk: Body, at: u64) -> bool {
+        let Body::File {
+            id,
+            name,
+            size,
+            index,
+            expires_in,
+            data,
+        } = chunk
+        else {
+            return false;
+        };
+        let open = |m: &Msg| {
+            !m.mine
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.data.is_some() && !f.complete())
+        };
+        let note = |text: String| Msg {
+            mine: false,
+            text,
+            at,
+            expires_at: None,
+            status: Status::System,
+            file: None,
+        };
+        let Some(c) = self.contacts.get_mut(i) else {
+            return false;
+        };
+        if let Some(m) = c.messages.iter().rposition(open) {
+            if let Some(f) = c.messages[m].file.as_mut()
+                && (f.id, &f.name, f.size, f.done) == (id, &name, size, index)
+                && let Some(bytes) = f.data.as_mut()
+            {
+                bytes.extend_from_slice(&data);
+                f.done += 1;
+                return f.complete();
+            }
+            let broken = c.messages.remove(m).text;
+            c.messages
+                .push(note(format!("{broken} did not arrive whole")));
+        }
+        if index != 0 {
+            return false;
+        }
+        let unsaved: usize = (self.contacts.iter())
+            .flat_map(|c| &c.messages)
+            .filter(|m| !m.mine)
+            .filter_map(|m| m.file.as_ref()?.data.as_ref())
+            .map(Vec::len)
+            .sum();
+        let c = &mut self.contacts[i];
+        if unsaved + size as usize > MAX_UNSAVED {
+            c.messages.push(note(format!(
+                "{name} was dropped: too many unsaved files, save or discard some"
+            )));
+            return false;
+        }
+        let file = FileMsg {
+            id,
+            name: name.clone(),
+            size,
+            done: 1,
+            data: Some(data),
+        };
+        let whole = file.complete();
+        c.messages.push(Msg {
+            mine: false,
+            text: name,
+            at,
+            expires_at: expires_in.map(|s| at + u64::from(s)),
+            status: Status::Received,
+            file: Some(file),
+        });
+        whole
+    }
+}
+
+/// Creates `name` in `dir`, or `name (1)`, `name (2)`... if taken, mode 0600,
+/// and writes `bytes` (ADR-017). Never overwrites anything.
+pub fn save_new(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+        _ => (name, String::new()),
+    };
+    for n in 0..100 {
+        let path = dir.join(match n {
+            0 => name.to_string(),
+            n => format!("{stem} ({n}){ext}"),
+        });
+        let mut opts = OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        let mut file = match opts.open(&path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+            let _ = fs::remove_file(&path);
+            return Err(e);
+        }
+        return Ok(path);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "too many files with this name",
+    ))
+}
+
+mod b64_bytes {
+    use super::{B64, Engine};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(v: &Option<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(b) => s.serialize_some(&B64.encode(b)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
+        Option::<String>::deserialize(d)?
+            .map(|t| B64.decode(t).map_err(D::Error::custom))
+            .transpose()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,6 +542,117 @@ pub fn permission_warning(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn outgoing(bytes: Vec<u8>) -> FileMsg {
+        FileMsg {
+            id: 7,
+            name: "report.pdf".into(),
+            size: bytes.len() as u32,
+            done: 0,
+            data: Some(bytes),
+        }
+    }
+
+    fn chunks(mut f: FileMsg) -> Vec<Body> {
+        let mut out = Vec::new();
+        while let Some(chunk) = f.next_chunk(Some(60)) {
+            out.push(chunk);
+            f.done += 1;
+        }
+        out
+    }
+
+    fn one_contact() -> Data {
+        let mut data = Data::default();
+        data.contacts.push(Contact::default());
+        data
+    }
+
+    #[test]
+    fn file_goes_through_in_chunks_and_survives_the_state_file() {
+        let bytes: Vec<u8> = (0..40_000u32).map(|n| n as u8).collect();
+        let sent = chunks(outgoing(bytes.clone()));
+        assert_eq!(sent.len(), 3);
+        let mut data = one_contact();
+        let whole: Vec<bool> = sent
+            .into_iter()
+            .map(|c| data.take_chunk(0, c, 100))
+            .collect();
+        assert_eq!(whole, [false, false, true]);
+        let data = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
+        let m = &data.contacts[0].messages[0];
+        assert_eq!((m.text.as_str(), m.expires_at), ("report.pdf", Some(160)));
+        assert_eq!(m.file.as_ref().unwrap().data.as_deref(), Some(&bytes[..]));
+    }
+
+    #[test]
+    fn chunks_out_of_order_break_the_file() {
+        let sent = chunks(outgoing(vec![1; 40_000]));
+        let mut data = one_contact();
+        assert!(!data.take_chunk(0, sent[1].clone(), 0));
+        assert!(data.contacts[0].messages.is_empty());
+        assert!(!data.take_chunk(0, sent[0].clone(), 0));
+        assert!(!data.take_chunk(0, sent[2].clone(), 0));
+        let msgs = &data.contacts[0].messages;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].text, "report.pdf did not arrive whole");
+        // A new file after a broken one starts clean.
+        assert!(data.take_chunk(0, chunks(outgoing(vec![2; 10]))[0].clone(), 0));
+    }
+
+    #[test]
+    fn unsaved_files_are_capped() {
+        let big = |id| {
+            let mut f = outgoing(vec![0; termchat_proto::MAX_FILE_BYTES as usize]);
+            f.id = id;
+            chunks(f)
+        };
+        let mut data = one_contact();
+        for id in 0..8 {
+            assert!(
+                big(id)
+                    .into_iter()
+                    .map(|c| data.take_chunk(0, c, 0))
+                    .last()
+                    .unwrap()
+            );
+        }
+        assert!(!data.take_chunk(0, big(9)[0].clone(), 0));
+        let last = data.contacts[0].messages.last().unwrap();
+        assert_eq!(last.status, Status::System);
+        assert!(last.text.contains("too many unsaved files"));
+        // Discarding one makes room again.
+        data.contacts[0].messages[0].file.as_mut().unwrap().data = None;
+        assert!(!data.take_chunk(0, big(10)[0].clone(), 0));
+        assert_eq!(
+            data.contacts[0].messages.last().unwrap().status,
+            Status::Received
+        );
+    }
+
+    #[test]
+    fn saving_never_overwrites() {
+        let dir = std::env::temp_dir().join(format!("termchat-save-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let first = save_new(&dir, "a.pdf", b"one").unwrap();
+        let second = save_new(&dir, "a.pdf", b"two").unwrap();
+        let bare = save_new(&dir, ".env", b"x").unwrap();
+        let bare2 = save_new(&dir, ".env", b"y").unwrap();
+        assert_eq!(first, dir.join("a.pdf"));
+        assert_eq!(second, dir.join("a (1).pdf"));
+        assert_eq!(bare2, dir.join(".env (1)"));
+        assert_eq!(fs::read(&first).unwrap(), b"one");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&second).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        for p in [first, second, bare, bare2] {
+            fs::remove_file(p).unwrap();
+        }
+        fs::remove_dir(&dir).unwrap();
+    }
+
     #[test]
     fn invite_codes_admit_once_public_until_renewed_and_old_by_setting() {
         let identity = termchat_proto::Identity {
@@ -452,6 +735,7 @@ mod tests {
             at,
             expires_at: None,
             status: Status::Received,
+            file: None,
         };
         let new = Contact {
             key: [1; 32],
@@ -484,6 +768,7 @@ mod tests {
             at: 0,
             expires_at: None,
             status,
+            file: None,
         };
         let mut kept = Contact {
             key: [1; 32],

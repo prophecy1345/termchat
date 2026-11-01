@@ -15,6 +15,11 @@ pub const MAX_TEXT_BYTES: usize = 16_000;
 pub const MAX_NICKNAME_BYTES: usize = 64;
 /// Free text attached to a contact request.
 pub const MAX_NOTE_BYTES: usize = 256;
+/// A document sent in chunks (ADR-017).
+pub const MAX_FILE_BYTES: u32 = 1 << 20;
+/// Data per `Body::File` chunk: fits the largest bucket with a full header.
+pub const FILE_CHUNK: usize = 16_000;
+pub const MAX_FILE_NAME_BYTES: usize = 255;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
 pub const MAX_BODY_BYTES: usize = 20 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
@@ -382,6 +387,16 @@ pub enum Body {
         note: String,
         code: InviteCode,
     },
+    /// One chunk of a document, opaque bytes (ADR-017). Name and size repeat
+    /// in every chunk; chunk `index` holds bytes from `index * FILE_CHUNK`.
+    File {
+        id: u32,
+        name: String,
+        size: u32,
+        index: u16,
+        expires_in: Option<u32>,
+        data: Vec<u8>,
+    },
 }
 
 impl Inner {
@@ -425,9 +440,59 @@ impl Inner {
             Body::ContactRequest { nickname, .. }
             | Body::ContactRequestV2 { nickname, .. }
             | Body::ContactAccept { nickname } => check_nickname(nickname),
+            Body::File {
+                name,
+                size,
+                index,
+                data,
+                ..
+            } => {
+                check_file_name(name)?;
+                if *size == 0 || *size > MAX_FILE_BYTES {
+                    return Err(Error::TooLarge);
+                }
+                if data.len() != chunk_len(*size, *index).ok_or(Error::Malformed)? {
+                    return Err(Error::Malformed);
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
+}
+
+/// Number of chunks a file of `size` bytes takes.
+pub fn file_chunks(size: u32) -> usize {
+    (size as usize).div_ceil(FILE_CHUNK)
+}
+
+/// Exact data length of chunk `index`, or `None` past the last chunk.
+pub fn chunk_len(size: u32, index: u16) -> Option<usize> {
+    let start = usize::from(index) * FILE_CHUNK;
+    (start < size as usize).then(|| (size as usize - start).min(FILE_CHUNK))
+}
+
+/// Control characters drive a terminal; bidi overrides reorder what is
+/// around them. Neither belongs in anything a peer gets shown.
+pub fn is_unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// A name only, never a path: the receiver joins it to a folder it picked.
+pub fn check_file_name(name: &str) -> Result<(), Error> {
+    if name.len() > MAX_FILE_NAME_BYTES {
+        return Err(Error::TooLarge);
+    }
+    if name.trim().is_empty()
+        || matches!(name, "." | "..")
+        || name
+            .chars()
+            .any(|c| is_unsafe_char(c) || matches!(c, '/' | '\\'))
+    {
+        return Err(Error::Malformed);
+    }
+    Ok(())
 }
 
 /// Accepts only the canonical encoding: postcard tolerates overlong varints,
@@ -574,6 +639,97 @@ mod tests {
         let bytes = postcard::to_allocvec(&key).unwrap();
         assert_eq!(bytes.len(), 96);
         assert_eq!(postcard::from_bytes::<SignedKey>(&bytes).unwrap(), key);
+    }
+
+    fn chunk(name: &str, size: u32, index: u16, len: usize) -> Inner {
+        Inner {
+            seq: u64::MAX,
+            body: Body::File {
+                id: u32::MAX,
+                name: name.into(),
+                size,
+                index,
+                expires_in: Some(u32::MAX),
+                data: vec![7; len],
+            },
+            ..text(0)
+        }
+    }
+
+    #[test]
+    fn file_chunks_roundtrip_and_check_limits() {
+        // The largest header still fits the largest bucket.
+        let full = chunk(
+            &"n".repeat(MAX_FILE_NAME_BYTES),
+            MAX_FILE_BYTES,
+            0,
+            FILE_CHUNK,
+        );
+        let padded = full.to_padded().unwrap();
+        assert_eq!(padded.len(), 16384);
+        assert_eq!(Inner::from_padded(&padded).unwrap(), full);
+        let last = file_chunks(MAX_FILE_BYTES) - 1;
+        assert_eq!(file_chunks(MAX_FILE_BYTES), 66);
+        let tail = chunk(
+            "a.pdf",
+            MAX_FILE_BYTES,
+            last as u16,
+            (1 << 20) - last * FILE_CHUNK,
+        );
+        assert_eq!(
+            Inner::from_padded(&tail.to_padded().unwrap()).unwrap(),
+            tail
+        );
+        assert_eq!(file_chunks(1), 1);
+        assert_eq!(chunk_len(FILE_CHUNK as u32, 1), None);
+
+        for (bad, err) in [
+            (chunk("a", 0, 0, 0), Error::TooLarge),
+            (
+                chunk("a", MAX_FILE_BYTES + 1, 0, FILE_CHUNK),
+                Error::TooLarge,
+            ),
+            (chunk("a", 10, 1, 0), Error::Malformed),
+            (chunk("a", 10, 0, 9), Error::Malformed),
+            (chunk("a", 10, 0, 11), Error::Malformed),
+            (chunk("a", 20_000, 0, 4000), Error::Malformed),
+            (chunk("a", 20_000, 1, FILE_CHUNK), Error::Malformed),
+            (
+                chunk(&"n".repeat(MAX_FILE_NAME_BYTES + 1), 1, 0, 1),
+                Error::TooLarge,
+            ),
+        ] {
+            assert_eq!(bad.to_padded(), Err(err));
+        }
+        for name in [
+            "",
+            " ",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "evil\u{1b}[2J",
+            "x\u{202E}fdp.exe",
+        ] {
+            assert_eq!(
+                chunk(name, 1, 0, 1).to_padded(),
+                Err(Error::Malformed),
+                "{name:?}"
+            );
+        }
+        assert!(chunk("отчёт v2.final.pdf", 1, 0, 1).to_padded().is_ok());
+    }
+
+    #[test]
+    fn file_chunk_rejected_on_the_wire() {
+        // Same check on decode: a peer that skips `to_padded` gets nowhere.
+        let bad = chunk("../x", 1, 0, 1);
+        let mut buf = postcard::to_allocvec(&bad).unwrap();
+        buf.push(0x80);
+        buf.resize(512, 0);
+        assert_eq!(Inner::from_padded(&buf), Err(Error::Malformed));
     }
 
     #[test]
