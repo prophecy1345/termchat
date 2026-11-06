@@ -57,8 +57,9 @@ termchat.app — бесплатный некоммерческий проект 
 
 Скачайте архив для своей системы со страницы
 [релизов](https://github.com/prophecy1345/termchat/releases). В каждом лежат `termchat`
-(клиент) и `termchat-relay` (сервер). Самые быстрые способы (Homebrew, одна команда)
-описаны в [руководстве](#1-установка).
+(клиент) и `termchat-relay` (сервер). Приложение с окном, для тех, кому окно удобнее
+терминала, лежит в отдельных архивах `termchat-gui-…`. Самые быстрые способы
+(Homebrew, одна команда) описаны в [руководстве](#1-установка).
 
 ### Проверка релиза
 
@@ -113,6 +114,32 @@ irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install
 ```
 
 После этого откройте новый терминал и запустите `termchat`.
+
+**Приложение с окном** (macOS, Linux, Windows): тот же аккаунт и то же шифрование
+в окне, в стиле приложения для Android (ADR-018). Это отдельная программа,
+`termchat-gui`; терминальный клиент и приложение могут открывать один аккаунт,
+но не одновременно.
+```sh
+# macOS, Linux: termchat.app в ~/Applications на macOS; на Linux в ~/.local/bin,
+# с пунктом в меню
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_GUI=1 sh
+# или через Homebrew
+brew install prophecy1345/tap/termchat-gui
+```
+```powershell
+# Windows: рядом с termchat.exe, с пунктом в меню «Пуск»
+$env:TERMCHAT_GUI = 1; irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
+```
+Приложение не подписано платным сертификатом Apple или Microsoft. Установленное
+так, как выше, оно открывается сразу. Если скачать архив через браузер, macOS
+откажет при первом запуске: один раз откройте «Системные настройки» →
+«Конфиденциальность и безопасность» → «Всё равно открыть». Windows SmartScreen
+тоже спросит один раз: «Подробнее» → «Выполнить в любом случае». На Linux нужен
+glibc 2.28 или новее (Debian 10, Ubuntu 20.04, RHEL 8) и X11 или Wayland.
+
+Окно показывает остальному компьютеру больше, чем терминал: скриншоты и запись
+экрана его видят (защиты, как на Android, нет), а текст проходит через оконную
+систему и графический драйвер.
 
 **Android** (8.0 и новее, сервисы Google не нужны): скачайте `termchat-<версия>-android-arm64.apk` со страницы [релизов](https://github.com/prophecy1345/termchat/releases) и откройте его; Android один раз спросит разрешение ставить приложения из браузера. О новой версии приложение скажет само, в списке чатов. Сборка в F-Droid готовится, с той же подписью, что и APK здесь.
 

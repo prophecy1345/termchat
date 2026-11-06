@@ -55,8 +55,10 @@ Full details: [docs/threat-model.md](docs/threat-model.md).
 
 Download the archive for your system from the
 [releases](https://github.com/prophecy1345/termchat/releases). Each holds `termchat`
-(the client) and `termchat-relay` (the server). The quickest ways to install
-(Homebrew, one command) are in the [user guide](#1-install).
+(the client) and `termchat-relay` (the server). The desktop app, for those who
+prefer a window to a terminal, comes in its own `termchat-gui-…` archives. The
+quickest ways to install (Homebrew, one command) are in the
+[user guide](#1-install).
 
 ### Verify a release
 
@@ -115,6 +117,32 @@ irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install
 ```
 
 Then open a new terminal and run `termchat`.
+
+**Desktop app** (macOS, Linux, Windows): the same account and the same
+encryption in a window, with the look of the Android app (ADR-018). It is a
+separate program, `termchat-gui`; the terminal client and the app can open the
+same account, but not at the same time.
+```sh
+# macOS, Linux: termchat.app into ~/Applications on macOS; on Linux into
+# ~/.local/bin, with a menu entry
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_GUI=1 sh
+# or with Homebrew
+brew install prophecy1345/tap/termchat-gui
+```
+```powershell
+# Windows: next to termchat.exe, with a Start menu entry
+$env:TERMCHAT_GUI = 1; irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
+```
+The app is not signed with a paid Apple or Microsoft certificate. Installed as
+above it opens normally. Downloaded through a browser instead, macOS refuses
+the first start: open System Settings → Privacy & Security → "Open Anyway"
+once. Windows SmartScreen asks once too: "More info" → "Run anyway". On Linux
+it needs glibc 2.28 or newer (Debian 10, Ubuntu 20.04, RHEL 8) and X11 or
+Wayland.
+
+A window shows more to the rest of the computer than a terminal does:
+screenshots and screen recording see it (there is no protection like Android's),
+and the text passes through the window system and the graphics driver.
 
 **Android** (8.0 and later, no Google services needed): download
 `termchat-<version>-android-arm64.apk` from the

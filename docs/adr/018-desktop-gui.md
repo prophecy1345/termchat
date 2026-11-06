@@ -126,6 +126,28 @@ Each one is justified in its commit and checked with `cargo deny`.
    screenshots and screen recording see the window.
 2. **No paid signing**, see section 6.
 
+## Settled while building it (2026-11-06)
+- **Linux builds use glibc 2.28, not musl.** A static musl program cannot load
+  the system's OpenGL, X11 and Wayland libraries. The GUI is built for
+  `*-unknown-linux-gnu` with glibc 2.28 (Debian 10, Ubuntu 20.04, RHEL 8) and
+  loads libwayland at run time, like X11 (`winit/wayland-dlopen`), so it links
+  to nothing but glibc. Its x86_64 build is checked for reproducibility like
+  the terminal client. The terminal client stays static musl.
+- **Archives** are `termchat-gui-<tag>-<target>`, with lyrebird. macOS holds
+  `termchat.app`, ad-hoc signed by `codesign --sign -` (free; it does not
+  replace notarisation). Linux holds a `.desktop` entry and an icon.
+- **Installers**: `TERMCHAT_GUI=1` makes `install.sh` and `install.ps1` install
+  the app instead of the terminal client. The release workflow runs both ways.
+- **Homebrew**: the `termchat-gui` formula keeps lyrebird next to the program,
+  out of `bin`, so it does not clash with the terminal client's.
+- **Windows**: no console window behind the app; the `.exe` has no icon of its
+  own yet (that needs a resource compiler, a later step).
+- **Settings**: `settings.json` holds `desktop_theme` beside the terminal's
+  `theme`, so each keeps its own look.
+- **Shared code** moved into the engine as the GUI needed it: settings, the
+  sound, auto-lock, the core dump guard, the state lock, short time labels,
+  path expansion, reading a document to send, the release notes.
+
 ## Metadata, honestly
 
 The GUI talks to the relay exactly like the TUI: nothing new for the relay or
