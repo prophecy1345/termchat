@@ -63,6 +63,12 @@ fn new_code() -> InviteCode {
     code
 }
 
+/// This version's notes and the ones before, from CHANGELOG.md.
+pub fn news() -> &'static str {
+    const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+    &CHANGELOG[CHANGELOG.find("## ").unwrap_or(0)..]
+}
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1833,6 +1839,11 @@ impl Engine {
                 .relay
                 .send(ClientFrame::SetPush { endpoint });
         }
+    }
+
+    /// This version's notes were not opened yet, or a newer one is out.
+    pub fn news_unread(&self) -> bool {
+        self.update.is_some() || self.data.news_seen != env!("CARGO_PKG_VERSION")
     }
 
     /// Marks this version's notes as read.

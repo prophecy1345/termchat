@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
-use termchat_core::proto::{self, Ed25519Key};
+use termchat_core::proto::Ed25519Key;
 
 use crate::data::{self, Contact};
 use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
@@ -650,7 +650,7 @@ impl Main {
 
     /// This version's notes were not opened yet, or a newer one is out.
     pub fn news_unread(&self) -> bool {
-        self.engine.update.is_some() || self.engine.data.news_seen != env!("CARGO_PKG_VERSION")
+        self.engine.news_unread()
     }
 
     /// Top of "what's new" when the relay runs a newer version (ADR-010).
@@ -1073,15 +1073,7 @@ impl Main {
                 Ok("Password changed.".into())
             }
             Kind::SendFile => {
-                let path = form::expand(&f.fields[0]);
-                let too_big = |n: u64| n > u64::from(proto::MAX_FILE_BYTES);
-                let meta = std::fs::metadata(&path).map_err(|e| format!("cannot read: {e}"))?;
-                if !meta.is_file() || too_big(meta.len()) {
-                    return Err("pick a file of at most 1 MiB".into());
-                }
-                let bytes = std::fs::read(&path).map_err(|e| format!("cannot read: {e}"))?;
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                let name = name.ok_or("pick a file, not a folder")?;
+                let (name, bytes) = data::read_document(&form::expand(&f.fields[0]))?;
                 self.engine.send_file(self.selected, &name, bytes)?;
                 Ok(format!("Sending {name}; progress shows in the chat."))
             }

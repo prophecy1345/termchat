@@ -393,6 +393,18 @@ pub fn expand(path: &str) -> PathBuf {
     }
 }
 
+/// A document to send (ADR-017): its name and bytes, at most 1 MiB. The
+/// size is checked before reading, so a huge file is never loaded.
+pub fn read_document(path: &Path) -> Result<(String, Vec<u8>), String> {
+    let meta = fs::metadata(path).map_err(|e| format!("cannot read: {e}"))?;
+    if !meta.is_file() || meta.len() > u64::from(termchat_proto::MAX_FILE_BYTES) {
+        return Err("pick a file of at most 1 MiB".into());
+    }
+    let bytes = fs::read(path).map_err(|e| format!("cannot read: {e}"))?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    Ok((name.ok_or("pick a file, not a folder")?, bytes))
+}
+
 /// Temp file, fsync, rename: a crash leaves either the old or the new state.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");

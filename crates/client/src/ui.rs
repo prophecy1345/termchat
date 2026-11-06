@@ -805,10 +805,7 @@ fn manual() -> &'static str {
 }
 
 /// CHANGELOG.md from its first version heading.
-fn news() -> &'static str {
-    const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
-    &CHANGELOG[CHANGELOG.find("## ").unwrap_or(0)..]
-}
+use crate::engine::news;
 
 /// Just enough Markdown for the manual: headings, lists, tables, code, bold,
 /// `code` and links (shown as their text). Only paragraphs containing `q`
