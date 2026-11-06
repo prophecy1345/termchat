@@ -2,46 +2,12 @@
 //! the message, not even the sender's name, reaches another program.
 
 use std::io::Write;
-use std::process::{Command, Stdio};
 
-/// Plays the system's notification sound in the background; the terminal
-/// bell if no player is found. The commands are fixed: no outside input.
+/// The system's notification sound; the terminal bell if no player is found.
 pub fn sound() {
-    let players: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
-        &[("afplay", &["/System/Library/Sounds/Glass.aiff"])]
-    } else if cfg!(windows) {
-        &[(
-            "powershell",
-            &[
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "[System.Media.SystemSounds]::Asterisk.Play(); Start-Sleep -Milliseconds 800",
-            ],
-        )]
-    } else {
-        &[
-            ("canberra-gtk-play", &["-i", "message-new-instant"]),
-            (
-                "paplay",
-                &["/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"],
-            ),
-        ]
-    };
-    for (program, args) in players {
-        let child = Command::new(program)
-            .args(*args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        if let Ok(mut child) = child {
-            // Reaped in the background so it never lingers as a zombie.
-            std::thread::spawn(move || child.wait());
-            return;
-        }
+    if !termchat_engine::notify::sound() {
+        emit("\x07");
     }
-    emit("\x07");
 }
 
 /// A desktop notification through the terminal, always the same text.

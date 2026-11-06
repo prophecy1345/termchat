@@ -6,16 +6,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::data;
-use crate::theme::{self, Palette};
+use crate::{data, themes};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: String,
-    /// Clicks and the wheel; off gives the terminal's own text selection back.
+    /// TUI: clicks and the wheel; off gives the terminal's own text selection
+    /// back.
     pub mouse: bool,
-    /// Contact list width, its edge included.
+    /// TUI: contact list width, its edge included.
     pub sidebar: u16,
     /// A system sound for new messages (ADR-008).
     pub sound: bool,
@@ -26,7 +26,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: theme::THEMES[0].0.into(),
+            theme: themes::THEMES[0].0.into(),
             mouse: true,
             sidebar: 28,
             sound: true,
@@ -51,10 +51,6 @@ impl Settings {
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         data::write_atomic(path, &serde_json::to_vec_pretty(self)?)
-    }
-
-    pub fn palette(&self) -> &'static Palette {
-        theme::by_name(&self.theme)
     }
 }
 

@@ -15,10 +15,9 @@ use crate::input::Input;
 use crate::notify;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
-use crate::{RelayEvent, theme};
+use crate::{AUTOLOCK, RelayEvent, theme};
+use termchat_engine::notify::SOUND_GAP;
 
-/// Idle time before the client locks itself.
-pub const AUTOLOCK: Duration = Duration::from_secs(5 * 60);
 const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
 
 /// How this copy was installed decides how to update it (ADR-010).
@@ -155,8 +154,6 @@ pub struct Toast {
 
 const MAX_TOASTS: usize = 4;
 const TOAST_FOR: Duration = Duration::from_secs(5);
-/// A burst of messages makes one sound, not many.
-const SOUND_GAP: Duration = Duration::from_secs(2);
 /// A click on card `i` is `F(TOAST_KEY + i)`.
 pub const TOAST_KEY: u8 = 150;
 

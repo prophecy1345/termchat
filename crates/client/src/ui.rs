@@ -110,7 +110,7 @@ fn on_accent(t: &Palette) -> Color {
 }
 
 pub fn render(f: &mut Frame, app: &App) {
-    let t = app.settings.palette();
+    let t = crate::theme::by_name(&app.settings.theme);
     let mut h = app.hits.borrow_mut();
     *h = Hits::default();
     match &app.screen {
