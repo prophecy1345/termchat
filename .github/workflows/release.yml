@@ -217,7 +217,7 @@ jobs:
           $env:TERMCHAT_GUI = 1
           ./scripts/install.ps1
           if (-not (Test-Path "$env:LOCALAPPDATA\Programs\termchat\termchat-gui.exe")) { throw 'no termchat-gui.exe' }
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\termchat.lnk")) { throw 'no Start menu entry' }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\termchat.app.lnk")) { throw 'no Start menu entry' }
 
   publish:
     needs: [build, installers, android, android-reproducible]

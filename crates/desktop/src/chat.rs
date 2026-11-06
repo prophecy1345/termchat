@@ -58,6 +58,25 @@ impl Pal {
         }
     }
 
+    /// Hack, the monospace font, also backs the proportional one: it has
+    /// ● ○ ↓ and more that the proportional font lacks.
+    pub fn fonts(ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+        let mono = fonts
+            .families
+            .get(&egui::FontFamily::Monospace)
+            .and_then(|f| f.first())
+            .cloned();
+        if let Some(hack) = mono {
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .push(hack);
+        }
+        ctx.set_fonts(fonts);
+    }
+
     pub fn apply(&self, ctx: &egui::Context) {
         let mut v = egui::Visuals::dark();
         v.panel_fill = self.bg;
@@ -198,7 +217,7 @@ impl Chat {
     fn sidebar(&mut self, ui: &mut egui::Ui, p: &Pal) -> bool {
         ui.horizontal(|ui| {
             crate::logo::mark(ui, 26.0);
-            ui.label(RichText::new("termchat").strong().size(16.0));
+            ui.label(RichText::new("termchat.app").strong().size(16.0));
         });
         ui.add_space(8.0);
         let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.contacts.len())
@@ -345,7 +364,7 @@ impl Chat {
                         }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.menu_button("⋮", |ui| next = chat_menu(ui, c, request));
+                        ui.menu_button("•••", |ui| next = chat_menu(ui, c, request));
                         if request {
                             accept = ui.button("Accept").clicked();
                             ui.label(RichText::new("contact request").color(p.warn));
@@ -381,11 +400,11 @@ impl Chat {
         let mut send = false;
         ui.horizontal(|ui| {
             let label = match timer {
-                Some(s) => format!("⏱ {}", span(u64::from(s))),
-                None => "⏱ off".into(),
+                Some(s) => format!("timer {}", span(u64::from(s))),
+                None => "timer off".into(),
             };
             if ui
-                .add(egui::Button::new("📎").corner_radius(2))
+                .add(egui::Button::new("File").corner_radius(2))
                 .on_hover_text("Send a file, up to 1 MiB")
                 .clicked()
             {
@@ -449,7 +468,7 @@ impl Chat {
                     .clicked();
             }
             let note = match &e.update {
-                Some(v) => format!("termchat {v} is out"),
+                Some(v) => format!("termchat.app {v} is out"),
                 None => "new in this version".into(),
             };
             if unread_news {
@@ -549,7 +568,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) -> Option<usize> {
     let mut save = None;
     for (n, m) in c.messages.iter().enumerate() {
         let text = match &m.file {
-            Some(f) => clean_text(&f.label()),
+            Some(f) => clean_text(f.label().trim_start_matches("📄 ")),
             None => clean_text(&m.text),
         };
         if m.status == Status::System {
@@ -566,9 +585,9 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) -> Option<usize> {
             continue;
         }
         let mark = match &m.status {
-            Status::Queued | Status::Sending(_) => " …".to_string(),
-            Status::Sent => " ✓".into(),
-            Status::Failed(why) => format!(" ✗ {why}"),
+            Status::Queued | Status::Sending(_) => " · sending".to_string(),
+            Status::Sent => " · sent".into(),
+            Status::Failed(why) => format!(" · failed: {why}"),
             _ => String::new(),
         };
         let align = if m.mine { Align::Max } else { Align::Min };

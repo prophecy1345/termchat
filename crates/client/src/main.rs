@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
     // A folder without locks (some network drives) must not stop termchat.
     let _lock = match data::lock(&path) {
         Ok(None) => {
-            eprintln!("termchat is already open in another window");
+            eprintln!("termchat.app is already open in another window");
             std::process::exit(1);
         }
         Ok(Some(file)) => Some(file),

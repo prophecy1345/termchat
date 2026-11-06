@@ -41,8 +41,8 @@ case $target in
 <dict>
   <key>CFBundleExecutable</key><string>termchat-gui</string>
   <key>CFBundleIdentifier</key><string>app.termchat.desktop</string>
-  <key>CFBundleName</key><string>termchat</string>
-  <key>CFBundleDisplayName</key><string>termchat</string>
+  <key>CFBundleName</key><string>termchat.app</string>
+  <key>CFBundleDisplayName</key><string>termchat.app</string>
   <key>CFBundleIconFile</key><string>termchat</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
@@ -61,7 +61,7 @@ PLIST
     cat > "$dir/termchat.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=termchat
+Name=termchat.app
 Comment=Private, end-to-end encrypted messenger
 Exec=termchat-gui
 Icon=termchat

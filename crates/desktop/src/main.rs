@@ -39,7 +39,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         // Never a contact name: other programs see the title (ADR-018).
         viewport: egui::ViewportBuilder::default()
-            .with_title("termchat")
+            .with_title("termchat.app")
             .with_app_id("termchat")
             .with_icon(logo::icon())
             .with_inner_size([900.0, 640.0]),
@@ -51,6 +51,7 @@ fn main() -> eframe::Result {
         Box::new(|cc| {
             // Plain, so the lock screen has the theme too (ADR-008).
             let settings = Settings::load(&settings::path(&path));
+            Pal::fonts(&cc.egui_ctx);
             let pal = Pal::named(&settings.desktop_theme);
             pal.apply(&cc.egui_ctx);
             Ok(Box::new(App {
@@ -178,7 +179,7 @@ impl eframe::App for App {
         let open = |engine| Screen::Main(Box::new(Chat::new(engine)));
         egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
             Screen::Busy => {
-                ui.heading("termchat is already open in another window");
+                ui.heading("termchat.app is already open in another window");
                 ui.label("Close it first: two clients on one account would overwrite each other.");
             }
             Screen::Setup(form) => {
@@ -215,12 +216,14 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
     let mut go = false;
     ui.vertical_centered(|ui| {
         logo::mark(ui, 96.0);
-        ui.label(egui::RichText::new("termchat").strong().size(28.0));
+        ui.label(egui::RichText::new("termchat.app").strong().size(28.0));
         ui.add_space(20.0);
         let field = ui.add(
             egui::TextEdit::singleline(&mut *u.password)
                 .password(true)
-                .hint_text("Password")
+                // The hint takes no font from the field: same size, so it
+                // sits in the middle like the typed text.
+                .hint_text(egui::RichText::new("Password").size(20.0))
                 .font(egui::FontId::proportional(20.0))
                 .desired_width(WIDTH)
                 .margin(egui::Margin::symmetric(14, 12)),

@@ -53,7 +53,7 @@ try {
     $lyrebird = Join-Path $src 'lyrebird.exe'
     if (Test-Path $lyrebird) { Copy-Item $lyrebird $dest -Force }
     if ($env:TERMCHAT_GUI) {
-        $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\termchat.lnk'
+        $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\termchat.app.lnk'
         $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
         $link.TargetPath = Join-Path $dest 'termchat-gui.exe'
         $link.Save()

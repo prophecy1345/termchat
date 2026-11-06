@@ -56,7 +56,7 @@ dependency is added and checked with `cargo deny`.
   reports "termchat is already open".
 - **Password.** As in the TUI, the password is the only key. The OS keychain
   is not used, so a backup restores anywhere.
-- **Window title.** Always just `termchat`, never a contact name: the title
+- **Window title.** Always just `termchat.app`, never a contact name: the title
   is visible to other apps, the taskbar and window switchers.
 - **Lock.** Locks after 5 minutes idle, like the TUI. Minimising the window
   does not lock it.

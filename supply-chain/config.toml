@@ -717,6 +717,10 @@ criteria = "safe-to-deploy"
 version = "0.37.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.egui_system_font_provider]]
+version = "0.37.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.either]]
 version = "1.19.0"
 criteria = "safe-to-deploy"
@@ -839,6 +843,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.font-types]]
 version = "0.12.7"
+criteria = "safe-to-deploy"
+
+[[exemptions.fontique]]
+version = "0.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.foreign-types-macros]]
@@ -1417,6 +1425,10 @@ criteria = "safe-to-deploy"
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.objc2-core-text]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.objc2-foundation]]
 version = "0.2.2"
 criteria = "safe-to-deploy"
@@ -1525,6 +1537,10 @@ criteria = "safe-to-deploy"
 version = "0.9.12"
 criteria = "safe-to-deploy"
 
+[[exemptions.parlance]]
+version = "0.1.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.password-hash]]
 version = "0.6.1"
 criteria = "safe-to-deploy"
@@ -1627,6 +1643,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.png]]
 version = "0.18.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.poll-promise]]
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.polling]]
@@ -1835,6 +1855,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ring]]
 version = "0.17.14"
+criteria = "safe-to-deploy"
+
+[[exemptions.roxmltree]]
+version = "0.21.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.rsa]]
@@ -2143,6 +2167,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.synstructure]]
 version = "0.14.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.sys-locale]]
+version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.sysinfo]]
@@ -2479,6 +2507,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode-properties]]
 version = "0.1.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.unicode-script]]
+version = "0.5.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.unicode-truncate]]
@@ -2871,6 +2903,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.xml-rs]]
 version = "0.8.29"
+criteria = "safe-to-deploy"
+
+[[exemptions.yeslogic-fontconfig-sys]]
+version = "6.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.yoke]]

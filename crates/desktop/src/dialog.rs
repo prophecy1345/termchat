@@ -479,7 +479,7 @@ impl Chat {
                 ui.label(RichText::new(clean_text(&name)).monospace());
                 ui.label(
                     RichText::new(
-                        "Files from contacts can be harmful: termchat never opens them, \
+                        "Files from contacts can be harmful: termchat.app never opens them, \
                          check before you do. An existing file is never overwritten.",
                     )
                     .color(p.warn),
@@ -657,7 +657,7 @@ impl Chat {
                 if let Some(v) = &self.engine.update {
                     ui.label(
                         RichText::new(format!(
-                            "termchat {v} is out. Update the way you installed it: the \
+                            "termchat.app {v} is out. Update the way you installed it: the \
                              installer, Homebrew, or the release page on GitHub."
                         ))
                         .color(p.accent),
@@ -772,7 +772,8 @@ fn hint(ui: &mut egui::Ui, p: &Pal, text: &str) {
 /// A full-width button. True when clicked.
 fn wide(ui: &mut egui::Ui, p: &Pal, text: &str) -> bool {
     let button = egui::Button::new(RichText::new(text).size(14.0))
-        .fill(p.surface)
+        .fill(p.theirs)
+        .stroke(egui::Stroke::new(1.0, p.line))
         .corner_radius(4);
     ui.add_sized([ui.available_width(), 36.0], button).clicked()
 }

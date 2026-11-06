@@ -83,7 +83,7 @@ if [ "$name" = termchat-gui ]; then
         rm -rf "$apps/termchat.app"
         cp -R "$src/termchat.app" "$apps/"
         echo "Installed termchat $tag to $apps/termchat.app"
-        echo "Open it from Launchpad or Spotlight: termchat"
+        echo "Open it from Launchpad or Spotlight: termchat.app"
         ;;
     *)
         mkdir -p "$dest"
