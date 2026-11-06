@@ -61,7 +61,7 @@ class TermchatGui < Formula
     return unless OS.mac?
 
     <<~EOS
-      To find termchat in Launchpad and Spotlight:
+      To find termchat.app in Launchpad and Spotlight:
         ln -sf #{opt_prefix}/termchat.app ~/Applications/
     EOS
   end
