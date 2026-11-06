@@ -196,7 +196,10 @@ impl Chat {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui, p: &Pal) -> bool {
-        ui.label(RichText::new("termchat").strong().size(16.0));
+        ui.horizontal(|ui| {
+            crate::logo::mark(ui, 26.0);
+            ui.label(RichText::new("termchat").strong().size(16.0));
+        });
         ui.add_space(8.0);
         let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.contacts.len())
             .partition(|&i| self.engine.is_request(&self.engine.data.contacts[i].key));

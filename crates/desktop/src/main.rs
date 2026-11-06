@@ -4,6 +4,7 @@
 
 mod chat;
 mod dialog;
+mod logo;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -40,6 +41,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("termchat")
             .with_app_id("termchat")
+            .with_icon(logo::icon())
             .with_inner_size([900.0, 640.0]),
         ..Default::default()
     };
@@ -212,6 +214,7 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
     ui.add_space((ui.available_height() / 2.0 - 120.0).max(0.0));
     let mut go = false;
     ui.vertical_centered(|ui| {
+        logo::mark(ui, 96.0);
         ui.label(egui::RichText::new("termchat").strong().size(28.0));
         ui.add_space(20.0);
         let field = ui.add(
@@ -273,7 +276,10 @@ fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool
 
 /// The first-run form; returns the new identity's engine.
 fn setup(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> Option<Box<Engine>> {
-    ui.heading("termchat.app setup");
+    ui.horizontal(|ui| {
+        logo::mark(ui, 48.0);
+        ui.heading("termchat.app setup");
+    });
     egui::Grid::new("setup").num_columns(2).show(ui, |ui| {
         ui.label("Nickname (only your contacts see it)");
         ui.text_edit_singleline(&mut f.nickname);

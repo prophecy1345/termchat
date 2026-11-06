@@ -349,72 +349,98 @@ impl Chat {
                 stay
             }
             Dialog::Settings => {
+                ui.set_width(600.0);
                 ui.heading("Settings");
-                egui::Grid::new("settings").num_columns(2).show(ui, |ui| {
-                    ui.label("Theme");
-                    egui::ComboBox::from_id_salt("theme")
-                        .selected_text(s.desktop_theme.as_str())
-                        .show_ui(ui, |ui| {
-                            for (name, _) in themes::THEMES {
-                                ui.selectable_value(&mut s.desktop_theme, (*name).into(), *name);
-                            }
-                        });
-                    ui.end_row();
-                    ui.label("Sound for new messages");
-                    ui.checkbox(&mut s.sound, "");
-                    ui.end_row();
-                });
+                section(ui, p, "Appearance");
+                egui::Grid::new("settings")
+                    .num_columns(2)
+                    .spacing([24.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label("Theme");
+                        egui::ComboBox::from_id_salt("theme")
+                            .width(220.0)
+                            .selected_text(s.desktop_theme.as_str())
+                            .show_ui(ui, |ui| {
+                                for (name, _) in themes::THEMES {
+                                    ui.selectable_value(
+                                        &mut s.desktop_theme,
+                                        (*name).into(),
+                                        *name,
+                                    );
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("New messages");
+                        ui.checkbox(&mut s.sound, "Play the system sound");
+                        ui.end_row();
+                    });
+                section(ui, p, "Contacts");
                 let mut codes_only = self.engine.data.invites.codes_only;
                 if ui
-                    .checkbox(&mut codes_only, "Only requests from my invites")
-                    .on_hover_text(
-                        "Requests without one of your invite codes are dropped (ADR-013)",
+                    .checkbox(
+                        &mut codes_only,
+                        "Accept contact requests only from my invites",
                     )
                     .changed()
                 {
                     self.engine.set_codes_only(codes_only);
                 }
-                ui.add_space(6.0);
-                ui.label(RichText::new("Security").strong());
+                hint(
+                    ui,
+                    p,
+                    "Requests without one of your invite codes are dropped (ADR-013).",
+                );
+                section(ui, p, "Account and security");
                 let tor = match self.engine.data.tor {
                     true => "Turn Tor off",
                     false => "Turn Tor on",
                 };
                 let mut next = None;
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Back up…").clicked() {
+                ui.columns(2, |cols| {
+                    if wide(&mut cols[0], p, "Back up your identity") {
                         next = Some(Dialog::backup());
                     }
-                    if ui.button("Change password…").clicked() {
+                    if wide(&mut cols[1], p, "Change password") {
                         next = Some(Dialog::Password(Passwords::default()));
                     }
-                    if ui.button("Duress password…").clicked() {
+                    if wide(&mut cols[0], p, "Set a duress password") {
                         next = Some(Dialog::Duress(Passwords::default()));
                     }
-                    if ui.button(tor).clicked() {
+                    if wide(&mut cols[1], p, tor) {
                         next = Some(Dialog::Notice(self.engine.toggle_tor()));
                     }
-                    if ui.button("Tor bridges…").clicked() {
+                    if wide(&mut cols[0], p, "Tor bridges") {
                         next = Some(Dialog::Bridges {
                             text: Zeroizing::default(),
                             error: String::new(),
                         });
                     }
-                    if ui.button("What's new").clicked() {
+                    if wide(&mut cols[1], p, "What's new in this version") {
                         next = Some(Dialog::News);
                     }
                 });
-                ui.add_space(6.0);
-                if ui
-                    .button(RichText::new("Wipe everything…").color(p.danger))
-                    .clicked()
-                {
+                section(ui, p, "Danger zone");
+                let wipe = egui::Button::new(RichText::new("Wipe everything").color(p.danger))
+                    .stroke(egui::Stroke::new(1.0, p.danger))
+                    .fill(p.surface)
+                    .corner_radius(4);
+                if ui.add_sized([ui.available_width(), 36.0], wipe).clicked() {
                     next = Some(Dialog::Wipe {
                         typed: String::new(),
                     });
                 }
-                ui.add_space(6.0);
-                let close = ui.button("Close").clicked();
+                hint(
+                    ui,
+                    p,
+                    "Erases keys, contacts and history from this device. No undo.",
+                );
+                ui.add_space(14.0);
+                let close = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Button::new("Close").min_size(egui::vec2(110.0, 32.0)))
+                            .clicked()
+                    })
+                    .inner;
                 if next.is_some() {
                     self.dialog = next;
                 }
@@ -725,6 +751,30 @@ fn password_fields(ui: &mut egui::Ui, p: &Pal, pw: &mut Passwords, new: &str) ->
     });
     error_line(ui, p, &pw.error);
     buttons(ui, "Save")
+}
+
+/// A section title in small capitals, like the Android app, and a rule.
+fn section(ui: &mut egui::Ui, p: &Pal, title: &str) {
+    ui.add_space(16.0);
+    ui.label(
+        RichText::new(title.to_uppercase())
+            .small()
+            .strong()
+            .color(p.dim),
+    );
+    ui.separator();
+}
+
+fn hint(ui: &mut egui::Ui, p: &Pal, text: &str) {
+    ui.label(RichText::new(text).small().color(p.dim));
+}
+
+/// A full-width button. True when clicked.
+fn wide(ui: &mut egui::Ui, p: &Pal, text: &str) -> bool {
+    let button = egui::Button::new(RichText::new(text).size(14.0))
+        .fill(p.surface)
+        .corner_radius(4);
+    ui.add_sized([ui.available_width(), 36.0], button).clicked()
 }
 
 /// The main button and Cancel. Returns (main clicked, keep open).
