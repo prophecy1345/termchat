@@ -18,6 +18,13 @@ ignore = [
     # comes in through Arti's key-format crates; a Tor *client* only verifies
     # legacy RSA relay signatures, and termchat never creates an RSA private key.
     { id = "RUSTSEC-2023-0071", reason = "no RSA private-key operations in a Tor client" },
+    # zbus_names, zvariant, zvariant_derive: the D-Bus link from the desktop GUI
+    # to the Linux screen reader (AccessKit over AT-SPI, ADR-018). It talks only
+    # to the local session bus; unmaintained, no known vulnerability. Drop once
+    # accesskit_unix moves to the maintained crates.
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
+    { id = "RUSTSEC-2026-0372", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
 ]
 
 [licenses]

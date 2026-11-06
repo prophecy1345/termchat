@@ -1,0 +1,28 @@
+[package]
+name = "termchat-desktop"
+description = "Desktop client (GUI) for termchat (ADR-018)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "termchat-gui"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# No wgpu (OpenGL is enough for a chat window), no `links` (termchat opens
+# nothing, ADR-017), no `persistence` (no window state on disk).
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
+termchat-engine = { path = "../engine", default-features = false }
+tokio = { version = "1.53.3", features = ["rt-multi-thread"] }
+zeroize = "1.9.1"
+
+[features]
+default = ["tor"]
+# Tor via Arti (ADR-004). Official releases ship with it.
+tor = ["termchat-engine/tor"]
