@@ -1,0 +1,1 @@
+No changes in the Android app itself. This release brings termchat.app to macOS, Linux and Windows as a desktop app with the same account format; invites from it show a QR code this app can scan.

@@ -1,6 +1,26 @@
 # What's new
 
-Shown inside termchat: Ctrl+P, n.
+Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
+the desktop app.
+
+## 0.5.0
+
+- **termchat.app in a window** for macOS, Linux and Windows (ADR-018), for
+  those who prefer a window to a terminal. Same account, same encryption,
+  same relay; the look of the Android app with the site's synthwave touches.
+  Contacts and requests, chats with bubbles, disappearing messages, invites
+  with a QR code for the phone, the safety number, documents, backup and
+  restore, passwords and the duress password, Tor and bridges, wipe.
+- Install: `curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_GUI=1 sh`
+  (macOS, Linux), `brew install prophecy1345/tap/termchat-gui`, or on Windows
+  `$env:TERMCHAT_GUI = 1; irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex`.
+  It is not signed with a paid certificate; installed these ways it opens
+  without a warning. See the README for a browser download.
+- A window shows more to the rest of the computer than a terminal:
+  screenshots and screen recording see it, and the text passes through the
+  window system and the graphics driver.
+- The terminal client and the app share the account but not at the same
+  time: whichever opens second says termchat.app is already open.
 
 ## 0.4.1
 
