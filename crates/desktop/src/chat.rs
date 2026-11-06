@@ -7,7 +7,10 @@ use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
 use termchat_engine::data::{Contact, Status};
 use termchat_engine::engine::{age, clean_text, next_timer, span};
 use termchat_engine::notify::{self, SOUND_GAP};
+use termchat_engine::settings::Settings;
 use termchat_engine::{Engine, Happened, themes};
+
+use crate::dialog::Dialog;
 
 type Key = [u8; 32];
 
@@ -76,34 +79,34 @@ struct Toast {
 
 pub struct Chat {
     pub engine: Box<Engine>,
-    open: Option<Key>,
+    pub(crate) open: Option<Key>,
     input: String,
     toasts: Vec<Toast>,
-    sound: bool,
     last_sound: Option<Instant>,
     last_tick: Instant,
     /// One line: the last note from the engine.
-    status: String,
+    pub(crate) status: String,
+    pub(crate) dialog: Option<Dialog>,
 }
 
 impl Chat {
-    pub fn new(engine: Box<Engine>, sound: bool) -> Self {
+    pub fn new(engine: Box<Engine>) -> Self {
         let mut chat = Self {
             engine,
             open: None,
             input: String::new(),
             toasts: Vec::new(),
-            sound,
             last_sound: None,
             last_tick: Instant::now(),
             status: String::new(),
+            dialog: None,
         };
         chat.engine.resort();
         chat
     }
 
     /// Takes in relay events and timers. `Some(note)`: everything was erased.
-    pub fn step(&mut self, focused: bool) -> Option<String> {
+    pub fn step(&mut self, focused: bool, sound: bool) -> Option<String> {
         self.engine.open = self.open;
         let mut moved = false;
         while let Ok(ev) = self.engine.events.try_recv() {
@@ -121,14 +124,15 @@ impl Chat {
             self.engine.data.contacts[i].unread = 0;
         }
         self.toasts.retain(|t| t.until > Instant::now());
-        self.absorb(focused)
+        self.absorb(focused, sound)
     }
 
-    fn absorb(&mut self, focused: bool) -> Option<String> {
+    fn absorb(&mut self, focused: bool, sound: bool) -> Option<String> {
         for h in std::mem::take(&mut self.engine.happened) {
             match h {
-                Happened::Alert { key, request } => self.alert(key, request, focused),
-                Happened::Note(n) | Happened::Notice(n) => self.status = n,
+                Happened::Alert { key, request } => self.alert(key, request, focused, sound),
+                Happened::Note(n) => self.status = n,
+                Happened::Notice(n) => self.dialog = Some(Dialog::Notice(n)),
                 Happened::Wiped(n) => return Some(n),
                 // Only a wipe the user starts asks this; there is none yet.
                 Happened::WipeAnyway(_) => {}
@@ -138,7 +142,7 @@ impl Chat {
     }
 
     /// A card and a sound, with the name but never the text (ADR-008).
-    fn alert(&mut self, key: Key, request: bool, focused: bool) {
+    fn alert(&mut self, key: Key, request: bool, focused: bool, sound: bool) {
         if focused && self.open == Some(key) {
             return;
         }
@@ -162,19 +166,19 @@ impl Chat {
             until: Instant::now() + TOAST_FOR,
         });
         let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
-        if self.sound && !quiet {
+        if sound && !quiet {
             self.last_sound = Some(Instant::now());
             notify::sound();
         }
     }
 
-    fn select(&mut self, key: Key) {
+    pub(crate) fn select(&mut self, key: Key) {
         self.open = Some(key);
         self.input.clear();
     }
 
     /// Draws the window. True: the user asked to lock.
-    pub fn ui(&mut self, ui: &mut egui::Ui, p: &Pal) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, p: &Pal, s: &mut Settings) -> bool {
         let mut lock = false;
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(p.surface).inner_margin(6))
@@ -188,6 +192,7 @@ impl Chat {
             .frame(egui::Frame::new().fill(p.bg).inner_margin(0))
             .show(ui, |ui| self.chat(ui, p));
         self.toasts(ui.ctx(), p);
+        self.dialogs(ui.ctx(), p, s);
         lock
     }
 
@@ -221,9 +226,28 @@ impl Chat {
             self.select(k);
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            ui.button("Lock")
-                .on_hover_text("Ask for the password again")
-                .clicked()
+            ui.horizontal(|ui| {
+                if ui.button("+ Add").clicked() {
+                    self.dialog = Some(Dialog::add());
+                }
+                if ui
+                    .button("Invite")
+                    .on_hover_text("Your invite, to send to a friend")
+                    .clicked()
+                {
+                    self.dialog = Some(Dialog::Invite {
+                        text: self.engine.invite(),
+                        kind: crate::dialog::Share::Once,
+                    });
+                }
+                if ui.button("Settings").clicked() {
+                    self.dialog = Some(Dialog::Settings);
+                }
+                ui.button("Lock")
+                    .on_hover_text("Ask for the password again")
+                    .clicked()
+            })
+            .inner
         })
         .inner
     }
@@ -294,6 +318,7 @@ impl Chat {
         let c = &self.engine.data.contacts[i];
         let name = self.engine.name(c);
         let mut accept = false;
+        let mut next = None;
         egui::Panel::top("chat-header")
             .frame(
                 egui::Frame::new()
@@ -313,12 +338,13 @@ impl Chat {
                             ui.label(caps(&format!("INCOGNITO AS {as_}"), p.dim));
                         }
                     });
-                    if request {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.menu_button("⋮", |ui| next = chat_menu(ui, c, request));
+                        if request {
                             accept = ui.button("Accept").clicked();
                             ui.label(RichText::new("contact request").color(p.warn));
-                        });
-                    }
+                        }
+                    });
                 });
                 let waiting = c.hidden.len() + c.held_back as usize;
                 if request && waiting > 0 {
@@ -330,6 +356,17 @@ impl Chat {
             });
         if accept {
             self.engine.accept(i);
+        }
+        match next {
+            Some(Menu::Open(d)) => self.dialog = Some(d),
+            Some(Menu::Block) => self.engine.edit(i, |c| c.blocked = !c.blocked),
+            Some(Menu::NoHistory) => self.engine.edit(i, |c| c.no_history = !c.no_history),
+            Some(Menu::Report) => {
+                if let Some(text) = self.engine.report_text(i) {
+                    self.dialog = Some(Dialog::Report(text));
+                }
+            }
+            None => {}
         }
     }
 
@@ -375,7 +412,8 @@ impl Chat {
         }
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui, p: &Pal) {
+    fn status_bar(&mut self, ui: &mut egui::Ui, p: &Pal) {
+        let mut backup = false;
         let e = &self.engine;
         ui.horizontal(|ui| {
             let (text, ok) = match (e.connected, e.data.tor) {
@@ -387,13 +425,18 @@ impl Chat {
             ui.label(RichText::new(text).color(if ok { p.accent } else { p.warn }));
             ui.label(RichText::new(termchat_engine::clean(&e.data.nickname)).color(p.dim));
             if !e.data.backed_up {
-                ui.label(RichText::new("! no backup yet").color(p.warn));
+                backup = ui
+                    .link(RichText::new("! no backup yet").color(p.warn))
+                    .clicked();
             }
             if let Some(v) = &e.update {
                 ui.label(RichText::new(format!("termchat {v} is out")).color(p.accent));
             }
             ui.label(RichText::new(&self.status).color(p.warn));
         });
+        if backup {
+            self.dialog = Some(Dialog::backup());
+        }
     }
 
     fn toasts(&mut self, ctx: &egui::Context, p: &Pal) {
@@ -421,6 +464,57 @@ impl Chat {
             self.select(k);
         }
     }
+}
+
+/// What the chat menu asked for.
+enum Menu {
+    Open(Dialog),
+    Block,
+    NoHistory,
+    Report,
+}
+
+/// The "⋮" menu of the open chat.
+fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
+    let verified = if c.verified {
+        "verified"
+    } else {
+        "not verified"
+    };
+    let pick = |ui: &mut egui::Ui, label: &str| ui.button(label).clicked();
+    let next = match () {
+        _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
+        _ if pick(ui, "Rename…") => {
+            Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
+        }
+        _ if pick(
+            ui,
+            if c.no_history {
+                "Keep history"
+            } else {
+                "No history"
+            },
+        ) =>
+        {
+            Menu::NoHistory
+        }
+        _ if pick(ui, if c.blocked { "Unblock" } else { "Block" }) => Menu::Block,
+        _ if pick(ui, "Report…") => Menu::Report,
+        _ if pick(
+            ui,
+            if request {
+                "Reject request…"
+            } else {
+                "Delete…"
+            },
+        ) =>
+        {
+            Menu::Open(Dialog::Delete)
+        }
+        _ => return None,
+    };
+    ui.close();
+    Some(next)
 }
 
 fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) {
@@ -593,12 +687,13 @@ mod tests {
             ],
             ..Contact::default()
         });
-        let mut chat = Chat::new(engine, false);
+        let mut chat = Chat::new(engine);
+        let mut settings = Settings::default();
         let (ctx, pal) = (egui::Context::default(), Pal::named("termchat"));
         pal.apply(&ctx);
-        let frame = |chat: &mut Chat| {
+        let mut frame = |chat: &mut Chat| {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                chat.ui(ui, &pal);
+                chat.ui(ui, &pal, &mut settings);
             });
             // No GPU here to take the font atlas.
             out.textures_delta.clear();
@@ -609,8 +704,8 @@ mod tests {
         assert!(shown.contains("Contacts  1") && shown.contains("NOT VERIFIED"));
 
         chat.select([1; 32]);
-        chat.alert([1; 32], false, false);
-        assert!(chat.step(true).is_none());
+        chat.alert([1; 32], false, false, false);
+        assert!(chat.step(true, false).is_none());
         assert_eq!(
             chat.engine.data.contacts[0].unread, 0,
             "an open chat is read"
@@ -627,6 +722,32 @@ mod tests {
         }
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
+
+        let invite = chat.engine.invite();
+        let dialogs = [
+            (Dialog::Verify, "Safety number"),
+            (Dialog::Rename(String::new()), "Rename"),
+            (Dialog::Delete, "Delete the contact"),
+            (Dialog::Report("x".into()), "Report to the relay operator"),
+            (Dialog::Settings, "Settings"),
+            (Dialog::backup(), "Back up your identity"),
+            (Dialog::add(), "Add a contact"),
+            (
+                Dialog::Invite {
+                    text: invite,
+                    kind: crate::dialog::Share::Once,
+                },
+                "Your fingerprint",
+            ),
+            (Dialog::Notice("all good".into()), "all good"),
+        ];
+        for (d, want) in dialogs {
+            chat.dialog = Some(d);
+            frame(&mut chat);
+            let shown = texts(&frame(&mut chat));
+            assert!(shown.contains(want), "{want} missing in:\n{shown}");
+            assert!(chat.dialog.is_some(), "{want}: stays open until answered");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

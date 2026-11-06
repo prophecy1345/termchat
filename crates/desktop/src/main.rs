@@ -1,6 +1,7 @@
 //! Desktop client (GUI): a shell over `termchat-engine` (ADR-018).
 
 mod chat;
+mod dialog;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -44,11 +45,12 @@ fn main() -> eframe::Result {
         "termchat",
         options,
         Box::new(|cc| {
-            // The Android look (ADR-018); theme choice comes with settings.
-            let pal = Pal::named("termchat");
+            // Plain, so the lock screen has the theme too (ADR-008).
+            let settings = Settings::load(&settings::path(&path));
+            let pal = Pal::named(&settings.desktop_theme);
             pal.apply(&cc.egui_ctx);
             Ok(Box::new(App {
-                settings: Settings::load(&settings::path(&path)),
+                settings,
                 path,
                 screen,
                 pal,
@@ -143,20 +145,30 @@ impl eframe::App for App {
             return self.lock();
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
-        if let Some(note) = chat.step(focused) {
+        if let Some(note) = chat.step(focused, self.settings.sound) {
             self.wiped(note);
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if let Screen::Main(chat) = &mut self.screen {
-            if chat.ui(ui, &self.pal) {
+            let before = self.settings.clone();
+            let lock = chat.ui(ui, &self.pal, &mut self.settings);
+            if self.settings != before {
+                if self.settings.desktop_theme != before.desktop_theme {
+                    self.pal = Pal::named(&self.settings.desktop_theme);
+                    self.pal.apply(ui.ctx());
+                }
+                if let Err(e) = self.settings.save(&settings::path(&self.path)) {
+                    chat.status = format!("settings not saved: {e}");
+                }
+            }
+            if lock {
                 self.lock();
             }
             return;
         }
-        let sound = self.settings.sound;
-        let open = |engine| Screen::Main(Box::new(Chat::new(engine, sound)));
+        let open = |engine| Screen::Main(Box::new(Chat::new(engine)));
         egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
             Screen::Busy => {
                 ui.heading("termchat is already open in another window");

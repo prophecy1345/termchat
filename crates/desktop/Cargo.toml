@@ -18,6 +18,7 @@ workspace = true
 # No wgpu (OpenGL is enough for a chat window), no `links` (termchat opens
 # nothing, ADR-017), no `persistence` (no window state on disk).
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "wayland", "x11"] }
+termchat-core = { path = "../core" }
 termchat-engine = { path = "../engine", default-features = false }
 tokio = { version = "1.53.3", features = ["rt-multi-thread"] }
 zeroize = "1.9.1"

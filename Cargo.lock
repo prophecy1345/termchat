@@ -6757,6 +6757,7 @@ name = "termchat-desktop"
 version = "0.4.1"
 dependencies = [
  "eframe",
+ "termchat-core",
  "termchat-engine",
  "tokio",
  "zeroize",
