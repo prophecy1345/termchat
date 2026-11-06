@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.1
+
+- The desktop app shows What's new formatted (headings, lists, bold, code)
+  instead of raw Markdown.
+
 ## 0.5.0
 
 - **termchat.app in a window** for macOS, Linux and Windows (ADR-018), for
