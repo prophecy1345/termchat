@@ -1,11 +1,15 @@
 //! Desktop client (GUI): a shell over `termchat-engine` (ADR-018).
 
+mod chat;
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use chat::{Chat, Pal};
 use eframe::egui;
 use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
-use termchat_engine::{AUTOLOCK, Engine, Happened, Setup, Unlocked, data};
+use termchat_engine::settings::{self, Settings};
+use termchat_engine::{AUTOLOCK, Engine, Setup, Unlocked, data};
 use zeroize::Zeroizing;
 
 fn main() -> eframe::Result {
@@ -40,13 +44,15 @@ fn main() -> eframe::Result {
         "termchat",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            // The Android look (ADR-018); theme choice comes with settings.
+            let pal = Pal::named("termchat");
+            pal.apply(&cc.egui_ctx);
             Ok(Box::new(App {
+                settings: Settings::load(&settings::path(&path)),
                 path,
                 screen,
+                pal,
                 last_input: Instant::now(),
-                last_tick: Instant::now(),
-                status: String::new(),
                 _lock: lock,
             }))
         }),
@@ -59,7 +65,7 @@ enum Screen {
     /// First run.
     Setup(SetupForm),
     Unlock(Unlock),
-    Main(Box<Engine>),
+    Main(Box<Chat>),
 }
 
 #[derive(Default)]
@@ -95,10 +101,9 @@ impl Default for SetupForm {
 struct App {
     path: PathBuf,
     screen: Screen,
+    settings: Settings,
+    pal: Pal,
     last_input: Instant,
-    last_tick: Instant,
-    /// One line: the last note from the engine.
-    status: String,
     /// Held while the window is open (ADR-018).
     _lock: std::io::Result<Option<std::fs::File>>,
 }
@@ -106,17 +111,16 @@ struct App {
 impl App {
     /// Saves and forgets the open state; the password opens it again.
     fn lock(&mut self) {
-        if let Screen::Main(engine) = &mut self.screen {
-            engine.persist();
+        if let Screen::Main(chat) = &mut self.screen {
+            chat.engine.persist();
         }
-        self.status.clear();
         self.screen = Screen::Unlock(Unlock::default());
     }
 
     /// Everything is erased: a first run again, with `note` (empty after the
     /// duress password, so the screen looks fresh, ADR-003).
     fn wiped(&mut self, note: String) {
-        self.status.clear();
+        self.settings = Settings::default();
         self.screen = Screen::Setup(SetupForm {
             error: note,
             ..SetupForm::default()
@@ -132,33 +136,27 @@ impl eframe::App for App {
         // Relay events arrive on a channel; a few checks a second are enough.
         // Polling for now; a waker from the relay task if latency matters.
         ctx.request_repaint_after(Duration::from_millis(250));
-        let Screen::Main(engine) = &mut self.screen else {
+        let Screen::Main(chat) = &mut self.screen else {
             return;
         };
         if self.last_input.elapsed() >= AUTOLOCK {
             return self.lock();
         }
-        while let Ok(ev) = engine.events.try_recv() {
-            engine.on_relay(ev);
-        }
-        if self.last_tick.elapsed() >= Duration::from_secs(1) {
-            self.last_tick = Instant::now();
-            engine.tick();
-        }
-        let mut wiped = None;
-        for h in std::mem::take(&mut engine.happened) {
-            match h {
-                Happened::Note(n) | Happened::Notice(n) => self.status = n,
-                Happened::Wiped(n) => wiped = Some(n),
-                Happened::Alert { .. } | Happened::WipeAnyway(_) => {}
-            }
-        }
-        if let Some(note) = wiped {
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if let Some(note) = chat.step(focused) {
             self.wiped(note);
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Screen::Main(chat) = &mut self.screen {
+            if chat.ui(ui, &self.pal) {
+                self.lock();
+            }
+            return;
+        }
+        let sound = self.settings.sound;
+        let open = |engine| Screen::Main(Box::new(Chat::new(engine, sound)));
         egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
             Screen::Busy => {
                 ui.heading("termchat is already open in another window");
@@ -166,32 +164,21 @@ impl eframe::App for App {
             }
             Screen::Setup(form) => {
                 if let Some(engine) = setup(ui, form, &self.path) {
-                    self.screen = Screen::Main(engine);
+                    self.screen = open(engine);
                 }
             }
             Screen::Unlock(unlock) => match unlock_screen(ui, unlock, &self.path) {
-                Some(Unlocked::Open(engine)) => self.screen = Screen::Main(engine),
+                Some(Unlocked::Open(engine)) => self.screen = open(engine),
                 Some(Unlocked::Wiped) => self.wiped(String::new()),
                 None => {}
             },
-            Screen::Main(engine) => {
-                ui.heading(engine.data.nickname.as_str());
-                ui.label(match engine.connected {
-                    true => "connected",
-                    false => "connecting…",
-                });
-                ui.label(format!("{} contacts", engine.data.contacts.len()));
-                ui.label(self.status.as_str());
-                if ui.button("Lock").clicked() {
-                    self.lock();
-                }
-            }
+            Screen::Main(_) => {}
         });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Screen::Main(engine) = &mut self.screen {
-            engine.persist();
+        if let Screen::Main(chat) = &mut self.screen {
+            chat.engine.persist();
         }
     }
 }
