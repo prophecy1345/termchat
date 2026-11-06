@@ -11,3 +11,11 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")
     }
   });
 }
+
+// Links that jump to an install tab also open it.
+for (const link of document.querySelectorAll<HTMLAnchorElement>("a[data-tab]")) {
+  link.addEventListener("click", () => {
+    const tab = document.getElementById(link.dataset.tab ?? "");
+    if (tab instanceof HTMLInputElement) tab.checked = true;
+  });
+}

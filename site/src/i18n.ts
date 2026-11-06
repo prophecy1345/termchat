@@ -8,6 +8,9 @@ export const commands = {
   brew: "brew install prophecy1345/tap/termchat",
   sh: `curl -fsSL ${RAW}/scripts/install.sh | sh`,
   ps: `irm ${RAW}/scripts/install.ps1 | iex`,
+  brewGui: "brew install prophecy1345/tap/termchat-gui",
+  shGui: `curl -fsSL ${RAW}/scripts/install.sh | TERMCHAT_GUI=1 sh`,
+  psGui: `$env:TERMCHAT_GUI = 1; irm ${RAW}/scripts/install.ps1 | iex`,
 };
 
 export type Lang = "en" | "ru";
@@ -15,9 +18,9 @@ type Item = [title: string, text: string];
 
 const en = {
   lang: "en",
-  title: "termchat.app: private messages in your terminal and on Android",
+  title: "termchat.app: private messages in your terminal, on your desktop and on Android",
   description:
-    "An end-to-end encrypted messenger for text and documents, in the terminal and on Android. No accounts, no phone numbers, optional Tor.",
+    "An end-to-end encrypted messenger for text and documents, in the terminal, as a desktop app and on Android. No accounts, no phone numbers, optional Tor.",
   other: { href: "/ru/", label: "RU" },
   // Documents in this language, relative to the repository root.
   docs: {
@@ -26,14 +29,14 @@ const en = {
     verify: "README.md#verify-a-release",
     use: "README.md#acceptable-use",
   },
-  nav: { features: "Features", protection: "Protection", install: "Install" },
-  tagline: "Private messages, in your terminal and on your phone.",
+  nav: { features: "Features", desktop: "Desktop", protection: "Protection", install: "Install" },
+  tagline: "Private messages, in your terminal, in a window and on your phone.",
   lead: "End-to-end encrypted text and documents, no accounts. You are a key pair and a nickname you choose; the server only ever sees ciphertext.",
   status: "not audited · experimental",
   cta: { install: "Install", github: "GitHub", download: "Download" },
   whatTitle: "What it is",
   what: [
-    ["Text and documents, in a terminal and on Android", "A chat where you already work, and an app for your phone on the same engine. Files are opaque bytes, never opened or previewed; no inline images, no link previews, no formatting: less to leak, less to exploit."],
+    ["Text and documents, in a terminal, a window and on Android", "A chat where you already work, a desktop app if you prefer a window, and an app for your phone, all on the same engine. Files are opaque bytes, never opened or previewed; no inline images, no link previews, no formatting: less to leak, less to exploit."],
     ["No one to sign up with", "No phone number, email or name. Your identity is a key pair made on your device, plus a nickname only your contacts see."],
     ["A server that knows nothing", "The relay passes along envelopes it cannot open. Seizing it gives ciphertext and public keys, nothing more."],
   ] as Item[],
@@ -53,9 +56,19 @@ const en = {
     ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Contacts cannot link you, and over Tor neither can the relay."],
     ["Search, on your device", "Find anything in a chat. Nothing is indexed or sent anywhere."],
     ["Android app", "The same engine and protection on your phone: Tor, the duress password, no Google services. Wake-ups through UnifiedPush if you want them."],
-    ["Mouse and themes", "Click, scroll, right-click for actions. The same light and dark colour themes in both apps."],
+    ["Mouse and themes", "Click, scroll, right-click for actions. The same light and dark colour themes in every app."],
     ["Your own relay", "One small binary with SQLite. Run it on any server, with an onion address if you like."],
   ] as Item[],
+  desktopTitle: "termchat.app in a window",
+  desktopLead: "Not everyone likes a terminal. The desktop app for macOS, Linux and Windows is the same messenger in a window: the same account, encryption and relay, with the look of the Android app and this site's synthwave.",
+  desktopAlt: "The termchat.app desktop app: a contact list on the left and a chat with alice on the right",
+  desktop: [
+    ["Everything the terminal client does", "Requests, chats, disappearing messages, documents, the safety number, backups, the duress password, Tor and bridges, wipe."],
+    ["Invites with a QR code", "Show your invite on screen and scan it with the Android app, or copy the text."],
+    ["One account, one client at a time", "The terminal client and the app open the same account, but not together: the second one says it is already open."],
+    ["Honest about a window", "Screenshots and screen recording can see it, and the text passes through the window system and the graphics driver. A terminal shows less."],
+  ] as Item[],
+  desktopInstall: "How to install",
   protectionTitle: "What it protects, and what it does not",
   protectionLead: "The goal is not “impossible to break” but “breaking the server is pointless”.",
   protected: {
@@ -94,8 +107,12 @@ const en = {
     ["Talk", "Messages travel encrypted through the relay, with a new key for every message."],
   ] as Item[],
   installTitle: "Install",
-  installTabs: { unix: "macOS · Linux", windows: "Windows", android: "Android", manual: "Manual" },
+  installTabs: { unix: "macOS · Linux", windows: "Windows", desktop: "Desktop app", android: "Android", manual: "Manual" },
   install: {
+    desktopBrew: "macOS, Linux: with Homebrew",
+    desktopSh: "Or with one command: termchat.app goes to ~/Applications on macOS, into the app menu on Linux",
+    desktopPs: "Windows, in PowerShell: with a Start menu entry",
+    desktopNote: "Not signed with a paid Apple or Microsoft certificate: installed these ways it opens straight away. Downloaded through a browser, macOS asks once (System Settings → Privacy & Security → Open Anyway), and so does Windows SmartScreen. Linux needs glibc 2.28 or newer and X11 or Wayland.",
     brew: "With Homebrew",
     sh: "Or with one command",
     ps: "In PowerShell",
@@ -124,9 +141,9 @@ const en = {
 
 const ru: typeof en = {
   lang: "ru",
-  title: "termchat.app: приватные сообщения в терминале и на Android",
+  title: "termchat.app: приватные сообщения в терминале, на компьютере и на Android",
   description:
-    "Мессенджер для текста и документов в терминале и на Android со сквозным шифрованием. Без аккаунтов и номеров телефона, Tor по желанию.",
+    "Мессенджер для текста и документов в терминале, в приложении для компьютера и на Android со сквозным шифрованием. Без аккаунтов и номеров телефона, Tor по желанию.",
   other: { href: "/", label: "EN" },
   docs: {
     threatModel: "docs/threat-model.ru.md",
@@ -134,14 +151,14 @@ const ru: typeof en = {
     verify: "README.ru.md#проверка-релиза",
     use: "README.ru.md#правила-использования",
   },
-  nav: { features: "Возможности", protection: "Защита", install: "Установка" },
-  tagline: "Приватная переписка в терминале и в телефоне.",
+  nav: { features: "Возможности", desktop: "Приложение", protection: "Защита", install: "Установка" },
+  tagline: "Приватная переписка в терминале, в окне и в телефоне.",
   lead: "Текст и документы со сквозным шифрованием, никаких аккаунтов. Вы — это пара ключей и ник, который выбираете сами; сервер видит только шифртекст.",
   status: "без аудита · экспериментально",
   cta: { install: "Установить", github: "GitHub", download: "Скачать" },
   whatTitle: "Что это",
   what: [
-    ["Текст и документы в терминале и на Android", "Чат там, где вы и так работаете, и приложение для телефона на том же движке. Файлы — непрозрачные байты, приложение их не открывает и не показывает превью; без картинок в чате, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
+    ["Текст и документы в терминале, в окне и на Android", "Чат там, где вы и так работаете, приложение с окном, если оно вам удобнее, и приложение для телефона — всё на одном движке. Файлы — непрозрачные байты, приложение их не открывает и не показывает превью; без картинок в чате, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
     ["Не нужно регистрироваться", "Ни телефона, ни email, ни имени. Ваша личность — пара ключей, созданная на устройстве, и ник, который видят только ваши контакты."],
     ["Сервер ничего не знает", "Relay передаёт конверты, которые не может открыть. Изъятие сервера даст шифртекст и публичные ключи, не больше."],
   ],
@@ -161,9 +178,19 @@ const ru: typeof en = {
     ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут вас связать, а через Tor — и relay."],
     ["Поиск на устройстве", "Найдите что угодно в чате. Ничего не индексируется и никуда не отправляется."],
     ["Приложение для Android", "Тот же движок и та же защита в телефоне: Tor, пароль под принуждением, без сервисов Google. Пробуждения через UnifiedPush — по желанию."],
-    ["Мышь и темы", "Клики, прокрутка, действия по правой кнопке. Одни и те же светлые и тёмные темы в обоих приложениях."],
+    ["Мышь и темы", "Клики, прокрутка, действия по правой кнопке. Одни и те же светлые и тёмные темы во всех приложениях."],
     ["Свой relay", "Один небольшой бинарник с SQLite. Запускается на любом сервере, можно с onion-адресом."],
   ],
+  desktopTitle: "termchat.app в окне",
+  desktopLead: "Терминал нравится не всем. Приложение для macOS, Linux и Windows — тот же мессенджер в окне: тот же аккаунт, шифрование и relay, в стиле приложения для Android и синтвейва этого сайта.",
+  desktopAlt: "Приложение termchat.app: список контактов слева и чат с alice справа",
+  desktop: [
+    ["Всё, что умеет терминальный клиент", "Запросы, чаты, исчезающие сообщения, документы, номер безопасности, резервные копии, пароль под принуждением, Tor и мосты, стирание."],
+    ["Приглашения с QR-кодом", "Покажите приглашение на экране и отсканируйте его приложением для Android или скопируйте текст."],
+    ["Один аккаунт, один клиент за раз", "Терминальный клиент и приложение открывают один аккаунт, но не одновременно: второй скажет, что он уже открыт."],
+    ["Честно про окно", "Скриншоты и запись экрана его видят, а текст проходит через оконную систему и графический драйвер. Терминал показывает меньше."],
+  ],
+  desktopInstall: "Как установить",
   protectionTitle: "От чего защищает, а от чего нет",
   protectionLead: "Цель не «невозможно взломать», а «взламывать сервер бессмысленно».",
   protected: {
@@ -202,8 +229,12 @@ const ru: typeof en = {
     ["Переписывайтесь", "Сообщения идут через relay в зашифрованном виде, с новым ключом для каждого сообщения."],
   ],
   installTitle: "Установка",
-  installTabs: { unix: "macOS · Linux", windows: "Windows", android: "Android", manual: "Вручную" },
+  installTabs: { unix: "macOS · Linux", windows: "Windows", desktop: "Приложение", android: "Android", manual: "Вручную" },
   install: {
+    desktopBrew: "macOS, Linux: через Homebrew",
+    desktopSh: "Или одной командой: termchat.app окажется в ~/Applications на macOS и в меню приложений на Linux",
+    desktopPs: "Windows, в PowerShell: с пунктом в меню «Пуск»",
+    desktopNote: "Не подписано платным сертификатом Apple или Microsoft: установленное так, оно открывается сразу. Если скачать через браузер, macOS один раз спросит («Системные настройки» → «Конфиденциальность и безопасность» → «Всё равно открыть»), Windows SmartScreen тоже. На Linux нужен glibc 2.28 или новее и X11 или Wayland.",
     brew: "Через Homebrew",
     sh: "Или одной командой",
     ps: "В PowerShell",

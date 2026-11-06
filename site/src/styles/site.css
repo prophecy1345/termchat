@@ -432,6 +432,21 @@ h2::before {
   }
 }
 
+/* The desktop app, framed like the terminal mock-up. */
+.window-shot {
+  max-width: 56rem;
+  margin: 0 auto 2rem;
+}
+
+.window-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  box-shadow: 0 30px 80px rgb(0 0 0 / 0.5), 0 0 60px rgb(203 166 247 / 0.12);
+}
+
 /* Cards */
 .cards {
   display: grid;
@@ -555,6 +570,7 @@ h2::before {
 
 #os-unix:checked ~ [data-for="os-unix"],
 #os-win:checked ~ [data-for="os-win"],
+#os-desktop:checked ~ [data-for="os-desktop"],
 #os-android:checked ~ [data-for="os-android"],
 #os-manual:checked ~ [data-for="os-manual"] {
   display: block;

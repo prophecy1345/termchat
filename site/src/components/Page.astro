@@ -49,6 +49,7 @@ const csp =
       <a class="brand" href={url(t.lang === "en" ? "/" : "/ru/")}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
       <nav>
         <a href="#features">{t.nav.features}</a>
+        <a href="#desktop">{t.nav.desktop}</a>
         <a href="#protection">{t.nav.protection}</a>
         <a href="#install">{t.nav.install}</a>
         <a href={REPO}>GitHub</a>
@@ -115,6 +116,20 @@ const csp =
         </div>
       </section>
 
+      <section id="desktop">
+        <h2>{t.desktopTitle}</h2>
+        <p class="sub">{t.desktopLead}</p>
+        <figure class="window-shot">
+          <img src={url("/desktop.png")} alt={t.desktopAlt} width="1100" height="700" loading="lazy" />
+        </figure>
+        <div class="cards">
+          {t.desktop.map(([title, text]) => (
+            <article class="card"><h3>{title}</h3><p>{text}</p></article>
+          ))}
+        </div>
+        <p class="more"><a href="#install" data-tab="os-desktop">{t.desktopInstall} →</a></p>
+      </section>
+
       <section id="protection">
         <h2>{t.protectionTitle}</h2>
         <p class="sub">{t.protectionLead}</p>
@@ -145,6 +160,8 @@ const csp =
           <label for="os-unix">{t.installTabs.unix}</label>
           <input type="radio" name="os" id="os-win" />
           <label for="os-win">{t.installTabs.windows}</label>
+          <input type="radio" name="os" id="os-desktop" />
+          <label for="os-desktop">{t.installTabs.desktop}</label>
           <input type="radio" name="os" id="os-android" />
           <label for="os-android">{t.installTabs.android}</label>
           <input type="radio" name="os" id="os-manual" />
@@ -160,6 +177,15 @@ const csp =
             <p>{t.install.ps}</p>
             <Cmd text={commands.ps} copy={t.copy} done={t.copied} />
             <p>{t.install.zip}</p>
+          </div>
+          <div class="panel" data-for="os-desktop">
+            <p>{t.install.desktopBrew}</p>
+            <Cmd text={commands.brewGui} copy={t.copy} done={t.copied} />
+            <p>{t.install.desktopSh}</p>
+            <Cmd text={commands.shGui} copy={t.copy} done={t.copied} />
+            <p>{t.install.desktopPs}</p>
+            <Cmd text={commands.psGui} copy={t.copy} done={t.copied} />
+            <p class="dim">{t.install.desktopNote}</p>
           </div>
           <div class="panel" data-for="os-android">
             <p>{t.install.android}</p>
