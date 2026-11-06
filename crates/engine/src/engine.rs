@@ -70,6 +70,23 @@ pub fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// How long ago `at` was, short: "now", "5m", "3h", "2d".
+pub fn age(at: u64) -> String {
+    match now().saturating_sub(at) {
+        0..60 => "now".into(),
+        s => span(s),
+    }
+}
+
+/// A duration, short and rounded down: "59m", "2h", "3d".
+pub fn span(s: u64) -> String {
+    match s {
+        0..3600 => format!("{}m", s / 60),
+        3600..86_400 => format!("{}h", s / 3600),
+        _ => format!("{}d", s / 86_400),
+    }
+}
+
 /// What the interface should show after a call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Happened {
@@ -1835,6 +1852,14 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spans_round_down() {
+        assert_eq!(span(59 * 60), "59m");
+        assert_eq!(span(2 * 3600), "2h");
+        assert_eq!(span(3 * 86_400 + 5), "3d");
+        assert_eq!(age(now()), "now");
+    }
 
     #[test]
     fn names_mixing_scripts_are_flagged() {

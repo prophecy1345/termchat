@@ -16,7 +16,7 @@ use termchat_core::proto::Invite;
 use termchat_core::{fingerprint, safety_number};
 
 use crate::app::{
-    App, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock, now,
+    App, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock,
 };
 use crate::data::{Contact, Status};
 use crate::form::Form;
@@ -71,20 +71,7 @@ pub fn name(m: &Main, c: &Contact) -> String {
     m.engine.name(c)
 }
 
-fn age(at: u64) -> String {
-    match now().saturating_sub(at) {
-        0..60 => "now".into(),
-        s => span(s),
-    }
-}
-
-pub(crate) fn span(s: u64) -> String {
-    match s {
-        0..3600 => format!("{}m", s / 60),
-        3600..86_400 => format!("{}h", s / 3600),
-        _ => format!("{}d", s / 86_400),
-    }
-}
+pub(crate) use crate::engine::{age, span};
 
 /// Cuts `s` to `w` columns, with "…" if anything was cut.
 fn fit(s: &str, w: usize) -> String {
