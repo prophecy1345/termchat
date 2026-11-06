@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, RichText};
 use termchat_core::{fingerprint, safety_number};
-use termchat_engine::engine::clean_text;
+use termchat_engine::engine::{clean_text, news};
 use termchat_engine::settings::Settings;
 use termchat_engine::{data, themes};
 use zeroize::Zeroizing;
@@ -48,6 +48,41 @@ pub enum Dialog {
         again: Zeroizing<String>,
         error: String,
     },
+    /// A document to send from a path (ADR-017).
+    SendFile {
+        path: String,
+        error: String,
+    },
+    /// Message `m` of the open chat, a received document.
+    SaveFile {
+        m: usize,
+        folder: String,
+        error: String,
+    },
+    Password(Passwords),
+    Duress(Passwords),
+    /// Bridge lines to paste; they replace the current ones (ADR-015).
+    Bridges {
+        text: Zeroizing<String>,
+        error: String,
+    },
+    Wipe {
+        typed: String,
+    },
+    /// The wipe is waiting for the relay (ADR-009).
+    Leaving,
+    /// The relay cannot be told; the reason.
+    WipeAnyway(String),
+    News,
+}
+
+/// The current password, a new one and its repeat.
+#[derive(Default)]
+pub struct Passwords {
+    current: Zeroizing<String>,
+    new: Zeroizing<String>,
+    again: Zeroizing<String>,
+    error: String,
 }
 
 impl Dialog {
@@ -55,6 +90,14 @@ impl Dialog {
         Self::Add {
             invite: String::new(),
             incognito: false,
+            error: String::new(),
+        }
+    }
+
+    pub fn save_file(m: usize) -> Self {
+        Self::SaveFile {
+            m,
+            folder: "~/Downloads".into(),
             error: String::new(),
         }
     }
@@ -321,15 +364,285 @@ impl Chat {
                     ui.checkbox(&mut s.sound, "");
                     ui.end_row();
                 });
+                let mut codes_only = self.engine.data.invites.codes_only;
+                if ui
+                    .checkbox(&mut codes_only, "Only requests from my invites")
+                    .on_hover_text(
+                        "Requests without one of your invite codes are dropped (ADR-013)",
+                    )
+                    .changed()
+                {
+                    self.engine.set_codes_only(codes_only);
+                }
                 ui.add_space(6.0);
+                ui.label(RichText::new("Security").strong());
+                let tor = match self.engine.data.tor {
+                    true => "Turn Tor off",
+                    false => "Turn Tor on",
+                };
+                let mut next = None;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Back up…").clicked() {
+                        next = Some(Dialog::backup());
+                    }
+                    if ui.button("Change password…").clicked() {
+                        next = Some(Dialog::Password(Passwords::default()));
+                    }
+                    if ui.button("Duress password…").clicked() {
+                        next = Some(Dialog::Duress(Passwords::default()));
+                    }
+                    if ui.button(tor).clicked() {
+                        next = Some(Dialog::Notice(self.engine.toggle_tor()));
+                    }
+                    if ui.button("Tor bridges…").clicked() {
+                        next = Some(Dialog::Bridges {
+                            text: Zeroizing::default(),
+                            error: String::new(),
+                        });
+                    }
+                    if ui.button("What's new").clicked() {
+                        next = Some(Dialog::News);
+                    }
+                });
+                ui.add_space(6.0);
+                if ui
+                    .button(RichText::new("Wipe everything…").color(p.danger))
+                    .clicked()
+                {
+                    next = Some(Dialog::Wipe {
+                        typed: String::new(),
+                    });
+                }
+                ui.add_space(6.0);
+                let close = ui.button("Close").clicked();
+                if next.is_some() {
+                    self.dialog = next;
+                }
+                !close
+            }
+            Dialog::SendFile { path, error } => {
+                let Some(i) = open else { return false };
+                ui.heading("Send a file");
+                ui.label(
+                    "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about \
+                     10 s, 1 MiB about 3 min. The relay sees roughly how big it is.",
+                );
+                ui.add(
+                    egui::TextEdit::singleline(path)
+                        .hint_text("~/Documents/contract.pdf")
+                        .desired_width(f32::INFINITY),
+                );
+                error_line(ui, p, error);
+                let (go, stay) = buttons(ui, "Send");
+                if go {
+                    let sent = data::read_document(&data::expand(path))
+                        .and_then(|(name, bytes)| self.engine.send_file(i, &name, bytes));
+                    match sent {
+                        Ok(()) => return false,
+                        Err(e) => *error = e,
+                    }
+                }
+                stay
+            }
+            Dialog::SaveFile { m, folder, error } => {
+                let Some(i) = open else { return false };
+                let Some((name, _)) = self.engine.file_bytes(i, *m) else {
+                    return false;
+                };
+                ui.heading("Save a file");
+                ui.label(RichText::new(clean_text(&name)).monospace());
+                ui.label(
+                    RichText::new(
+                        "Files from contacts can be harmful: termchat never opens them, \
+                         check before you do. An existing file is never overwritten.",
+                    )
+                    .color(p.warn),
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Into folder");
+                    ui.text_edit_singleline(folder);
+                });
+                error_line(ui, p, error);
                 let mut keep = true;
                 ui.horizontal(|ui| {
-                    if ui.button("Back up…").clicked() {
-                        self.dialog = Some(Dialog::backup());
+                    if ui.button("Save").clicked() {
+                        match self.engine.save_file(i, *m, &data::expand(folder)) {
+                            Ok(path) => {
+                                self.status = format!("saved to {}", path.display());
+                                keep = false;
+                            }
+                            Err(e) => *error = e,
+                        }
                     }
-                    keep = !ui.button("Close").clicked();
+                    if ui.button("Discard").clicked() {
+                        self.engine.discard_file(i, *m);
+                        keep = false;
+                    }
+                    keep &= !ui.button("Later").clicked();
                 });
                 keep
+            }
+            Dialog::Password(pw) => {
+                ui.heading("Change password");
+                ui.label(
+                    "The data stays as it is; only the key slot changes. If you set a \
+                     duress password, keep the new one far from it: a typo that hits the \
+                     duress password erases everything.",
+                );
+                let (go, stay) = password_fields(ui, p, pw, "New password");
+                if !go {
+                    return stay;
+                }
+                if let Some(new) = pw.matching() {
+                    match self.engine.change_password(&pw.current, &new) {
+                        Ok(()) => {
+                            self.dialog = Some(Dialog::Notice("Password changed.".into()));
+                            return false;
+                        }
+                        Err(e) => pw.error = e,
+                    }
+                }
+                true
+            }
+            Dialog::Duress(pw) => {
+                ui.heading("Duress password");
+                ui.label(
+                    RichText::new(
+                        "Entering the duress password at unlock silently erases everything \
+                         and shows the first-run screen. It does NOT help if someone copied \
+                         the disk first. The code is public, so they may know the feature. \
+                         Destroying data after seizure can be a crime where you live.",
+                    )
+                    .color(p.warn),
+                );
+                let (go, stay) = password_fields(ui, p, pw, "Duress password (empty: off)");
+                if !go {
+                    return stay;
+                }
+                if let Some(new) = pw.matching() {
+                    let duress = (!new.is_empty()).then_some(new.as_str());
+                    match self.engine.set_duress(&pw.current, duress) {
+                        Ok(done) => {
+                            self.dialog = Some(Dialog::Notice(done));
+                            return false;
+                        }
+                        Err(e) => pw.error = e,
+                    }
+                }
+                true
+            }
+            Dialog::Bridges { text, error } => {
+                ui.heading("Tor bridges");
+                ui.label(
+                    "For networks that block Tor. Get bridges at bridges.torproject.org or \
+                     from @GetBridgesBot in Telegram, and paste them, one per line.",
+                );
+                ui.label(RichText::new("In use now:").color(p.dim));
+                let now = self.engine.bridges();
+                if now.is_empty() {
+                    ui.label(RichText::new("  none: Tor connects directly").color(p.dim));
+                }
+                for b in now {
+                    ui.label(
+                        RichText::new(format!("  {}", clean_text(&b)))
+                            .monospace()
+                            .color(p.dim),
+                    );
+                }
+                ui.add(
+                    egui::TextEdit::multiline(&mut **text)
+                        .hint_text("obfs4 192.0.2.1:443 …")
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                error_line(ui, p, error);
+                let mut keep = true;
+                let mut lines = None;
+                ui.horizontal(|ui| {
+                    if ui.button("Use these").clicked() {
+                        lines = Some(text.as_str().to_owned());
+                    }
+                    if ui.button("No bridges").clicked() {
+                        lines = Some(String::new());
+                    }
+                    keep = !ui.button("Cancel").clicked();
+                });
+                if let Some(lines) = lines {
+                    match self.engine.set_bridges(&lines) {
+                        Ok(done) => {
+                            self.dialog = Some(Dialog::Notice(done));
+                            return false;
+                        }
+                        Err(e) => *error = e,
+                    }
+                }
+                keep
+            }
+            Dialog::Wipe { typed } => {
+                ui.heading("Wipe everything");
+                ui.label(
+                    "Erases keys, contacts and history from this device. No undo.\n\
+                     WIPE deletes the account: contacts are told you left and the relay \
+                     forgets your key.\nMOVED (restored on another device): erases only \
+                     this device and tells nobody.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Type WIPE or MOVED");
+                    ui.text_edit_singleline(typed);
+                });
+                let (go, stay) = buttons(ui, "Wipe");
+                if go {
+                    match typed.trim() {
+                        "WIPE" => {
+                            if self.engine.leave(false) {
+                                self.dialog = Some(Dialog::Leaving);
+                            }
+                            return false;
+                        }
+                        "MOVED" => {
+                            self.engine.leave(true);
+                            return false;
+                        }
+                        _ => {}
+                    }
+                }
+                stay
+            }
+            Dialog::Leaving => {
+                ui.heading("Wipe everything");
+                ui.label("Telling your contacts and the relay…");
+                ui.spinner();
+                true
+            }
+            Dialog::WipeAnyway(why) => {
+                ui.heading("Wipe everything");
+                ui.label(format!("{why}\nWipe without telling your contacts?"));
+                let (go, stay) = buttons(ui, "Wipe anyway");
+                if go {
+                    self.engine.finish_wipe("");
+                    return false;
+                }
+                stay
+            }
+            Dialog::News => {
+                self.engine.news_seen();
+                ui.heading("What's new");
+                if let Some(v) = &self.engine.update {
+                    ui.label(
+                        RichText::new(format!(
+                            "termchat {v} is out. Update the way you installed it: the \
+                             installer, Homebrew, or the release page on GitHub."
+                        ))
+                        .color(p.accent),
+                    );
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(news()).monospace());
+                    });
+                !ui.button("Close").clicked()
             }
             Dialog::Backup {
                 path,
@@ -382,6 +695,36 @@ impl Chat {
             }
         }
     }
+}
+
+impl Passwords {
+    /// The new password, once both fields agree.
+    fn matching(&mut self) -> Option<Zeroizing<String>> {
+        match self.new == self.again {
+            true => Some(self.new.clone()),
+            false => {
+                self.error = "passwords do not match".into();
+                None
+            }
+        }
+    }
+}
+
+/// Current, new, repeat, the error and the buttons: (Save clicked, keep open).
+fn password_fields(ui: &mut egui::Ui, p: &Pal, pw: &mut Passwords, new: &str) -> (bool, bool) {
+    egui::Grid::new("passwords").num_columns(2).show(ui, |ui| {
+        ui.label("Current password");
+        ui.add(egui::TextEdit::singleline(&mut *pw.current).password(true));
+        ui.end_row();
+        ui.label(new);
+        ui.add(egui::TextEdit::singleline(&mut *pw.new).password(true));
+        ui.end_row();
+        ui.label("Again");
+        ui.add(egui::TextEdit::singleline(&mut *pw.again).password(true));
+        ui.end_row();
+    });
+    error_line(ui, p, &pw.error);
+    buttons(ui, "Save")
 }
 
 /// The main button and Cancel. Returns (main clicked, keep open).

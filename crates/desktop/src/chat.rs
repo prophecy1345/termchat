@@ -134,8 +134,7 @@ impl Chat {
                 Happened::Note(n) => self.status = n,
                 Happened::Notice(n) => self.dialog = Some(Dialog::Notice(n)),
                 Happened::Wiped(n) => return Some(n),
-                // Only a wipe the user starts asks this; there is none yet.
-                Happened::WipeAnyway(_) => {}
+                Happened::WipeAnyway(why) => self.dialog = Some(Dialog::WipeAnyway(why)),
             }
         }
         None
@@ -310,7 +309,11 @@ impl Chat {
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .stick_to_bottom(true)
-                    .show(ui, |ui| messages(ui, p, &self.engine.data.contacts[i]));
+                    .show(ui, |ui| {
+                        if let Some(m) = messages(ui, p, &self.engine.data.contacts[i]) {
+                            self.dialog = Some(Dialog::save_file(m));
+                        }
+                    });
             });
     }
 
@@ -378,6 +381,16 @@ impl Chat {
                 Some(s) => format!("⏱ {}", span(u64::from(s))),
                 None => "⏱ off".into(),
             };
+            if ui
+                .add(egui::Button::new("📎").corner_radius(2))
+                .on_hover_text("Send a file, up to 1 MiB")
+                .clicked()
+            {
+                self.dialog = Some(Dialog::SendFile {
+                    path: String::new(),
+                    error: String::new(),
+                });
+            }
             let t = ui
                 .add(egui::Button::new(RichText::new(label).monospace()).corner_radius(2))
                 .on_hover_text("Disappearing messages: click for the next timer");
@@ -385,22 +398,24 @@ impl Chat {
                 self.engine
                     .edit(i, |c| c.expires_in = next_timer(c.expires_in));
             }
-            let button = ui.add(
-                egui::Button::new(RichText::new("SEND").strong().color(p.accent))
-                    .fill(p.theirs)
-                    .corner_radius(2),
-            );
-            let field = ui.add_sized(
-                [ui.available_width(), 28.0],
-                egui::TextEdit::singleline(&mut self.input)
-                    .hint_text("Encrypted message")
-                    .font(egui::TextStyle::Monospace),
-            );
-            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            send = button.clicked() || enter;
-            if enter {
-                field.request_focus();
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let button = ui.add(
+                    egui::Button::new(RichText::new("SEND").strong().color(p.accent))
+                        .fill(p.theirs)
+                        .corner_radius(2),
+                );
+                let field = ui.add_sized(
+                    [ui.available_width(), 28.0],
+                    egui::TextEdit::singleline(&mut self.input)
+                        .hint_text("Encrypted message")
+                        .font(egui::TextStyle::Monospace),
+                );
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                send = button.clicked() || enter;
+                if enter {
+                    field.request_focus();
+                }
+            });
         });
         if !send || self.input.trim().is_empty() {
             return;
@@ -413,7 +428,8 @@ impl Chat {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui, p: &Pal) {
-        let mut backup = false;
+        let (mut backup, mut news) = (false, false);
+        let unread_news = self.engine.news_unread();
         let e = &self.engine;
         ui.horizontal(|ui| {
             let (text, ok) = match (e.connected, e.data.tor) {
@@ -429,13 +445,20 @@ impl Chat {
                     .link(RichText::new("! no backup yet").color(p.warn))
                     .clicked();
             }
-            if let Some(v) = &e.update {
-                ui.label(RichText::new(format!("termchat {v} is out")).color(p.accent));
+            let note = match &e.update {
+                Some(v) => format!("termchat {v} is out"),
+                None => "new in this version".into(),
+            };
+            if unread_news {
+                news = ui.link(RichText::new(note).color(p.accent)).clicked();
             }
             ui.label(RichText::new(&self.status).color(p.warn));
         });
         if backup {
             self.dialog = Some(Dialog::backup());
+        }
+        if news {
+            self.dialog = Some(Dialog::News);
         }
     }
 
@@ -517,9 +540,11 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
     Some(next)
 }
 
-fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) {
+/// The chat history. `Some(m)`: Save was clicked on message `m`, a file.
+fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) -> Option<usize> {
     let width = ui.available_width();
-    for m in &c.messages {
+    let mut save = None;
+    for (n, m) in c.messages.iter().enumerate() {
         let text = match &m.file {
             Some(f) => clean_text(&f.label()),
             None => clean_text(&m.text),
@@ -561,9 +586,17 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) {
                     .small()
                     .color(colour),
             );
+            let unsaved = m
+                .file
+                .as_ref()
+                .is_some_and(|f| !m.mine && f.complete() && f.data.is_some());
+            if unsaved && ui.link(RichText::new("Save…").color(p.accent)).clicked() {
+                save = Some(n);
+            }
         });
         ui.add_space(4.0);
     }
+    save
 }
 
 /// A square with initials, like the Android app; the "·fingerprint" a
@@ -684,6 +717,16 @@ mod tests {
                 msg(false, "hi there", Status::Received),
                 msg(true, "hello", Status::Sent),
                 msg(false, "request accepted", Status::System),
+                termchat_engine::data::Msg {
+                    file: Some(termchat_engine::data::FileMsg {
+                        name: "notes.txt".into(),
+                        size: 5,
+                        done: 1,
+                        data: Some(b"hello".to_vec()),
+                        ..Default::default()
+                    }),
+                    ..msg(false, "notes.txt", Status::Received)
+                },
             ],
             ..Contact::default()
         });
@@ -704,6 +747,8 @@ mod tests {
         assert!(shown.contains("Contacts  1") && shown.contains("NOT VERIFIED"));
 
         chat.select([1; 32]);
+        // As after an update: this version's notes are not read yet.
+        chat.engine.data.news_seen.clear();
         chat.alert([1; 32], false, false, false);
         assert!(chat.step(true, false).is_none());
         assert_eq!(
@@ -717,6 +762,9 @@ mod tests {
             "hi there",
             "hello",
             "request accepted",
+            "notes.txt",
+            "Save…",
+            "new in this version",
         ] {
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
         }
@@ -740,6 +788,31 @@ mod tests {
                 "Your fingerprint",
             ),
             (Dialog::Notice("all good".into()), "all good"),
+            (Dialog::save_file(3), "Save a file"),
+            (
+                Dialog::SendFile {
+                    path: String::new(),
+                    error: String::new(),
+                },
+                "Send a file",
+            ),
+            (Dialog::Password(Default::default()), "Change password"),
+            (Dialog::Duress(Default::default()), "Duress password"),
+            (
+                Dialog::Bridges {
+                    text: Default::default(),
+                    error: String::new(),
+                },
+                "none: Tor connects directly",
+            ),
+            (
+                Dialog::Wipe {
+                    typed: String::new(),
+                },
+                "Type WIPE or MOVED",
+            ),
+            (Dialog::WipeAnyway("offline".into()), "Wipe without telling"),
+            (Dialog::News, "## 0."),
         ];
         for (d, want) in dialogs {
             chat.dialog = Some(d);

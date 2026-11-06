@@ -83,6 +83,8 @@ struct SetupForm {
     tor: bool,
     relay: String,
     onion: String,
+    /// The path of a backup to restore instead.
+    backup: String,
     error: String,
 }
 
@@ -95,6 +97,7 @@ impl Default for SetupForm {
             tor: cfg!(feature = "tor"),
             relay: DEFAULT_RELAY.into(),
             onion: DEFAULT_ONION.into(),
+            backup: String::new(),
             error: String::new(),
         }
     }
@@ -177,6 +180,11 @@ impl eframe::App for App {
             Screen::Setup(form) => {
                 if let Some(engine) = setup(ui, form, &self.path) {
                     self.screen = open(engine);
+                } else if restore(ui, form, &self.path) {
+                    self.screen = Screen::Unlock(Unlock {
+                        error: "restored: enter the backup's password".into(),
+                        ..Unlock::default()
+                    });
                 }
             }
             Screen::Unlock(unlock) => match unlock_screen(ui, unlock, &self.path) {
@@ -221,6 +229,31 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
 }
 
 /// The first-run form; returns the new identity's engine.
+/// A backup instead of a new identity. True once the file is in place.
+fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool {
+    ui.add_space(16.0);
+    let mut done = false;
+    egui::CollapsingHeader::new("Restore from a backup").show(ui, |ui| {
+        ui.label(
+            "Afterwards unlock with the backup's password. Chats start fresh; contacts \
+             see that you restarted the conversation.",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Backup file");
+            ui.add(
+                egui::TextEdit::singleline(&mut f.backup).hint_text("/Volumes/USB/termchat-backup"),
+            );
+            if ui.button("Restore").clicked() {
+                match termchat_engine::engine::restore(path, &data::expand(&f.backup)) {
+                    Ok(()) => done = true,
+                    Err(e) => f.error = e,
+                }
+            }
+        });
+    });
+    done
+}
+
 fn setup(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> Option<Box<Engine>> {
     ui.heading("termchat.app setup");
     egui::Grid::new("setup").num_columns(2).show(ui, |ui| {
