@@ -15,3 +15,18 @@ pub use relay::*;
 
 /// Idle time before a client locks itself.
 pub const AUTOLOCK: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// Keys must not end up in a core file after a crash.
+pub fn no_core_dumps() {
+    #[cfg(unix)]
+    {
+        use rustix::process::{Resource, Rlimit, setrlimit};
+        let _ = setrlimit(
+            Resource::Core,
+            Rlimit {
+                current: Some(0),
+                maximum: Some(0),
+            },
+        );
+    }
+}

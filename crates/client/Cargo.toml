@@ -23,9 +23,6 @@ tokio-tungstenite = "0.29.0"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 zeroize = "1.9.1"
 
-[target."cfg(unix)".dependencies]
-rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
-
 [features]
 default = ["tor"]
 # Tor via Arti (ADR-004). Official releases ship with it.

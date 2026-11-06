@@ -43,6 +43,21 @@ allow = [
     "Zlib",
 ]
 
+# Desktop GUI only (ADR-018), allowed per crate rather than for everything.
+# Boost: the Windows clipboard. GPL-compatible.
+[[licenses.exceptions]]
+crate = "clipboard-win"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+crate = "error-code"
+allow = ["BSL-1.0"]
+
+# The fonts egui draws with, shipped as data inside the binary.
+[[licenses.exceptions]]
+crate = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
 [licenses.private]
 ignore = true
 

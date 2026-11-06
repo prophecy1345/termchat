@@ -18,7 +18,7 @@ async fn main() -> std::io::Result<()> {
         println!("termchat {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    no_core_dumps();
+    termchat::no_core_dumps();
     let path = data::home().join("state");
     // A folder without locks (some network drives) must not stop termchat.
     let _lock = match data::lock(&path) {
@@ -92,19 +92,4 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
         }
     }
     Ok(())
-}
-
-/// Keys must not end up in a core file after a crash.
-fn no_core_dumps() {
-    #[cfg(unix)]
-    {
-        use rustix::process::{Resource, Rlimit, setrlimit};
-        let _ = setrlimit(
-            Resource::Core,
-            Rlimit {
-                current: Some(0),
-                maximum: Some(0),
-            },
-        );
-    }
 }
