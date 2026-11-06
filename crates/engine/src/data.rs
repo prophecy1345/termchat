@@ -385,6 +385,14 @@ pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_default().join(".termchat")
 }
 
+/// `~/x` to the home folder; other paths as typed.
+pub fn expand(path: &str) -> PathBuf {
+    match path.trim().strip_prefix("~/") {
+        Some(rest) => std::env::home_dir().unwrap_or_default().join(rest),
+        None => path.trim().into(),
+    }
+}
+
 /// Temp file, fsync, rename: a crash leaves either the old or the new state.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");

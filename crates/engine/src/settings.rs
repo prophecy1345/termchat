@@ -21,6 +21,8 @@ pub struct Settings {
     pub sound: bool,
     /// A system notification for new messages, without name or text.
     pub notify: bool,
+    /// The desktop window's theme; it starts with the Android look (ADR-018).
+    pub desktop_theme: String,
 }
 
 impl Default for Settings {
@@ -31,6 +33,7 @@ impl Default for Settings {
             sidebar: 28,
             sound: true,
             notify: false,
+            desktop_theme: "termchat".into(),
         }
     }
 }

@@ -179,10 +179,4 @@ impl Form {
     }
 }
 
-/// `~/x` to the home folder; other paths as typed.
-pub fn expand(path: &str) -> std::path::PathBuf {
-    match path.trim().strip_prefix("~/") {
-        Some(rest) => std::env::home_dir().unwrap_or_default().join(rest),
-        None => path.trim().into(),
-    }
-}
+pub use crate::data::expand;
