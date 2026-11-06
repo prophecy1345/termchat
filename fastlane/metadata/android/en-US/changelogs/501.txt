@@ -1,0 +1,1 @@
+No changes in the Android app itself. The desktop app now shows What's new formatted instead of raw Markdown.

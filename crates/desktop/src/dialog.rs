@@ -705,7 +705,7 @@ impl Chat {
                 egui::ScrollArea::vertical()
                     .max_height(360.0)
                     .show(ui, |ui| {
-                        ui.label(RichText::new(news()).monospace());
+                        markdown(ui, p, news());
                     });
                 !ui.button("Close").clicked()
             }
@@ -834,5 +834,64 @@ fn buttons(ui: &mut egui::Ui, p: &Pal, main: &str) -> (bool, bool) {
 fn error_line(ui: &mut egui::Ui, p: &Pal, error: &str) {
     if !error.is_empty() {
         ui.label(RichText::new(error).color(p.danger));
+    }
+}
+
+/// Just enough Markdown for the changelog (as in the terminal client):
+/// headings, bullets, **bold**, `code`, [links](as their text).
+// ponytail: no tables or code blocks; add when the changelog uses them.
+fn markdown(ui: &mut egui::Ui, p: &Pal, src: &str) {
+    for para in src.split("\n\n") {
+        let mut para = para.trim().to_string();
+        if let Some(h) = para.strip_prefix("### ").or(para.strip_prefix("## ")) {
+            ui.add_space(6.0);
+            ui.label(RichText::new(h).heading().color(p.accent));
+            continue;
+        }
+        while let Some(mid) = para.find("](") {
+            let (Some(open), Some(close)) = (para[..mid].rfind('['), para[mid..].find(')')) else {
+                break;
+            };
+            let label = para[open + 1..mid].to_string();
+            para.replace_range(open..mid + close + 1, &label);
+        }
+        // A paragraph is a list when its first line is a bullet; wrapped
+        // lines join their item.
+        let mut items: Vec<String> = Vec::new();
+        for line in para.lines() {
+            match line.strip_prefix("- ") {
+                Some(item) => items.push(format!("• {item}")),
+                None => match items.last_mut() {
+                    Some(last) => {
+                        last.push(' ');
+                        last.push_str(line.trim());
+                    }
+                    None => items.push(line.trim().to_string()),
+                },
+            }
+        }
+        for item in items {
+            let mut job = egui::text::LayoutJob::default();
+            let font = egui::FontId::proportional(14.0);
+            for (i, code) in item.split('`').enumerate() {
+                for (j, part) in code.split("**").enumerate() {
+                    let color = if i % 2 == 1 {
+                        p.accent
+                    } else if j % 2 == 1 {
+                        ui.visuals().strong_text_color()
+                    } else {
+                        ui.visuals().text_color()
+                    };
+                    let font = if i % 2 == 1 {
+                        egui::FontId::monospace(13.0)
+                    } else {
+                        font.clone()
+                    };
+                    job.append(part, 0.0, egui::TextFormat::simple(font, color));
+                }
+            }
+            ui.label(job);
+            ui.add_space(3.0);
+        }
     }
 }
