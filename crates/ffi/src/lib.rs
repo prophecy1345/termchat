@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 uniffi::setup_scaffolding!();
 
 /// How often the relay's events are taken in.
-/// ponytail: polling, 200 ms of latency; await the channel if that shows.
+/// Polling, 200 ms of latency; await the channel if that shows.
 const POLL: Duration = Duration::from_millis(200);
 
 fn runtime() -> &'static Runtime {

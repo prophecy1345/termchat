@@ -206,7 +206,7 @@ class Model(private val context: Context) : Listener {
         Tc.use(DEFAULT_THEME)
         notify = false
         stay = false
-        // ponytail: incognito instances stay with the distributor; the relay already forgot their keys.
+        // Incognito instances stay with the distributor; the relay already forgot their keys.
         if (push != null) UnifiedPush.unregister(context)
         push = null
         link()

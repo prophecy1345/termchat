@@ -1785,7 +1785,7 @@ impl Engine {
         if name.is_empty() {
             return fp[..5].to_string();
         }
-        // ponytail: O(contacts) per name, O(n²) per frame; cache if lists grow large.
+        // O(contacts) per name, O(n²) per frame; cache if lists grow large.
         let collides = name == clean(&self.data.nickname)
             || self
                 .data
