@@ -1,0 +1,1 @@
+Security update: the encryption library vodozemac 0.11.2 again wipes session secrets from memory as soon as they are no longer needed (RUSTSEC-2026-0445, -0451). Nothing changes on the wire.

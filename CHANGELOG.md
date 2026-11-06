@@ -2,6 +2,16 @@
 
 Shown inside termchat: Ctrl+P, n.
 
+## 0.4.1
+
+- **Security update:** vodozemac 0.11.2 for RUSTSEC-2026-0445 and -0451.
+  Versions 0.11.0 and 0.11.1 of the encryption library kept more copies of
+  session secrets in memory, for longer, than intended. Nothing changes on the
+  wire, so your contacts do not need to update at the same time.
+- The terminal client no longer starts twice on the same account: it says
+  "termchat is already open in another window". Two copies would overwrite
+  each other's saved state.
+
 ## 0.4.0
 
 - **Documents** (ADR-017). Send a file of up to 1 MiB, end-to-end encrypted

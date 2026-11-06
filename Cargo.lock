@@ -6721,7 +6721,7 @@ dependencies = [
 
 [[package]]
 name = "termchat"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "crossterm",
@@ -6738,7 +6738,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -6754,7 +6754,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-desktop"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "eframe",
  "termchat-engine",
@@ -6764,7 +6764,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-engine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "arti-client",
  "base64 0.22.1",
@@ -6787,7 +6787,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-ffi"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "termchat-core",
  "termchat-engine",
@@ -6798,7 +6798,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-proto"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "postcard",
@@ -6808,7 +6808,7 @@ dependencies = [
 
 [[package]]
 name = "termchat-relay"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "axum",
