@@ -205,16 +205,32 @@ impl eframe::App for App {
     }
 }
 
-/// Returns the engine once the password opens the state.
+/// Returns the engine once the password opens the state. Centred, one big
+/// field; Return unlocks, as it is the only field here.
 fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> Option<Unlocked> {
-    ui.heading("termchat");
-    ui.label("Password");
-    let field = ui.add(egui::TextEdit::singleline(&mut *u.password).password(true));
-    field.request_focus();
-    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-    let go = ui.button("Unlock").clicked() || enter;
-    ui.colored_label(ui.visuals().error_fg_color, u.error.as_str());
-    if !go {
+    const WIDTH: f32 = 360.0;
+    ui.add_space((ui.available_height() / 2.0 - 120.0).max(0.0));
+    let mut go = false;
+    ui.vertical_centered(|ui| {
+        ui.label(egui::RichText::new("termchat").strong().size(28.0));
+        ui.add_space(20.0);
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut *u.password)
+                .password(true)
+                .hint_text("Password")
+                .font(egui::FontId::proportional(20.0))
+                .desired_width(WIDTH)
+                .margin(egui::Margin::symmetric(14, 12)),
+        );
+        field.request_focus();
+        ui.add_space(12.0);
+        let button = egui::Button::new(egui::RichText::new("Unlock").size(16.0));
+        go = ui.add_sized([WIDTH, 40.0], button).clicked();
+        ui.add_space(10.0);
+        ui.colored_label(ui.visuals().error_fg_color, u.error.as_str());
+    });
+    go |= ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if !go || u.password.is_empty() {
         return None;
     }
     // Argon2 blocks the window for about a second; a worker
@@ -230,7 +246,6 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
     }
 }
 
-/// The first-run form; returns the new identity's engine.
 /// A backup instead of a new identity. True once the file is in place.
 fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool {
     ui.add_space(16.0);
@@ -256,6 +271,7 @@ fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool
     done
 }
 
+/// The first-run form; returns the new identity's engine.
 fn setup(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> Option<Box<Engine>> {
     ui.heading("termchat.app setup");
     egui::Grid::new("setup").num_columns(2).show(ui, |ui| {
@@ -303,5 +319,61 @@ fn setup(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> Option
             f.error = e;
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)] // tests only
+    use super::*;
+
+    /// One frame of the unlock screen with Return pressed.
+    fn press_return(u: &mut Unlock, path: &std::path::Path) -> Option<Unlocked> {
+        let ctx = egui::Context::default();
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let input = egui::RawInput {
+            events: vec![enter],
+            ..Default::default()
+        };
+        let mut out = None;
+        let mut full = ctx.run_ui(input, |ui| out = unlock_screen(ui, u, path));
+        full.textures_delta.clear();
+        out
+    }
+
+    #[test]
+    fn return_unlocks() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _rt = rt.enter();
+        let dir = std::env::temp_dir().join(format!("termchat-unlock-{}", std::process::id()));
+        let path = dir.join("state");
+        let password = "correct horse battery staple violin";
+        let setup = Setup {
+            relay_url: "ws://127.0.0.1:9/",
+            onion_url: None,
+            tor: false,
+            nickname: "me",
+            password,
+        };
+        drop(Engine::setup(&path, &setup).unwrap());
+
+        let mut u = Unlock::default();
+        assert!(press_return(&mut u, &path).is_none(), "nothing typed yet");
+        *u.password = "wrong".into();
+        assert!(press_return(&mut u, &path).is_none());
+        assert_eq!(u.error, "wrong password");
+        assert!(u.password.is_empty(), "a tried password is forgotten");
+        *u.password = password.into();
+        assert!(matches!(
+            press_return(&mut u, &path),
+            Some(Unlocked::Open(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
