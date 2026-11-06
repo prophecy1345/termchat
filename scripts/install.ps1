@@ -7,9 +7,16 @@
 # %LOCALAPPDATA%\Programs\termchat and adds that folder
 # to your user PATH. Nothing else is changed.
 #
+# The desktop app (ADR-018) instead: set TERMCHAT_GUI=1 first.
+#
+#   $env:TERMCHAT_GUI = 1; irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.ps1 | iex
+#
+# It puts termchat-gui.exe in the same folder and adds a Start menu entry.
+#
 # Settings (environment variables):
 #   TERMCHAT_VERSION      release tag, e.g. v0.1.1 (default: latest)
 #   TERMCHAT_BASE_URL     download from here instead of GitHub (mirrors, tests)
+#   TERMCHAT_GUI          1: the desktop app instead of the terminal client
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -20,7 +27,8 @@ if (-not $tag) {
 }
 $base = $env:TERMCHAT_BASE_URL
 if (-not $base) { $base = "https://github.com/$repo/releases/download/$tag" }
-$archive = "termchat-$tag-x86_64-pc-windows-msvc.zip"
+$name = if ($env:TERMCHAT_GUI) { 'termchat-gui' } else { 'termchat' }
+$archive = "$name-$tag-x86_64-pc-windows-msvc.zip"
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("termchat-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -39,10 +47,19 @@ try {
     Expand-Archive (Join-Path $tmp $archive) -DestinationPath $tmp
     $dest = Join-Path $env:LOCALAPPDATA 'Programs\termchat'
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
-    Copy-Item (Join-Path $tmp "termchat-$tag-x86_64-pc-windows-msvc\termchat.exe") $dest -Force
+    $src = Join-Path $tmp "$name-$tag-x86_64-pc-windows-msvc"
+    Copy-Item (Join-Path $src "$name.exe") $dest -Force
     # Releases before 0.3.0 have no lyrebird.
-    $lyrebird = Join-Path $tmp "termchat-$tag-x86_64-pc-windows-msvc\lyrebird.exe"
+    $lyrebird = Join-Path $src 'lyrebird.exe'
     if (Test-Path $lyrebird) { Copy-Item $lyrebird $dest -Force }
+    if ($env:TERMCHAT_GUI) {
+        $menu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\termchat.lnk'
+        $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
+        $link.TargetPath = Join-Path $dest 'termchat-gui.exe'
+        $link.Save()
+        Write-Host "Installed termchat $tag to $dest\termchat-gui.exe, with a Start menu entry"
+        return
+    }
 
     $path = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (-not (($path -split ';') -contains $dest)) {

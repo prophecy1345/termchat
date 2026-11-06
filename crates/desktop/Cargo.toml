@@ -27,3 +27,8 @@ zeroize = "1.9.1"
 default = ["tor"]
 # Tor via Arti (ADR-004). Official releases ship with it.
 tor = ["termchat-engine/tor"]
+
+# Load libwayland at run time, as X11 already is: no link to system libraries,
+# so the release can be cross-built with zig, and it starts without Wayland.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-dlopen"] }

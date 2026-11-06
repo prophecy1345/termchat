@@ -31,12 +31,17 @@ jobs:
             (cd "$d" && rustup target add x86_64-unknown-linux-musl &&
              BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-musl)
           done
+          # The desktop app (ADR-018): glibc, as old as Debian 10 / RHEL 8.
+          for d in a elsewhere/b; do
+            (cd "$d" && rustup target add x86_64-unknown-linux-gnu &&
+             PACKAGES="-p termchat-desktop" BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-gnu.2.28)
+          done
           for d in a elsewhere/b; do
             (cd "$d" && scripts/build-lyrebird.sh linux amd64 target/lyrebird)
           done
-          for bin in termchat termchat-relay; do
-            sha256sum a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
-            cmp a/target/x86_64-unknown-linux-musl/release/$bin elsewhere/b/target/x86_64-unknown-linux-musl/release/$bin
+          for bin in x86_64-unknown-linux-musl/release/termchat x86_64-unknown-linux-musl/release/termchat-relay x86_64-unknown-linux-gnu/release/termchat-gui; do
+            sha256sum a/target/$bin elsewhere/b/target/$bin
+            cmp a/target/$bin elsewhere/b/target/$bin
           done
           sha256sum a/target/lyrebird elsewhere/b/target/lyrebird
           cmp a/target/lyrebird elsewhere/b/target/lyrebird
@@ -47,11 +52,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux amd64 }
-          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux arm64 }
-          - { target: aarch64-apple-darwin, os: macos-latest, go: darwin arm64 }
-          - { target: x86_64-apple-darwin, os: macos-latest, go: darwin amd64 }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe, go: windows amd64 }
+          # gui: the desktop app's target (ADR-018); on Linux glibc 2.28, since
+          # a static musl program cannot load OpenGL and X11/Wayland.
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux amd64, gui: x86_64-unknown-linux-gnu.2.28 }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest, zig: true, go: linux arm64, gui: aarch64-unknown-linux-gnu.2.28 }
+          - { target: aarch64-apple-darwin, os: macos-latest, go: darwin arm64, gui: aarch64-apple-darwin }
+          - { target: x86_64-apple-darwin, os: macos-latest, go: darwin amd64, gui: x86_64-apple-darwin }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, exe: .exe, go: windows amd64, gui: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -82,6 +89,12 @@ jobs:
           (cd "$dir" && sum termchat${{ matrix.exe }} termchat-relay${{ matrix.exe }} lyrebird${{ matrix.exe }} > BINARIES.sha256)
           # Windows Explorer opens .zip, not .tar.gz.
           if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip "$dir.zip" "$dir" >/dev/null; else tar -czf "$dir.tar.gz" "$dir"; fi
+          # The desktop app (ADR-018), with the same lyrebird.
+          gui=${{ matrix.gui }}
+          gui_target=${gui%.2.28}
+          rustup target add "$gui_target"
+          PACKAGES="-p termchat-desktop" BUILD=${{ matrix.zig && 'zigbuild' || 'build' }} scripts/build-release.sh "$gui"
+          scripts/package-gui.sh "$gui_target" "termchat-gui-${{ github.ref_name }}-$gui_target" "$dir/lyrebird${{ matrix.exe }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}
@@ -181,6 +194,14 @@ jobs:
           for i in $(seq 30); do curl -fs -o /dev/null http://127.0.0.1:18765/SHA256SUMS && break; sleep 1; done
           sh scripts/install.sh
           "$TERMCHAT_INSTALL_DIR/termchat" --version
+          TERMCHAT_GUI=1 TERMCHAT_APP_DIR="$RUNNER_TEMP/apps" sh scripts/install.sh
+          if [ "$RUNNER_OS" = macOS ]; then
+            "$RUNNER_TEMP/apps/termchat.app/Contents/MacOS/termchat-gui" --version
+            codesign --verify --deep --strict "$RUNNER_TEMP/apps/termchat.app"
+          else
+            "$TERMCHAT_INSTALL_DIR/termchat-gui" --version
+            test -f "$HOME/.local/share/applications/termchat.desktop"
+          fi
       - if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -193,6 +214,10 @@ jobs:
           }
           ./scripts/install.ps1
           & "$env:LOCALAPPDATA\Programs\termchat\termchat.exe" --version
+          $env:TERMCHAT_GUI = 1
+          ./scripts/install.ps1
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\termchat\termchat-gui.exe")) { throw 'no termchat-gui.exe' }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\termchat.lnk")) { throw 'no Start menu entry' }
 
   publish:
     needs: [build, installers, android, android-reproducible]
@@ -212,6 +237,7 @@ jobs:
       - run: |
           sha256sum termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab > SHA256SUMS
           src/scripts/homebrew-formula.sh "${{ github.ref_name }}" SHA256SUMS > termchat.rb
+          src/scripts/homebrew-formula.sh "${{ github.ref_name }}" SHA256SUMS gui > termchat-gui.rb
       # Signed (Sigstore) statement: these files came from this repo, this commit,
       # this workflow. Verify with: gh attestation verify <file> --repo <owner>/termchat
       # Free GitHub plans attest public repositories only; while this one is
@@ -227,4 +253,4 @@ jobs:
             SHA256SUMS
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab SHA256SUMS termchat.rb --repo "${{ github.repository }}" --draft --generate-notes
+        run: gh release create "${{ github.ref_name }}" termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab SHA256SUMS termchat.rb termchat-gui.rb --repo "${{ github.repository }}" --draft --generate-notes

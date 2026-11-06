@@ -1,4 +1,6 @@
 //! Desktop client (GUI): a shell over `termchat-engine` (ADR-018).
+// No console window behind it on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod chat;
 mod dialog;
