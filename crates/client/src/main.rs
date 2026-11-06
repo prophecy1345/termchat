@@ -20,6 +20,15 @@ async fn main() -> std::io::Result<()> {
     }
     no_core_dumps();
     let path = data::home().join("state");
+    // A folder without locks (some network drives) must not stop termchat.
+    let _lock = match data::lock(&path) {
+        Ok(None) => {
+            eprintln!("termchat is already open in another window");
+            std::process::exit(1);
+        }
+        Ok(Some(file)) => Some(file),
+        Err(_) => None,
+    };
     // Alternate screen, raw mode, and a panic hook that restores the terminal.
     let mut terminal = ratatui::init();
     // Pasted text arrives as one event instead of key presses: otherwise control

@@ -387,19 +387,8 @@ pub fn home() -> PathBuf {
 
 /// Temp file, fsync, rename: a crash leaves either the old or the new state.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-        builder.create(dir)?;
-    }
     let tmp = path.with_extension("tmp");
-    let mut opts = OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
-    let mut file = opts.open(&tmp)?;
+    let mut file = create_private(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     fs::rename(&tmp, path)?;
@@ -409,6 +398,37 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         fs::File::open(dir)?.sync_all()?;
     }
     Ok(())
+}
+
+/// Opens `path` for writing with mode 0600, creating it and its folder
+/// (0700) if needed.
+fn create_private(path: &Path) -> io::Result<fs::File> {
+    if let Some(dir) = path.parent() {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)?;
+    }
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    opts.open(path)
+}
+
+/// Takes the lock that keeps a second client off the same state: two would
+/// each advance the Olm sessions and overwrite each other (ADR-018). Held
+/// until the file is dropped or the process ends. `None`: another client has
+/// it. The empty `lock` file stays, so a wiped folder still looks like a
+/// fresh install that has been started once.
+pub fn lock(state: &Path) -> io::Result<Option<fs::File>> {
+    let file = create_private(&state.with_file_name("lock"))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
 }
 
 impl Contact {
@@ -738,6 +758,18 @@ mod tests {
         // Nothing to remove is not an error.
         remove_tor_dir(&path).unwrap();
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn second_lock_waits_for_the_first() {
+        let dir = std::env::temp_dir().join(format!("termchat-lock-{}", std::process::id()));
+        let path = dir.join("state");
+        let first = lock(&path).unwrap();
+        assert!(first.is_some());
+        assert!(lock(&path).unwrap().is_none(), "a second client is refused");
+        drop(first);
+        assert!(lock(&path).unwrap().is_some(), "free again once dropped");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
