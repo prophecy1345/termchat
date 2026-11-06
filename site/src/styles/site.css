@@ -646,4 +646,29 @@ footer .about {
   section {
     padding-top: 3rem;
   }
+
+  /* A phone has room for the chat or the list, not both: show the chat. */
+  .term-body {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+
+  .term-side,
+  .hints {
+    display: none;
+  }
+
+  .term-chat p {
+    white-space: pre-wrap;
+  }
+
+  /* Long commands wrap rather than hide behind the copy button. */
+  .cmd {
+    align-items: flex-start;
+  }
+
+  .cmd code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }
