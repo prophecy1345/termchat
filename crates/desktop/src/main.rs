@@ -5,6 +5,7 @@
 mod chat;
 mod dialog;
 mod logo;
+mod synth;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -174,31 +175,44 @@ impl eframe::App for App {
             if lock {
                 self.lock();
             }
+            synth::scanlines(ui.ctx());
             return;
         }
         let open = |engine| Screen::Main(Box::new(Chat::new(engine)));
-        egui::CentralPanel::default().show(ui, |ui| match &mut self.screen {
-            Screen::Busy => {
-                ui.heading("termchat.app is already open in another window");
-                ui.label("Close it first: two clients on one account would overwrite each other.");
-            }
-            Screen::Setup(form) => {
-                if let Some(engine) = setup(ui, form, &self.path) {
-                    self.screen = open(engine);
-                } else if restore(ui, form, &self.path) {
-                    self.screen = Screen::Unlock(Unlock {
-                        error: "restored: enter the backup's password".into(),
-                        ..Unlock::default()
+        let (pal, path) = (&self.pal, &self.path);
+        let mut wiped = false;
+        egui::CentralPanel::default().show(ui, |ui| {
+            synth::backdrop(ui, pal, ui.clip_rect(), true);
+            match &mut self.screen {
+                Screen::Busy => {
+                    ui.add_space((ui.available_height() / 2.0 - 40.0).max(0.0));
+                    ui.vertical_centered(|ui| {
+                        ui.heading("termchat.app is already open in another window");
+                        ui.label("Close it first: two clients on one account would overwrite each other.");
                     });
                 }
+                Screen::Setup(form) => match first_run(ui, pal, form, path) {
+                    Some(Ok(engine)) => self.screen = open(engine),
+                    Some(Err(())) => {
+                        self.screen = Screen::Unlock(Unlock {
+                            error: "restored: enter the backup's password".into(),
+                            ..Unlock::default()
+                        })
+                    }
+                    None => {}
+                },
+                Screen::Unlock(unlock) => match unlock_screen(ui, pal, unlock, path) {
+                    Some(Unlocked::Open(engine)) => self.screen = open(engine),
+                    Some(Unlocked::Wiped) => wiped = true,
+                    None => {}
+                },
+                Screen::Main(_) => {}
             }
-            Screen::Unlock(unlock) => match unlock_screen(ui, unlock, &self.path) {
-                Some(Unlocked::Open(engine)) => self.screen = open(engine),
-                Some(Unlocked::Wiped) => self.wiped(String::new()),
-                None => {}
-            },
-            Screen::Main(_) => {}
         });
+        if wiped {
+            self.wiped(String::new());
+        }
+        synth::scanlines(ui.ctx());
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -210,7 +224,12 @@ impl eframe::App for App {
 
 /// Returns the engine once the password opens the state. Centred, one big
 /// field; Return unlocks, as it is the only field here.
-fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> Option<Unlocked> {
+fn unlock_screen(
+    ui: &mut egui::Ui,
+    pal: &Pal,
+    u: &mut Unlock,
+    path: &std::path::Path,
+) -> Option<Unlocked> {
     const WIDTH: f32 = 360.0;
     ui.add_space((ui.available_height() / 2.0 - 120.0).max(0.0));
     let mut go = false;
@@ -230,8 +249,7 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
         );
         field.request_focus();
         ui.add_space(12.0);
-        let button = egui::Button::new(egui::RichText::new("Unlock").size(16.0));
-        go = ui.add_sized([WIDTH, 40.0], button).clicked();
+        go = synth::button(ui, pal, "Unlock", egui::vec2(WIDTH, 40.0)).clicked();
         ui.add_space(10.0);
         ui.colored_label(ui.visuals().error_fg_color, u.error.as_str());
     });
@@ -250,6 +268,48 @@ fn unlock_screen(ui: &mut egui::Ui, u: &mut Unlock, path: &std::path::Path) -> O
             None
         }
     }
+}
+
+/// The first-run screen: a centred card with the setup form and, below it,
+/// restoring a backup. `Ok`: a new identity; `Err`: a backup is in place.
+fn first_run(
+    ui: &mut egui::Ui,
+    pal: &Pal,
+    f: &mut SetupForm,
+    path: &std::path::Path,
+) -> Option<Result<Box<Engine>, ()>> {
+    const WIDTH: f32 = 440.0;
+    let mut done = None;
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space((ui.available_height() / 2.0 - 330.0).max(24.0));
+        ui.vertical_centered(|ui| {
+            logo::mark(ui, 72.0);
+            ui.label(egui::RichText::new("termchat.app").strong().size(28.0));
+            ui.label(
+                egui::RichText::new("No phone, no email, no name: a key pair and a nickname.")
+                    .color(pal.dim),
+            );
+            ui.add_space(16.0);
+            // The theme's base, so the fields (its surface colour) stand out.
+            egui::Frame::new()
+                .fill(pal.bg)
+                .stroke(egui::Stroke::new(1.0, pal.mauve.gamma_multiply(0.35)))
+                .corner_radius(6)
+                .inner_margin(20)
+                .show(ui, |ui| {
+                    ui.set_width(WIDTH);
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        if let Some(engine) = setup(ui, pal, f, path, WIDTH) {
+                            done = Some(Ok(engine));
+                        } else if restore(ui, f, path) {
+                            done = Some(Err(()));
+                        }
+                    });
+                });
+            ui.add_space(24.0);
+        });
+    });
+    done
 }
 
 /// A backup instead of a new identity. True once the file is in place.
@@ -278,34 +338,50 @@ fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool
 }
 
 /// The first-run form; returns the new identity's engine.
-fn setup(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> Option<Box<Engine>> {
-    ui.horizontal(|ui| {
-        logo::mark(ui, 48.0);
-        ui.heading("termchat.app setup");
-    });
-    egui::Grid::new("setup").num_columns(2).show(ui, |ui| {
-        ui.label("Nickname (only your contacts see it)");
-        ui.text_edit_singleline(&mut f.nickname);
-        ui.end_row();
-        ui.label("Password");
-        ui.add(egui::TextEdit::singleline(&mut *f.password).password(true));
-        ui.end_row();
-        ui.label("Password again");
-        ui.add(egui::TextEdit::singleline(&mut *f.again).password(true));
-        ui.end_row();
-    });
-    ui.checkbox(&mut f.tor, "Connect through Tor");
+fn setup(
+    ui: &mut egui::Ui,
+    pal: &Pal,
+    f: &mut SetupForm,
+    path: &std::path::Path,
+    width: f32,
+) -> Option<Box<Engine>> {
+    let field = |ui: &mut egui::Ui, label: &str, edit: egui::TextEdit| {
+        ui.label(egui::RichText::new(label).small().color(pal.dim));
+        ui.add(
+            edit.desired_width(width)
+                .margin(egui::Margin::symmetric(10, 8)),
+        );
+        ui.add_space(6.0);
+    };
+    field(
+        ui,
+        "NICKNAME · only your contacts see it",
+        egui::TextEdit::singleline(&mut f.nickname),
+    );
+    field(
+        ui,
+        "PASSWORD",
+        egui::TextEdit::singleline(&mut *f.password).password(true),
+    );
+    field(
+        ui,
+        "PASSWORD AGAIN",
+        egui::TextEdit::singleline(&mut *f.again).password(true),
+    );
+    ui.checkbox(
+        &mut f.tor,
+        "Connect through Tor (hides your IP from the relay)",
+    );
     egui::CollapsingHeader::new("Relay").show(ui, |ui| {
-        egui::Grid::new("relay").num_columns(2).show(ui, |ui| {
-            ui.label("Relay URL");
-            ui.text_edit_singleline(&mut f.relay);
-            ui.end_row();
-            ui.label("Onion URL (empty: none)");
-            ui.text_edit_singleline(&mut f.onion);
-            ui.end_row();
-        });
+        field(ui, "RELAY URL", egui::TextEdit::singleline(&mut f.relay));
+        field(
+            ui,
+            "ONION URL · empty: none",
+            egui::TextEdit::singleline(&mut f.onion),
+        );
     });
-    let go = ui.button("Create").clicked();
+    ui.add_space(8.0);
+    let go = synth::button(ui, pal, "Create my identity", egui::vec2(width, 40.0)).clicked();
     ui.colored_label(ui.visuals().error_fg_color, f.error.as_str());
     if !go {
         return None;
@@ -351,7 +427,8 @@ mod tests {
             ..Default::default()
         };
         let mut out = None;
-        let mut full = ctx.run_ui(input, |ui| out = unlock_screen(ui, u, path));
+        let pal = Pal::named("termchat");
+        let mut full = ctx.run_ui(input, |ui| out = unlock_screen(ui, &pal, u, path));
         full.textures_delta.clear();
         out
     }

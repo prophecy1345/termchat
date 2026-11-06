@@ -1729,6 +1729,10 @@ criteria = "safe-to-deploy"
 version = "0.1.30"
 criteria = "safe-to-deploy"
 
+[[exemptions.qrcode]]
+version = "0.14.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.quick-error]]
 version = "2.0.1"
 criteria = "safe-to-deploy"

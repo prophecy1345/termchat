@@ -29,6 +29,9 @@ pub struct Pal {
     pub dim: Color32,
     pub warn: Color32,
     pub danger: Color32,
+    /// Synthwave neon: the theme's mauve, and a pink between it and red.
+    pub mauve: Color32,
+    pub pink: Color32,
 }
 
 impl Pal {
@@ -54,6 +57,8 @@ impl Pal {
             dim: rgb(8),
             text: rgb(9),
             danger: rgb(14),
+            mauve: rgb(11),
+            pink: crate::synth::mix(rgb(11), rgb(14), 0.5),
             warn: rgb(16),
         }
     }
@@ -86,6 +91,14 @@ impl Pal {
         v.selection.bg_fill = self.mine;
         v.selection.stroke = Stroke::new(1.0, self.accent);
         v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.line);
+        // Windows float in a violet glow, like the site's terminal.
+        v.window_shadow = egui::Shadow {
+            offset: [0, 10],
+            blur: 48,
+            spread: 0,
+            color: self.mauve.gamma_multiply(0.18),
+        };
+        v.window_stroke = Stroke::new(1.0, self.mauve.gamma_multiply(0.35));
         ctx.set_visuals(v);
     }
 }
@@ -316,6 +329,7 @@ impl Chat {
     fn chat(&mut self, ui: &mut egui::Ui, p: &Pal) {
         let Some(i) = self.open.and_then(|k| self.engine.index(&k)) else {
             ui.centered_and_justified(|ui| {
+                crate::synth::backdrop(ui, p, ui.max_rect(), true);
                 ui.label(RichText::new("Pick a contact on the left.").color(p.dim));
             });
             return;
@@ -326,8 +340,10 @@ impl Chat {
             .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
             .show(ui, |ui| self.input_row(ui, p, i));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(p.bg).inner_margin(12))
+            .frame(egui::Frame::new().inner_margin(12))
             .show(ui, |ui| {
+                let all = ui.max_rect().expand(12.0);
+                crate::synth::backdrop(ui, p, all, false);
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .stick_to_bottom(true)
@@ -421,11 +437,7 @@ impl Chat {
                     .edit(i, |c| c.expires_in = next_timer(c.expires_in));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let button = ui.add(
-                    egui::Button::new(RichText::new("SEND").strong().color(p.accent))
-                        .fill(p.theirs)
-                        .corner_radius(2),
-                );
+                let button = crate::synth::button(ui, p, "SEND", egui::vec2(84.0, 28.0));
                 let field = ui.add_sized(
                     [ui.available_width(), 28.0],
                     egui::TextEdit::singleline(&mut self.input)
@@ -807,7 +819,7 @@ mod tests {
                     text: invite,
                     kind: crate::dialog::Share::Once,
                 },
-                "Your fingerprint",
+                "YOUR FINGERPRINT",
             ),
             (Dialog::Notice("all good".into()), "all good"),
             (Dialog::save_file(3), "Save a file"),

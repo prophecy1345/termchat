@@ -153,7 +153,7 @@ impl Chat {
                 ui.checkbox(incognito, "Answer from a new incognito identity")
                     .on_hover_text("They will not see your main identity (ADR-014)");
                 error_line(ui, p, error);
-                let (go, stay) = buttons(ui, "Add");
+                let (go, stay) = buttons(ui, p, "Add");
                 if go {
                     match self.engine.add(invite.trim(), *incognito) {
                         Ok(i) => {
@@ -178,59 +178,98 @@ impl Chat {
                         "Works once, from a new identity used only with them.",
                     ),
                 };
+                ui.set_width(640.0);
                 ui.heading(title);
-                ui.label(about);
-                ui.add_space(6.0);
-                ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).wrap());
-                if *kind != Share::Incognito {
-                    ui.label(
-                        RichText::new(format!(
-                            "Your fingerprint  {}",
-                            fingerprint(&self.engine.me())
-                        ))
-                        .color(p.dim),
-                    );
-                }
-                ui.add_space(6.0);
+                hint(ui, p, about);
+                ui.add_space(12.0);
+                ui.horizontal_top(|ui| {
+                    crate::synth::qr(ui, text, 200.0);
+                    ui.add_space(16.0);
+                    ui.vertical(|ui| {
+                        let width = ui.available_width();
+                        egui::Frame::new()
+                            .fill(p.bg)
+                            .stroke(egui::Stroke::new(1.0, p.mauve.gamma_multiply(0.6)))
+                            .corner_radius(4)
+                            .inner_margin(12)
+                            .show(ui, |ui| {
+                                ui.set_width(width - 26.0);
+                                let code = RichText::new(text.as_str())
+                                    .monospace()
+                                    .size(11.5)
+                                    .color(p.accent);
+                                ui.add(egui::Label::new(code).wrap());
+                            });
+                        ui.add_space(10.0);
+                        if crate::synth::button(ui, p, "Copy invite", egui::vec2(width, 36.0))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(text.clone());
+                            self.status = "invite copied".into();
+                        }
+                        if *kind != Share::Incognito {
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new("YOUR FINGERPRINT")
+                                    .small()
+                                    .strong()
+                                    .color(p.dim),
+                            );
+                            ui.label(
+                                RichText::new(fingerprint(&self.engine.me()))
+                                    .monospace()
+                                    .color(p.text),
+                            );
+                        }
+                    });
+                });
+                hint(
+                    ui,
+                    p,
+                    "Scan the code with termchat.app on a phone, or send the text.",
+                );
                 let mut keep = true;
-                ui.horizontal(|ui| {
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(text.clone());
-                        self.status = "invite copied".into();
-                    }
-                    match kind {
-                        Share::Once => {
-                            if ui.button("Public invite").clicked() {
-                                *text = self.engine.public_invite(false);
-                                *kind = Share::Public;
+                let mut next = None;
+                match kind {
+                    Share::Once => {
+                        section(ui, p, "Other invites");
+                        ui.columns(3, |cols| {
+                            if wide(&mut cols[0], p, "Public invite") {
+                                next = Some((self.engine.public_invite(false), Share::Public));
                             }
-                            if ui.button("Incognito…").clicked() {
+                            if wide(&mut cols[1], p, "Incognito invite") {
                                 self.dialog = Some(Dialog::Incognito {
                                     nickname: String::new(),
                                     error: String::new(),
                                 });
                             }
-                            if ui.button("Revoke unused").clicked() {
+                            if wide(&mut cols[2], p, "Revoke unused invites") {
                                 let n = self.engine.revoke_invites();
                                 self.status = format!("{n} unused one-time invite(s) revoked");
                                 keep = false;
                             }
-                        }
-                        Share::Public => {
-                            if ui
-                                .button("Renew")
-                                .on_hover_text("The old one stops working")
-                                .clicked()
-                            {
-                                *text = self.engine.public_invite(true);
-                                self.status =
-                                    "new public invite: the old one no longer works".into();
-                            }
-                        }
-                        Share::Incognito => {}
+                        });
                     }
-                    keep &= !ui.button("Close").clicked();
-                });
+                    Share::Public => {
+                        section(ui, p, "Public invite");
+                        if wide(ui, p, "Renew: the old public invite stops working") {
+                            next = Some((self.engine.public_invite(true), Share::Public));
+                            self.status = "new public invite: the old one no longer works".into();
+                        }
+                    }
+                    Share::Incognito => {}
+                }
+                if let Some((t, k)) = next {
+                    *text = t;
+                    *kind = k;
+                }
+                ui.add_space(14.0);
+                keep &= !ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Button::new("Close").min_size(egui::vec2(110.0, 32.0)))
+                            .clicked()
+                    })
+                    .inner;
                 keep
             }
             Dialog::Incognito { nickname, error } => {
@@ -239,7 +278,7 @@ impl Chat {
                 ui.label("Nickname they will see:");
                 ui.text_edit_singleline(nickname);
                 error_line(ui, p, error);
-                let (go, stay) = buttons(ui, "Create");
+                let (go, stay) = buttons(ui, p, "Create");
                 if go {
                     match self.engine.incognito_invite(nickname.trim()) {
                         Ok(text) => {
@@ -291,7 +330,7 @@ impl Chat {
                 ui.heading("Rename");
                 ui.label("Only on this device; empty uses the name they chose.");
                 ui.text_edit_singleline(name);
-                let (go, stay) = buttons(ui, "Save");
+                let (go, stay) = buttons(ui, p, "Save");
                 if go {
                     let name = name.trim();
                     let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
@@ -318,7 +357,7 @@ impl Chat {
                 };
                 ui.heading(title);
                 ui.label(what);
-                let (go, stay) = buttons(ui, verb);
+                let (go, stay) = buttons(ui, p, verb);
                 if go {
                     self.engine.delete(i);
                     self.open = None;
@@ -341,7 +380,7 @@ impl Chat {
                     .show(ui, |ui| {
                         ui.label(RichText::new(clean_text(text)).monospace().color(p.dim));
                     });
-                let (go, stay) = buttons(ui, "Report and block");
+                let (go, stay) = buttons(ui, p, "Report and block");
                 if go {
                     self.engine.report(i, std::mem::take(text));
                     return false;
@@ -459,7 +498,7 @@ impl Chat {
                         .desired_width(f32::INFINITY),
                 );
                 error_line(ui, p, error);
-                let (go, stay) = buttons(ui, "Send");
+                let (go, stay) = buttons(ui, p, "Send");
                 if go {
                     let sent = data::read_document(&data::expand(path))
                         .and_then(|(name, bytes)| self.engine.send_file(i, &name, bytes));
@@ -617,7 +656,7 @@ impl Chat {
                     ui.label("Type WIPE or MOVED");
                     ui.text_edit_singleline(typed);
                 });
-                let (go, stay) = buttons(ui, "Wipe");
+                let (go, stay) = buttons(ui, p, "Wipe");
                 if go {
                     match typed.trim() {
                         "WIPE" => {
@@ -644,7 +683,7 @@ impl Chat {
             Dialog::WipeAnyway(why) => {
                 ui.heading("Wipe everything");
                 ui.label(format!("{why}\nWipe without telling your contacts?"));
-                let (go, stay) = buttons(ui, "Wipe anyway");
+                let (go, stay) = buttons(ui, p, "Wipe anyway");
                 if go {
                     self.engine.finish_wipe("");
                     return false;
@@ -695,7 +734,7 @@ impl Chat {
                     ui.end_row();
                 });
                 error_line(ui, p, error);
-                let (go, stay) = buttons(ui, "Write backup");
+                let (go, stay) = buttons(ui, p, "Write backup");
                 if !go {
                     return stay;
                 }
@@ -750,7 +789,7 @@ fn password_fields(ui: &mut egui::Ui, p: &Pal, pw: &mut Passwords, new: &str) ->
         ui.end_row();
     });
     error_line(ui, p, &pw.error);
-    buttons(ui, "Save")
+    buttons(ui, p, "Save")
 }
 
 /// A section title in small capitals, like the Android app, and a rule.
@@ -779,11 +818,14 @@ fn wide(ui: &mut egui::Ui, p: &Pal, text: &str) -> bool {
 }
 
 /// The main button and Cancel. Returns (main clicked, keep open).
-fn buttons(ui: &mut egui::Ui, main: &str) -> (bool, bool) {
-    ui.add_space(6.0);
+fn buttons(ui: &mut egui::Ui, p: &Pal, main: &str) -> (bool, bool) {
+    ui.add_space(10.0);
     ui.horizontal(|ui| {
-        let go = ui.button(main).clicked();
-        let cancel = ui.button("Cancel").clicked();
+        let width = 24.0 + 8.0 * main.chars().count() as f32;
+        let go = crate::synth::button(ui, p, main, egui::vec2(width.max(110.0), 32.0)).clicked();
+        let cancel = ui
+            .add(egui::Button::new("Cancel").min_size(egui::vec2(100.0, 32.0)))
+            .clicked();
         (go, !cancel)
     })
     .inner
