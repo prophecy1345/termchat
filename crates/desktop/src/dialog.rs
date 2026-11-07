@@ -839,7 +839,7 @@ fn error_line(ui: &mut egui::Ui, p: &Pal, error: &str) {
 
 /// Just enough Markdown for the changelog (as in the terminal client):
 /// headings, bullets, **bold**, `code`, [links](as their text).
-// ponytail: no tables or code blocks; add when the changelog uses them.
+// No tables or code blocks; add them when the changelog uses them.
 fn markdown(ui: &mut egui::Ui, p: &Pal, src: &str) {
     for para in src.split("\n\n") {
         let mut para = para.trim().to_string();

@@ -846,7 +846,7 @@ mod tests {
                 "Type WIPE or MOVED",
             ),
             (Dialog::WipeAnyway("offline".into()), "Wipe without telling"),
-            (Dialog::News, "## 0."),
+            (Dialog::News, "0.5.0"),
         ];
         for (d, want) in dialogs {
             chat.dialog = Some(d);
