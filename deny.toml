@@ -25,6 +25,14 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
     { id = "RUSTSEC-2026-0371", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
     { id = "RUSTSEC-2026-0372", reason = "unmaintained, local D-Bus only, via accesskit_unix" },
+    # SQLite before 3.54.0 can return stale memory when it opens a database
+    # together with a crafted `-wal` file. Only our own files are opened: the
+    # relay's database (umask 077) and Arti's directory cache in the private
+    # state folder; whoever can plant files there already runs as that user.
+    # The fix is libsqlite3-sys 0.39 (rusqlite 0.41), and Arti 0.47 and 0.48
+    # (tor-dirmgr) require rusqlite below 0.41; one `links = "sqlite3"` per
+    # build. Drop once Arti allows rusqlite 0.41.
+    { id = "RUSTSEC-2026-0459", reason = "local files of our own only; rusqlite 0.41 is blocked by arti's tor-dirmgr" },
 ]
 
 [licenses]
