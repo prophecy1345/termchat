@@ -1,14 +1,17 @@
 //! Relay transport: authenticated WebSocket with reconnect.
 //!
 //! Knows nothing about encryption: frames in, frames out. Unacknowledged
-//! `Send` frames are resent after every reconnect (protocol.md, section 13).
+//! `Send` frames are resent after every reconnect (protocol.md, section 13),
+//! and after a temporary refusal (ADR-020).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use termchat_proto::{ClientFrame, Identity, ServerFrame, Signature, VERSION, VERSION_HEADER};
+use termchat_proto::{
+    ClientFrame, Ed25519Key, ErrorCode, Identity, ServerFrame, Signature, VERSION, VERSION_HEADER,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -20,6 +23,8 @@ const MIN_DELAY: Duration = Duration::from_secs(1);
 const MAX_DELAY: Duration = Duration::from_secs(60);
 /// The relay pings every 30 s; silence this long means the link is dead.
 const IDLE: Duration = Duration::from_secs(90);
+/// First wait before a refused `Send` goes again; doubles up to `MAX_DELAY` (ADR-020).
+const RETRY_DELAY: Duration = Duration::from_secs(2);
 
 /// Signs the relay's challenge: `(relay_host, nonce) -> signature`.
 pub type Signer = Box<dyn Fn(&str, &[u8; 32]) -> Signature + Send + Sync>;
@@ -147,6 +152,8 @@ impl Relay {
             sign,
             events: events_tx,
             pending: BTreeMap::new(),
+            in_flight: BTreeMap::new(),
+            retry: BTreeMap::new(),
             relay_version: None,
             delay,
             spread,
@@ -183,6 +190,11 @@ struct Link {
     events: mpsc::Sender<Event>,
     /// Unanswered `Send` frames by `client_id`.
     pending: BTreeMap<u64, ClientFrame>,
+    /// ADR-020: per recipient, the one `Send` on the wire, so the relay takes
+    /// them in order even when it refuses one for now.
+    in_flight: BTreeMap<Ed25519Key, u64>,
+    /// Recipients with a refused `Send` that was not yet accepted.
+    retry: BTreeMap<Ed25519Key, Retry>,
     /// From the last upgrade response, until `talk` reports it.
     relay_version: Option<String>,
     /// Before the first connection.
@@ -195,6 +207,23 @@ enum Ws {
     Direct(Box<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
     #[cfg(feature = "tor")]
     Tor(Box<WebSocketStream<arti_client::DataStream>>),
+}
+
+/// ADR-020: a refused `Send` waiting to go again.
+struct Retry {
+    /// When it goes again; `None` while that attempt is on the wire.
+    due: Option<Instant>,
+    /// The wait after its next refusal.
+    wait: Duration,
+}
+
+enum Answer {
+    /// Not an answer to one of our `Send` frames.
+    Other,
+    /// Refused for now; the engine is not told.
+    Retry,
+    /// Accepted or refused for good; this recipient's queue moves on.
+    Done(Ed25519Key),
 }
 
 enum End {
@@ -319,33 +348,119 @@ impl Link {
         if self.events.send(Event::Connected).await.is_err() {
             return End::Lost(false);
         }
-        for frame in self.pending.values() {
-            if write(&mut ws, frame).await.is_none() {
+        // Waits end with the connection: the reconnect was its own wait.
+        self.in_flight.clear();
+        self.retry.clear();
+        let all: BTreeSet<Ed25519Key> = self.pending.values().filter_map(recipient).collect();
+        for to in all {
+            if self.pump(&mut ws, to).await.is_none() {
                 return End::Lost(true);
             }
         }
         loop {
+            let due = self.retry.values().filter_map(|r| r.due).min();
             tokio::select! {
                 frame = out.recv() => {
                     let Some(frame) = frame else { return End::Stop };
-                    if let ClientFrame::Send { client_id, .. } = &frame {
-                        self.pending.insert(*client_id, frame.clone());
-                    }
-                    if write(&mut ws, &frame).await.is_none() {
+                    let sent = match &frame {
+                        ClientFrame::Send { client_id, envelope } => {
+                            let to = envelope.recipient;
+                            self.pending.insert(*client_id, frame);
+                            self.pump(&mut ws, to).await
+                        }
+                        _ => write(&mut ws, &frame).await,
+                    };
+                    if sent.is_none() {
                         return End::Lost(true);
                     }
                 }
                 frame = read(&mut ws) => {
                     let Some(frame) = frame else { return End::Lost(true) };
-                    if let ServerFrame::Accepted { client_id } | ServerFrame::Error { client_id: Some(client_id), .. } = &frame {
-                        self.pending.remove(client_id);
+                    match self.answered(&frame) {
+                        Answer::Other => {}
+                        Answer::Retry => continue,
+                        Answer::Done(to) => {
+                            if self.pump(&mut ws, to).await.is_none() {
+                                return End::Lost(true);
+                            }
+                        }
                     }
                     if self.events.send(Event::Frame(frame)).await.is_err() {
                         return End::Stop;
                     }
                 }
+                () = sleep_until(due) => {
+                    let now = Instant::now();
+                    let mut ready = Vec::new();
+                    for (to, r) in &mut self.retry {
+                        if r.due.is_some_and(|at| at <= now) {
+                            r.due = None;
+                            ready.push(*to);
+                        }
+                    }
+                    for to in ready {
+                        if self.pump(&mut ws, to).await.is_none() {
+                            return End::Lost(true);
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// Bookkeeping for a relay answer to one of our `Send` frames.
+    fn answered(&mut self, frame: &ServerFrame) -> Answer {
+        let id = match frame {
+            ServerFrame::Accepted { client_id }
+            | ServerFrame::Error {
+                client_id: Some(client_id),
+                ..
+            } => *client_id,
+            _ => return Answer::Other,
+        };
+        let Some(to) = self.pending.get(&id).and_then(recipient) else {
+            return Answer::Other;
+        };
+        if self.in_flight.get(&to) == Some(&id) {
+            self.in_flight.remove(&to);
+        }
+        if let ServerFrame::Error { code, .. } = frame
+            && matches!(
+                code,
+                ErrorCode::RateLimited | ErrorCode::QueueFull | ErrorCode::Internal
+            )
+        {
+            // Refused for now: the same bytes go again later, unseen by the engine.
+            let r = self.retry.entry(to).or_insert(Retry {
+                due: None,
+                wait: RETRY_DELAY,
+            });
+            r.due = Some(Instant::now() + jitter(r.wait));
+            r.wait = (r.wait * 2).min(MAX_DELAY);
+            return Answer::Retry;
+        }
+        self.pending.remove(&id);
+        self.retry.remove(&to);
+        Answer::Done(to)
+    }
+
+    /// Puts the oldest unanswered frame to `to` on the wire, unless one is
+    /// there already or a refused one waits for its retry.
+    async fn pump<S: AsyncRead + AsyncWrite + Unpin>(
+        &mut self,
+        ws: &mut WebSocketStream<S>,
+        to: Ed25519Key,
+    ) -> Option<()> {
+        let waiting = self.retry.get(&to).is_some_and(|r| r.due.is_some());
+        if waiting || self.in_flight.contains_key(&to) {
+            return Some(());
+        }
+        let next = self.pending.iter().find(|(_, f)| recipient(f) == Some(to));
+        let Some((id, frame)) = next else {
+            return Some(());
+        };
+        self.in_flight.insert(to, *id);
+        write(ws, frame).await
     }
 
     async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
@@ -491,6 +606,21 @@ async fn shared_tor(dir: &std::path::Path, bridges: &Bridges) -> Option<Tor> {
         .ok()?;
     *tor = Some((dir.to_owned(), bridges.clone(), client.clone()));
     Some(client)
+}
+
+fn recipient(frame: &ClientFrame) -> Option<Ed25519Key> {
+    match frame {
+        ClientFrame::Send { envelope, .. } => Some(envelope.recipient),
+        _ => None,
+    }
+}
+
+/// Never, if there is nothing to wait for.
+async fn sleep_until(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at.into()).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// 50-100 % of `delay`, so clients do not reconnect in lockstep.

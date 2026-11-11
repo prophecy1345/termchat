@@ -1,6 +1,7 @@
 //! An unlocked account: the state, the relay link and everything that changes
 //! them. The interface calls methods and drains `happened` afterwards.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -153,6 +154,9 @@ pub struct Engine {
     gone: bool,
     /// File chunks we may send now, and when that was counted (ADR-017).
     chunk_budget: (f64, Instant),
+    /// Chunks before a file's last one, still unanswered, and whose they are:
+    /// no message carries their `client_id` (ADR-020).
+    chunks: BTreeMap<u64, Ed25519Key>,
 }
 
 /// A relay event and the key of our identity it is for (ADR-014).
@@ -497,6 +501,7 @@ impl Engine {
             leaving: None,
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
+            chunks: BTreeMap::new(),
         }))
     }
 
@@ -996,6 +1001,7 @@ impl Engine {
                 }
             }
             ServerFrame::Accepted { client_id } => {
+                self.chunks.remove(&client_id);
                 self.set_status(client_id, Status::Sent);
                 self.goodbye_done(Some(client_id));
             }
@@ -1003,6 +1009,10 @@ impl Engine {
                 client_id: Some(id),
                 code,
             } => {
+                // Only refusals for good get here; the link retries the others (ADR-020).
+                if let Some(key) = self.chunks.remove(&id) {
+                    self.file_failed(&key, why(code));
+                }
                 self.set_status(id, Status::Failed(why(code)));
                 self.goodbye_done(Some(id));
             }
@@ -1536,7 +1546,10 @@ impl Engine {
                 let msg = &mut self.data.contacts[i].messages[m];
                 match result {
                     Ok(id) if last => msg.status = Status::Sending(id),
-                    Ok(_) => continue,
+                    Ok(id) => {
+                        self.chunks.insert(id, key);
+                        continue;
+                    }
                     Err(e) => msg.status = Status::Failed(e),
                 }
                 if let Some(f) = msg.file.as_mut() {
@@ -1546,6 +1559,18 @@ impl Engine {
             }
         }
         if sent {
+            self.persist();
+        }
+    }
+
+    /// A chunk of our file to `key` was refused for good: the rest cannot
+    /// make it whole, so it stops (ADR-020).
+    fn file_failed(&mut self, key: &Ed25519Key, why: String) {
+        let Some(i) = self.index(key) else { return };
+        let sending = |m: &&mut Msg| m.mine && m.file.as_ref().is_some_and(|f| f.data.is_some());
+        if let Some(m) = self.data.contacts[i].messages.iter_mut().find(sending) {
+            m.status = Status::Failed(why);
+            m.file.iter_mut().for_each(|f| f.data = None);
             self.persist();
         }
     }

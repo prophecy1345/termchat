@@ -56,6 +56,12 @@ Frames to a recipient whose envelope waits for a retry are held in the link,
 in `client_id` order, until that envelope is `Accepted`. Frames to other
 recipients go on.
 
+To make this hold, the link keeps at most one unanswered `Send` per recipient
+on the wire. Otherwise frames written right behind a refused one could be
+accepted before it, if the relay's bucket refilled in between. The cost is one
+round trip per message to the same recipient. Files already go at one chunk
+per 3 s (ADR-017).
+
 Two reasons:
 
 - File chunks are only accepted in order (`take_chunk`).

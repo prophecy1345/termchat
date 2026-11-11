@@ -170,6 +170,14 @@ impl Peer {
     }
 }
 
+fn text(t: &str) -> Body {
+    Body::Text {
+        sent_at: 0,
+        expires_in: None,
+        text: t.into(),
+    }
+}
+
 /// Alice and Bob, each knowing the other's identity (as if from an invite).
 fn pair() -> (Arc<Mutex<Client>>, Arc<Mutex<Client>>) {
     let (mut a, mut b) = (Client::default(), Client::default());
@@ -407,11 +415,11 @@ async fn goodbye_then_unregister_forgets_the_key() {
 }
 
 #[tokio::test]
-async fn send_rate_limit_and_unknown_recipient() {
+async fn refused_sends_are_retried_in_order_and_unknown_recipient_fails() {
     let limits = Limits {
         sends_per_key: Rate {
             burst: 2.0,
-            per_sec: 0.0,
+            per_sec: 1.0,
         },
         ..Limits::default()
     };
@@ -425,33 +433,40 @@ async fn send_rate_limit_and_unknown_recipient() {
     let bob_key = bob.key();
     alice.start_session(bob_key).await;
 
-    alice.send_text(bob_key, 1, "a").await;
-    alice.send_text(bob_key, 2, "b").await;
-    let envelope = alice
-        .core
-        .lock()
-        .unwrap()
-        .encrypt(
-            &bob_key,
-            Body::ContactAccept {
-                nickname: "alice".into(),
-            },
-        )
-        .unwrap();
-    alice
-        .relay
-        .send(ClientFrame::Send {
-            client_id: 3,
-            envelope: envelope.clone(),
-        })
-        .unwrap();
-    assert_eq!(
-        alice.frame().await,
-        ServerFrame::Error {
-            client_id: Some(3),
-            code: ErrorCode::RateLimited
-        }
-    );
+    // ADR-020: past the burst the relay refuses; the link sends the same
+    // envelopes again, one at a time, and the app only sees them accepted.
+    for id in 1..=5 {
+        let body = text(&id.to_string());
+        let envelope = alice.core.lock().unwrap().encrypt(&bob_key, body).unwrap();
+        alice
+            .relay
+            .send(ClientFrame::Send {
+                client_id: id,
+                envelope,
+            })
+            .unwrap();
+    }
+    for id in 1..=5 {
+        assert_eq!(alice.frame().await, ServerFrame::Accepted { client_id: id });
+    }
+    for id in 1..=5 {
+        let ServerFrame::Deliver {
+            relay_id,
+            sender,
+            envelope,
+        } = bob.frame().await
+        else {
+            panic!("no delivery")
+        };
+        let got = bob
+            .core
+            .lock()
+            .unwrap()
+            .decrypt(&sender, &envelope)
+            .unwrap();
+        assert_eq!((got.body, got.missed), (text(&id.to_string()), 0));
+        bob.relay.send(ClientFrame::Ack { relay_id }).unwrap();
+    }
 
     // Nobody registered this key.
     alice
@@ -688,28 +703,10 @@ async fn a_stranger_gets_only_a_small_share_of_the_queue() {
         stranger.send_text(bob_key, id, "hello?").await;
     }
     // Bob never wrote back: the 21st envelope is refused, his queue stays usable.
-    let envelope = stranger
-        .core
-        .lock()
-        .unwrap()
-        .encrypt(
-            &bob_key,
-            Body::ContactAccept {
-                nickname: "s".into(),
-            },
-        )
-        .unwrap();
-    stranger
-        .relay
-        .send(ClientFrame::Send {
-            client_id: 99,
-            envelope,
-        })
-        .unwrap();
     assert_eq!(
-        stranger.frame().await,
+        send_raw(&url, &stranger.core, bob_key, text("one more")).await,
         ServerFrame::Error {
-            client_id: Some(99),
+            client_id: Some(9),
             code: ErrorCode::QueueFull
         }
     );
@@ -739,26 +736,35 @@ async fn strangers_together_get_a_quarter_of_the_queue() {
     for id in 0..2 {
         stranger.send_text(bob_key, id, "hello?").await;
     }
-    let envelope = stranger
-        .core
-        .lock()
-        .unwrap()
-        .encrypt(&bob_key, Body::Goodbye)
-        .unwrap();
-    stranger
-        .relay
-        .send(ClientFrame::Send {
-            client_id: 9,
-            envelope,
-        })
-        .unwrap();
     assert_eq!(
-        stranger.frame().await,
+        send_raw(&url, &stranger.core, bob_key, Body::Goodbye).await,
         ServerFrame::Error {
             client_id: Some(9),
             code: ErrorCode::QueueFull
         }
     );
+}
+
+/// The relay's own answer to one `Send`, over a bare connection: the link
+/// would retry a refusal instead of reporting it (ADR-020).
+async fn send_raw(url: &str, client: &Mutex<Client>, to: [u8; 32], body: Body) -> ServerFrame {
+    let envelope = client.lock().unwrap().encrypt(&to, body).unwrap();
+    let mut ws = raw(url).await;
+    assert_eq!(auth(&mut ws, client).await, ServerFrame::AuthOk);
+    raw_send(
+        &mut ws,
+        ClientFrame::Send {
+            client_id: 9,
+            envelope,
+        },
+    )
+    .await;
+    loop {
+        match raw_recv(&mut ws).await {
+            ServerFrame::KeyCount { .. } => {}
+            f => return f,
+        }
+    }
 }
 
 async fn auth(ws: &mut Raw, client: &Mutex<Client>) -> ServerFrame {
