@@ -433,35 +433,49 @@ impl Chat {
         };
         let timer_width = TIMERS.iter().map(|t| width(&label(*t))).fold(0.0, f32::max);
         let send_width = width(&file_text) + ui.spacing().item_spacing.x + timer_width;
+        // Three lines on view, wrapped; the rest scrolls inside the frame.
+        let font = egui::TextStyle::Monospace.resolve(ui.style());
+        let rows = ui
+            .fonts_mut(|f| f.layout_no_wrap("x\nx\nx".into(), font, Color32::WHITE))
+            .size()
+            .y;
+        // The field's frame: text, margins, stroke. The buttons span it exactly.
+        let (margin, stroke_width): (i8, f32) = (6, 1.0);
+        let field_height = rows + 2.0 * (f32::from(margin) + stroke_width);
         let mut send = false;
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let column = Layout::top_down(Align::Min);
-                ui.allocate_ui_with_layout(egui::vec2(send_width, 0.0), column, |ui| {
+                let size = egui::vec2(send_width, field_height);
+                ui.allocate_ui_with_layout(size, column, |ui| {
+                    ui.set_min_height(field_height);
                     let button = crate::synth::button(ui, p, "SEND", egui::vec2(send_width, 28.0));
                     send = button.clicked();
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::Button::new(file_text).corner_radius(2))
-                            .on_hover_text("Send a file, up to 1 MiB")
-                            .clicked()
-                        {
-                            self.dialog = Some(Dialog::SendFile {
-                                path: String::new(),
-                                error: String::new(),
-                            });
-                        }
-                        let t = ui
-                            .add(
-                                egui::Button::new(timer_text)
-                                    .corner_radius(2)
-                                    .min_size(egui::vec2(timer_width, 0.0)),
-                            )
-                            .on_hover_text("Disappearing messages: click for the next timer");
-                        if t.clicked() {
-                            self.engine
-                                .edit(i, |c| c.expires_in = next_timer(c.expires_in));
-                        }
+                    // File and the timer sit on the field's bottom edge.
+                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(egui::Button::new(file_text).corner_radius(2))
+                                .on_hover_text("Send a file, up to 1 MiB")
+                                .clicked()
+                            {
+                                self.dialog = Some(Dialog::SendFile {
+                                    path: String::new(),
+                                    error: String::new(),
+                                });
+                            }
+                            let t = ui
+                                .add(
+                                    egui::Button::new(timer_text)
+                                        .corner_radius(2)
+                                        .min_size(egui::vec2(timer_width, 0.0)),
+                                )
+                                .on_hover_text("Disappearing messages: click for the next timer");
+                            if t.clicked() {
+                                self.engine
+                                    .edit(i, |c| c.expires_in = next_timer(c.expires_in));
+                            }
+                        });
                     });
                 });
                 let id = ui.make_persistent_id("composer");
@@ -470,22 +484,17 @@ impl Chat {
                 let enter = focused
                     && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
                 send |= enter;
-                // Three lines on view, wrapped; the rest scrolls inside the frame.
-                let font = egui::TextStyle::Monospace.resolve(ui.style());
-                let rows = ui
-                    .fonts_mut(|f| f.layout_no_wrap("x\nx\nx".into(), font, Color32::WHITE))
-                    .size()
-                    .y;
                 let v = ui.visuals();
                 let stroke = match focused {
                     true => v.selection.stroke,
                     false => v.widgets.noninteractive.bg_stroke,
                 };
+                let stroke = Stroke::new(stroke_width, stroke.color);
                 egui::Frame::new()
                     .fill(v.extreme_bg_color)
                     .stroke(stroke)
                     .corner_radius(4)
-                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .inner_margin(egui::Margin::symmetric(8, margin))
                     .show(ui, |ui| {
                         egui::ScrollArea::vertical()
                             .max_height(rows)
