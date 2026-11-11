@@ -176,6 +176,7 @@ impl Drop for Live {
 const RETIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Incognito identities whose invite nobody used yet.
 const MAX_WAITING_PROFILES: usize = 5;
+const MISSING_SUFFIX: &str = " message(s) missing so far";
 const MISSING_PROFILE: &str = "this contact's incognito identity is missing";
 
 /// Goodbyes sent and not yet accepted, then `Unregister` (ADR-009).
@@ -1199,14 +1200,7 @@ impl Engine {
                 "⚠ they restarted the conversation (restored a backup?); messages may be lost",
             );
         }
-        if got.missed > 0 {
-            // The number comes from the peer's `seq`; do not let it look alarming on purpose.
-            let missed = match got.missed {
-                0..=9999 => got.missed.to_string(),
-                _ => "over 9999".to_string(),
-            };
-            self.system(i, format!("⚠ {missed} message(s) missing so far"));
-        }
+        show_missed(&mut self.data.contacts[i], got.missed);
         let alert = |request| Happened::Alert {
             key: sender,
             request,
@@ -1920,9 +1914,51 @@ impl Engine {
     }
 }
 
+/// One notice per chat, redrawn only when the count changes: the tracker reports
+/// the same gap with every later message, and a file is many messages.
+fn show_missed(c: &mut Contact, missed: u64) {
+    if missed == c.missed {
+        return;
+    }
+    c.missed = missed;
+    c.messages
+        .retain(|m| !(m.status == Status::System && m.text.ends_with(MISSING_SUFFIX)));
+    if missed > 0 {
+        // The number comes from the peer's `seq`; do not let it look alarming on purpose.
+        let n = match missed {
+            0..=9999 => missed.to_string(),
+            _ => "over 9999".to_string(),
+        };
+        c.messages.push(Msg {
+            mine: false,
+            text: format!("⚠ {n}{MISSING_SUFFIX}"),
+            at: now(),
+            expires_at: None,
+            status: Status::System,
+            file: None,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gap_shows_one_notice_that_follows_the_count() {
+        let mut c = Contact::default();
+        let notices =
+            |c: &Contact| -> Vec<String> { c.messages.iter().map(|m| m.text.clone()).collect() };
+        show_missed(&mut c, 1);
+        for _ in 0..10 {
+            show_missed(&mut c, 1);
+        }
+        assert_eq!(notices(&c), ["⚠ 1 message(s) missing so far"]);
+        show_missed(&mut c, 2);
+        assert_eq!(notices(&c), ["⚠ 2 message(s) missing so far"]);
+        show_missed(&mut c, 0);
+        assert!(c.messages.is_empty());
+    }
 
     #[test]
     fn spans_round_down() {

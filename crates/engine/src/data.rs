@@ -116,6 +116,9 @@ pub struct Contact {
     /// They wiped their account and said goodbye; the chat is read-only (ADR-009).
     #[serde(default)]
     pub left: bool,
+    /// Messages from them known to be missing, as last shown in the chat.
+    #[serde(default)]
+    pub missed: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
