@@ -1,1 +1,0 @@
-Messages the relay refused for a moment are sent again instead of going missing, and a missing message shows one warning instead of one per message. When a notification wakes the app or it comes on screen, it reconnects at once, so the message is there when you open it.

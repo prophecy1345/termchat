@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.5
+
+- Desktop: SEND sits above File and the timer and is as wide as the two;
+  together they span the message field's height, and the field takes the
+  rest of the row. The timer button keeps one
+  width whatever it shows, and the field no longer shows a scroll bar on
+  hover.
+
 ## 0.5.4
 
 - A message that went missing no longer fills the chat with warnings. One
