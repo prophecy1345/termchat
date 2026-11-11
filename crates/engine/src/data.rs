@@ -29,6 +29,9 @@ pub struct Data {
     pub fallback_published: bool,
     /// When a fallback key was rotated out; forgotten a day after the relay TTL.
     pub old_fallback_since: Option<u64>,
+    /// When the current fallback key was made; replaced once too old, whatever
+    /// the relay says (ADR-019). `None` (an older account) counts as old.
+    pub fallback_since: Option<u64>,
     pub contacts: Vec<Contact>,
     /// Requests we turned down; their messages are dropped unread (ADR-007).
     pub rejected: Vec<Ed25519Key>,
@@ -62,6 +65,7 @@ pub struct Profile {
     pub push: Option<String>,
     pub fallback_published: bool,
     pub old_fallback_since: Option<u64>,
+    pub fallback_since: Option<u64>,
     /// Its own `Send` numbering, from a random start: one counter for every
     /// identity would show the relay which keys belong together.
     pub next_client_id: u64,

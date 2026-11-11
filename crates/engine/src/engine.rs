@@ -30,6 +30,9 @@ const MAX_REJECTED: usize = 1000;
 /// so the relay's send limit (30, then one per 2 s) never refuses one.
 const FILE_BURST: f64 = 10.0;
 const FILE_EVERY: f64 = 3.0;
+/// ADR-019: a fallback key is replaced at this age, used or not, so a relay
+/// that hides its use cannot keep one key in service.
+const FALLBACK_MAX_AGE: u64 = 7 * 86_400;
 /// ADR-003: a typo in the real password must never hit the duress one.
 pub const DURESS_DISTANCE: usize = 4;
 /// The project's public relay, prefilled on first run; any other relay can be
@@ -608,16 +611,75 @@ impl Engine {
         }
     }
 
-    /// Identity `slot`'s fallback key state (ADR-002).
-    fn fallback_mut(&mut self, slot: usize) -> (&mut bool, &mut Option<u64>) {
+    /// Identity `slot`'s fallback key state (ADR-002, ADR-019): published at
+    /// all, when the previous key was rotated out, when the current one was made.
+    fn fallback_mut(&mut self, slot: usize) -> (&mut bool, &mut Option<u64>, &mut Option<u64>) {
         match slot {
             0 => (
                 &mut self.data.fallback_published,
                 &mut self.data.old_fallback_since,
+                &mut self.data.fallback_since,
             ),
             n => {
                 let p = &mut self.data.profiles[n - 1];
-                (&mut p.fallback_published, &mut p.old_fallback_since)
+                (
+                    &mut p.fallback_published,
+                    &mut p.old_fallback_since,
+                    &mut p.fallback_since,
+                )
+            }
+        }
+    }
+
+    /// Tops up identity `slot`'s one-time keys and replaces its fallback key
+    /// when due, given what the relay says it has (ADR-002, ADR-019).
+    fn publish_keys(&mut self, slot: usize, one_time_left: usize, fallback_used: bool) {
+        let (published, since, made) = {
+            let (p, s, m) = self.fallback_mut(slot);
+            (*p, *s, *m)
+        };
+        // ADR-002: a used fallback key is replaced, and the one before
+        // it kept until nothing sent to it can still be queued.
+        // vodozemac keeps only one previous key, so no new rotation
+        // while one is waiting: claims alone (the relay reports every
+        // one) must not push out a key a new contact may have used.
+        // An empty relay (first run, or it lost its database) has no
+        // fallback key either.
+        // ADR-019: a key past its age counts as used; the relay's word is
+        // not needed for that.
+        let aged = made.is_none_or(|at| now() >= at + FALLBACK_MAX_AGE);
+        let used = fallback_used || one_time_left == 0 || aged;
+        let rotate = !published || (used && since.is_none());
+        let keys = self.core_at(slot).prekeys(one_time_left, rotate);
+        if !keys.one_time.is_empty() || keys.fallback.is_some() {
+            let (p, s, m) = self.fallback_mut(slot);
+            *p = true;
+            if rotate {
+                *m = Some(now());
+                if published {
+                    *s = Some(now());
+                }
+            }
+            self.persist();
+            let _ = self.lives[slot].relay.send(ClientFrame::PublishKeys {
+                one_time: keys.one_time,
+                fallback: keys.fallback,
+            });
+        }
+    }
+
+    /// ADR-019: the age check must not wait for a `KeyCount`, which the relay
+    /// chooses to send. Only while connected, so the new key reaches the relay.
+    fn rotate_aged_fallbacks(&mut self) {
+        for slot in 0..self.lives.len() {
+            let (published, since, made) = {
+                let (p, s, m) = self.fallback_mut(slot);
+                (*p, *s, *m)
+            };
+            let aged = made.is_none_or(|at| now() >= at + FALLBACK_MAX_AGE);
+            if published && since.is_none() && aged && self.lives[slot].connected {
+                // "Plenty of one-time keys left": this is about the fallback key only.
+                self.publish_keys(slot, usize::MAX, false);
             }
         }
     }
@@ -907,34 +969,7 @@ impl Engine {
             ServerFrame::KeyCount {
                 one_time_left,
                 fallback_used,
-            } => {
-                let (published, since) = {
-                    let (p, s) = self.fallback_mut(slot);
-                    (*p, *s)
-                };
-                // ADR-002: a used fallback key is replaced, and the one before
-                // it kept until nothing sent to it can still be queued.
-                // vodozemac keeps only one previous key, so no new rotation
-                // while one is waiting: claims alone (the relay reports every
-                // one) must not push out a key a new contact may have used.
-                // An empty relay (first run, or it lost its database) has no
-                // fallback key either.
-                let used = fallback_used || one_time_left == 0;
-                let rotate = !published || (used && since.is_none());
-                let keys = self.core_at(slot).prekeys(one_time_left as usize, rotate);
-                if !keys.one_time.is_empty() || keys.fallback.is_some() {
-                    let (p, s) = self.fallback_mut(slot);
-                    *p = true;
-                    if rotate && published {
-                        *s = Some(now());
-                    }
-                    self.persist();
-                    let _ = self.lives[slot].relay.send(ClientFrame::PublishKeys {
-                        one_time: keys.one_time,
-                        fallback: keys.fallback,
-                    });
-                }
-            }
+            } => self.publish_keys(slot, one_time_left as usize, fallback_used),
             ServerFrame::ClaimedKey { target, key } => {
                 let Some(i) = self.index(&target) else { return };
                 if self.slot_for(&target) != Some(slot) {
@@ -1250,6 +1285,7 @@ impl Engine {
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
         self.expire();
+        self.rotate_aged_fallbacks();
         self.send_chunks();
         self.leave_timeout();
         let t = Instant::now();
@@ -1908,6 +1944,58 @@ mod tests {
     #[test]
     fn message_text_keeps_lines_but_not_bidi_overrides() {
         assert_eq!(clean_text("a\u{202E}b\nc\u{0007}d"), "ab\ncd");
+    }
+
+    #[tokio::test]
+    async fn fallback_key_rotates_by_age_whatever_the_relay_says() {
+        let dir = std::env::temp_dir().join(format!("termchat-fallback-{}", std::process::id()));
+        let setup = Setup {
+            relay_url: "ws://127.0.0.1:9/",
+            onion_url: None,
+            tor: false,
+            nickname: "alice",
+            password: "correct horse battery staple violin",
+        };
+        let mut e = Engine::setup(&dir.join("state"), &setup).unwrap();
+        let me = e.me();
+        // The relay never admits the fallback key was used.
+        let count = |e: &mut Engine| {
+            let frame = ServerFrame::KeyCount {
+                one_time_left: 50,
+                fallback_used: false,
+            };
+            e.on_relay((me, Event::Frame(frame)));
+        };
+        count(&mut e);
+        let made = e.data.fallback_since;
+        assert!(e.data.fallback_published && made.is_some());
+        // Young and unused: it stays.
+        count(&mut e);
+        assert_eq!(
+            (e.data.fallback_since, e.data.old_fallback_since),
+            (made, None)
+        );
+
+        // Eight days old: replaced, and the one before it is kept for now.
+        let old = Some(now() - 8 * 86_400);
+        e.data.fallback_since = old;
+        count(&mut e);
+        assert!(e.data.fallback_since >= made && e.data.old_fallback_since.is_some());
+        // Old again while the previous key is still kept: no second rotation.
+        e.data.fallback_since = old;
+        count(&mut e);
+        e.tick();
+        assert_eq!(e.data.fallback_since, old);
+
+        // The previous key is forgotten, and the relay says nothing at all:
+        // the timer replaces the key, but only while connected.
+        e.data.old_fallback_since = None;
+        e.tick();
+        assert_eq!(e.data.fallback_since, old);
+        e.lives[0].connected = true;
+        e.tick();
+        assert!(e.data.fallback_since >= made && e.data.old_fallback_since.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
