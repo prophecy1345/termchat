@@ -408,7 +408,14 @@ pub fn read_document(path: &Path) -> Result<(String, Vec<u8>), String> {
 /// Temp file, fsync, rename: a crash leaves either the old or the new state.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
-    let mut file = create_private(&tmp)?;
+    // A backup may go to a folder others can write to. Whatever sits at the
+    // temp path goes (a link itself, not its target), and the file must then
+    // be ours and new: a link planted there is never written through.
+    match fs::remove_file(&tmp) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let mut file = create_private(&tmp, true)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     fs::rename(&tmp, path)?;
@@ -421,8 +428,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Opens `path` for writing with mode 0600, creating it and its folder
-/// (0700) if needed.
-fn create_private(path: &Path) -> io::Result<fs::File> {
+/// (0700) if needed. `new`: fail if anything is there, a link included.
+fn create_private(path: &Path, new: bool) -> io::Result<fs::File> {
     if let Some(dir) = path.parent() {
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true);
@@ -431,7 +438,10 @@ fn create_private(path: &Path) -> io::Result<fs::File> {
         builder.create(dir)?;
     }
     let mut opts = OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    match new {
+        true => opts.write(true).create_new(true),
+        false => opts.write(true).create(true).truncate(true),
+    };
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     opts.open(path)
@@ -443,7 +453,7 @@ fn create_private(path: &Path) -> io::Result<fs::File> {
 /// it. The empty `lock` file stays, so a wiped folder still looks like a
 /// fresh install that has been started once.
 pub fn lock(state: &Path) -> io::Result<Option<fs::File>> {
-    let file = create_private(&state.with_file_name("lock"))?;
+    let file = create_private(&state.with_file_name("lock"), false)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(fs::TryLockError::WouldBlock) => Ok(None),
@@ -594,6 +604,23 @@ pub fn permission_warning(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_does_not_write_through_a_planted_link() {
+        let dir = std::env::temp_dir().join(format!("termchat-atomic-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (target, backup) = (dir.join("victim"), dir.join("backup"));
+        fs::write(&target, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&target, backup.with_extension("tmp")).unwrap();
+        write_atomic(&backup, b"new").unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"untouched");
+        assert_eq!(fs::read(&backup).unwrap(), b"new");
+        // And again over itself, as every save of the state does.
+        write_atomic(&backup, b"newer").unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), b"newer");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn outgoing(bytes: Vec<u8>) -> FileMsg {
         FileMsg {
