@@ -26,6 +26,9 @@ const MAX_REQUESTS: usize = 50;
 const MAX_SESSIONS: usize = 5;
 /// protocol.md, section 7.
 const MAX_MISSING: usize = 1000;
+/// ADR-019: remembered inbound session ids, per sender and in all.
+const MAX_SEEN_PER_SENDER: usize = 200;
+const MAX_SEEN: usize = 10_000;
 const ID_CONTEXT: &[u8] = b"termchat-id-v1";
 const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
 const AUTH_CONTEXT: &[u8] = b"termchat-auth-v1";
@@ -89,6 +92,20 @@ pub struct Received {
 pub struct Client {
     account: Account,
     contacts: HashMap<Ed25519Key, Contact>,
+    /// Inbound sessions already built, oldest first: a fallback key stays in
+    /// the account, so the same pre-key message could build one again and be
+    /// read twice (ADR-019).
+    seen: Vec<Seen>,
+    /// How many fallback keys there have been; the current one's number.
+    fallback_no: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Seen {
+    id: String,
+    sender: Ed25519Key,
+    /// The fallback key that was current when the session was built.
+    fallback: u64,
 }
 
 struct Contact {
@@ -140,6 +157,7 @@ impl Client {
         }
         if rotate_fallback {
             self.account.generate_fallback_key();
+            self.fallback_no += 1;
         }
         let sign = |k: Curve25519PublicKey| {
             let key = k.to_bytes();
@@ -254,12 +272,17 @@ impl Client {
         if let Some(c) = self.contacts.get_mut(sender) {
             for i in (0..c.sessions.len()).rev() {
                 let s = &mut c.sessions[i];
-                if let OlmMessage::PreKey(m) = &msg
-                    && m.session_id() != s.session.session_id()
-                {
-                    continue;
-                }
+                let own_prekey = match &msg {
+                    OlmMessage::PreKey(m) if m.session_id() != s.session.session_id() => continue,
+                    OlmMessage::PreKey(_) => true,
+                    OlmMessage::Normal(_) => false,
+                };
                 let Ok(plain) = s.session.decrypt(&msg) else {
+                    // ADR-019: this session's own pre-key message, read
+                    // before. It must not go on to build the session again.
+                    if own_prekey {
+                        return Err(Error::DecryptFailed);
+                    }
                     continue;
                 };
                 let inner = open_inner(&plain, sender, &me)?;
@@ -291,10 +314,18 @@ impl Client {
         {
             return Err(Error::SenderMismatch);
         }
+        // ADR-019: a session that is gone (pushed out, or its contact removed)
+        // is not built again either.
+        let id = pre.session_id();
+        if self.seen.iter().any(|s| s.id == id) {
+            return Err(Error::DecryptFailed);
+        }
         let created = self
             .account
             .create_inbound_session(SessionConfig::version_1(), their_curve, pre)
             .map_err(|_| Error::DecryptFailed)?;
+        // At once, whatever the checks below say: refused once, refused again.
+        self.remember(id, *sender);
         let inner = open_inner(&created.plaintext, sender, &me)?;
 
         if !self.contacts.contains_key(sender) {
@@ -345,6 +376,23 @@ impl Client {
         })
     }
 
+    fn remember(&mut self, id: String, sender: Ed25519Key) {
+        let of_sender = |s: &&Seen| s.sender == sender;
+        if self.seen.iter().filter(of_sender).count() >= MAX_SEEN_PER_SENDER
+            && let Some(oldest) = self.seen.iter().position(|s| s.sender == sender)
+        {
+            self.seen.remove(oldest);
+        }
+        if self.seen.len() >= MAX_SEEN {
+            self.seen.remove(0);
+        }
+        self.seen.push(Seen {
+            id,
+            sender,
+            fallback: self.fallback_no,
+        });
+    }
+
     /// Encrypted state file bytes, with the app's own data (settings, history)
     /// stored alongside. The caller writes them to disk atomically.
     pub fn save(&self, key: &FileKey, app: &str) -> Result<Vec<u8>, Error> {
@@ -384,6 +432,8 @@ impl Client {
                     }
                 })
                 .collect(),
+            seen: &self.seen,
+            fallback_no: self.fallback_no,
         };
         to_json(&state)
     }
@@ -424,6 +474,8 @@ impl Client {
         let client = Self {
             account: Account::from_pickle(state.account),
             contacts,
+            seen: state.seen,
+            fallback_no: state.fallback_no,
         };
         (client, Zeroizing::new(state.app))
     }
@@ -458,6 +510,9 @@ impl Client {
         Self {
             account: Account::from_pickle(self.account.pickle()),
             contacts,
+            // The backup holds the fallback keys, so it holds what guards them.
+            seen: self.seen.clone(),
+            fallback_no: self.fallback_no,
         }
     }
 
@@ -469,6 +524,9 @@ impl Client {
     /// Drops the fallback key that was rotated out (ADR-002). Call once envelopes
     /// sent to it can no longer be in the relay queue.
     pub fn forget_old_fallback(&mut self) -> bool {
+        // Sessions from before the current key used keys that are gone now;
+        // nothing can build them again (ADR-019).
+        self.seen.retain(|s| s.fallback >= self.fallback_no);
         self.account.forget_fallback_key()
     }
 
@@ -495,6 +553,8 @@ struct StateRef<'a> {
     app: &'a str,
     account: AccountPickle,
     contacts: Vec<ContactState>,
+    seen: &'a [Seen],
+    fallback_no: u64,
 }
 
 #[derive(Deserialize)]
@@ -502,6 +562,11 @@ struct State {
     app: String,
     account: AccountPickle,
     contacts: Vec<ContactState>,
+    /// Absent in files from before ADR-019.
+    #[serde(default)]
+    seen: Vec<Seen>,
+    #[serde(default)]
+    fallback_no: u64,
 }
 
 /// JSON of `value` in a buffer that is wiped whenever it is outgrown, and when
@@ -663,6 +728,38 @@ mod tests {
             json_string(json).unwrap().as_str(),
             serde_json::to_string(&value).unwrap()
         );
+    }
+
+    #[test]
+    fn seen_sessions_go_with_their_fallback_key_and_are_capped() {
+        let ids = |c: &Client| c.seen.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+        let mut c = Client::default();
+        c.prekeys(0, true);
+        c.remember("a".into(), [1; 32]);
+        c.prekeys(0, true);
+        c.remember("b".into(), [1; 32]);
+        // Key 1 is forgotten: "a" came before key 2 and could only have used
+        // a key that is gone; "b" may have used key 2.
+        c.forget_old_fallback();
+        assert_eq!(ids(&c), ["b"]);
+
+        // One sender's 201st session pushes out its own oldest, nobody else's.
+        let mut c = Client::default();
+        c.remember("other".into(), [2; 32]);
+        for n in 0..=MAX_SEEN_PER_SENDER {
+            c.remember(n.to_string(), [1; 32]);
+        }
+        assert_eq!(c.seen.len(), MAX_SEEN_PER_SENDER + 1);
+        assert_eq!(ids(&c)[..2], ["other", "1"]);
+
+        // The list as a whole is capped too, oldest first.
+        for n in 0..MAX_SEEN {
+            let mut sender = [3; 32];
+            sender[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            c.remember(format!("s{n}"), sender);
+        }
+        assert_eq!(c.seen.len(), MAX_SEEN);
+        assert_eq!(c.seen[0].id, "s0");
     }
 
     #[test]

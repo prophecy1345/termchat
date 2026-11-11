@@ -327,3 +327,60 @@ fn exported_identity_keeps_keys_and_sessions() {
     ));
     assert!(Client::import("{}").is_err());
 }
+
+/// Alice starts a session on Bob's fallback key, which stays in his account.
+fn on_fallback(alice: &mut Client, bob: &Client, key: &termchat_core::proto::SignedKey) {
+    alice.start_session(&ed(bob), key).unwrap();
+}
+
+#[test]
+fn replay_on_a_fallback_key_session_is_rejected() {
+    let mut alice = Client::default();
+    let mut bob = Client::default();
+    let fallback = bob.prekeys(0, true).fallback.unwrap();
+    alice.add_contact(&bob.identity()).unwrap();
+    bob.add_contact(&alice.identity()).unwrap();
+    let (a, b) = (ed(&alice), ed(&bob));
+    on_fallback(&mut alice, &bob, &fallback);
+    let first = alice.encrypt(&b, text("pay 100")).unwrap();
+    let second = alice.encrypt(&b, text("and 5 more")).unwrap();
+    assert_eq!(bob.decrypt(&a, &first).unwrap().body, text("pay 100"));
+    for _ in 0..2 {
+        assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+    }
+    // The session itself is unharmed, and survives a save.
+    let mut bob = Client::import(&bob.export().unwrap()).unwrap();
+    assert_eq!(bob.decrypt(&a, &second).unwrap().body, text("and 5 more"));
+    assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+
+    // Five newer sessions push the first one out; it is still not built again.
+    for n in 0..5 {
+        on_fallback(&mut alice, &bob, &fallback);
+        let env = alice.encrypt(&b, text(&n.to_string())).unwrap();
+        assert!(bob.decrypt(&a, &env).unwrap().new_session);
+    }
+    assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+}
+
+#[test]
+fn replay_does_not_bring_back_a_removed_contact() {
+    let mut bob = Client::default();
+    let mut carol = Client::default();
+    let (b, c) = (ed(&bob), ed(&carol));
+    let fallback = bob.prekeys(0, true).fallback.unwrap();
+    carol.add_contact(&bob.identity()).unwrap();
+    on_fallback(&mut carol, &bob, &fallback);
+    let request = Body::ContactRequest {
+        identity: carol.identity(),
+        nickname: "carol".into(),
+        note: String::new(),
+    };
+    let env = carol.encrypt(&b, request).unwrap();
+    assert!(bob.decrypt(&c, &env).unwrap().request);
+    bob.remove_contact(&c);
+    assert_eq!(bob.decrypt(&c, &env), Err(Error::DecryptFailed));
+    assert_eq!(bob.is_request(&c), None);
+    // A backup carries the list along with the fallback key.
+    let mut restored = bob.without_sessions();
+    assert_eq!(restored.decrypt(&c, &env), Err(Error::DecryptFailed));
+}
