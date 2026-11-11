@@ -91,8 +91,17 @@ fn tls() -> TlsConnector {
     TlsConnector::from(Arc::clone(config))
 }
 
+/// Wake-ups in flight at once. Each is a TLS connection to a host a client
+/// named: without a cap, many keys could turn the relay into a stream of
+/// requests at someone, and use up its own sockets. Past the cap a wake-up is
+/// skipped; the envelope waits in the queue either way.
+static IN_FLIGHT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
+
 /// Sends the wake-up. Errors are only logged: a push is a courtesy.
 pub async fn wake(url: String) {
+    let Ok(_slot) = IN_FLIGHT.try_acquire() else {
+        return tracing::debug!("push skipped: too many in flight");
+    };
     if let Err(e) = tokio::time::timeout(TIMEOUT, post(&url))
         .await
         .unwrap_or(Err("timeout".into()))
