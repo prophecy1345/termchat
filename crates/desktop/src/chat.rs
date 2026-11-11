@@ -413,37 +413,54 @@ impl Chat {
 
     fn input_row(&mut self, ui: &mut egui::Ui, p: &Pal, i: usize) {
         let timer = self.engine.data.contacts[i].expires_in;
+        let label = match timer {
+            Some(s) => format!("timer {}", span(u64::from(s))),
+            None => "timer off".into(),
+        };
+        let file_text = RichText::new("File");
+        let timer_text = RichText::new(label).monospace();
+        // SEND is as wide as the two buttons under it.
+        let width = |t: &RichText| {
+            egui::WidgetText::from(t.clone())
+                .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button)
+                .size()
+                .x
+                + 2.0 * ui.spacing().button_padding.x
+        };
+        let send_width = width(&file_text) + ui.spacing().item_spacing.x + width(&timer_text);
         let mut send = false;
         ui.horizontal(|ui| {
-            let label = match timer {
-                Some(s) => format!("timer {}", span(u64::from(s))),
-                None => "timer off".into(),
-            };
-            if ui
-                .add(egui::Button::new("File").corner_radius(2))
-                .on_hover_text("Send a file, up to 1 MiB")
-                .clicked()
-            {
-                self.dialog = Some(Dialog::SendFile {
-                    path: String::new(),
-                    error: String::new(),
-                });
-            }
-            let t = ui
-                .add(egui::Button::new(RichText::new(label).monospace()).corner_radius(2))
-                .on_hover_text("Disappearing messages: click for the next timer");
-            if t.clicked() {
-                self.engine
-                    .edit(i, |c| c.expires_in = next_timer(c.expires_in));
-            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let button = crate::synth::button(ui, p, "SEND", egui::vec2(84.0, 28.0));
+                let column = Layout::top_down(Align::Min);
+                ui.allocate_ui_with_layout(egui::vec2(send_width, 0.0), column, |ui| {
+                    let button = crate::synth::button(ui, p, "SEND", egui::vec2(send_width, 28.0));
+                    send = button.clicked();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(egui::Button::new(file_text).corner_radius(2))
+                            .on_hover_text("Send a file, up to 1 MiB")
+                            .clicked()
+                        {
+                            self.dialog = Some(Dialog::SendFile {
+                                path: String::new(),
+                                error: String::new(),
+                            });
+                        }
+                        let t = ui
+                            .add(egui::Button::new(timer_text).corner_radius(2))
+                            .on_hover_text("Disappearing messages: click for the next timer");
+                        if t.clicked() {
+                            self.engine
+                                .edit(i, |c| c.expires_in = next_timer(c.expires_in));
+                        }
+                    });
+                });
                 let id = ui.make_persistent_id("composer");
                 let focused = ui.memory(|m| m.has_focus(id));
                 // Enter sends; Shift+Enter breaks the line.
                 let enter = focused
                     && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-                send = button.clicked() || enter;
+                send |= enter;
                 // Three lines on view, wrapped; the rest scrolls inside the frame.
                 let font = egui::TextStyle::Monospace.resolve(ui.style());
                 let rows = ui
@@ -465,6 +482,9 @@ impl Chat {
                             .max_height(rows)
                             .min_scrolled_height(rows)
                             .auto_shrink([false, true])
+                            .scroll_bar_visibility(
+                                egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                            )
                             .show(ui, |ui| {
                                 ui.add(
                                     egui::TextEdit::multiline(&mut self.input)
