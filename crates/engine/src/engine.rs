@@ -1556,8 +1556,8 @@ impl Engine {
     /// 0600, then forgets its bytes (ADR-017). Never overwrites a file.
     pub fn save_file(&mut self, i: usize, m: usize, dir: &Path) -> Result<PathBuf, String> {
         let (name, bytes) = self.file_bytes(i, m).ok_or("no file to save")?;
-        let path =
-            data::save_new(dir, &safe_name(&name), &bytes).map_err(|e| format!("cannot save: {e}"))?;
+        let path = data::save_new(dir, &safe_name(&name), &bytes)
+            .map_err(|e| format!("cannot save: {e}"))?;
         self.discard_file(i, m);
         Ok(path)
     }

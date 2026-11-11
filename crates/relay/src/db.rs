@@ -440,7 +440,11 @@ mod tests {
             after = last;
         }
         let all: Vec<u64> = db.queued(&[2; 32]).unwrap().iter().map(|q| q.id).collect();
-        assert_eq!((seen.len(), &seen), (5, &all), "every envelope once, in order");
+        assert_eq!(
+            (seen.len(), &seen),
+            (5, &all),
+            "every envelope once, in order"
+        );
     }
 
     #[test]
