@@ -13,7 +13,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::http::Uri;
-use tokio_tungstenite::{WebSocketStream, connect_async};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::{WebSocketStream, connect_async_with_config};
 
 const MIN_DELAY: Duration = Duration::from_secs(1);
 const MAX_DELAY: Duration = Duration::from_secs(60);
@@ -260,16 +261,23 @@ impl Link {
     async fn connect(&mut self) -> Option<Ws> {
         match self.dial.clone() {
             Dial::Direct => {
-                let (ws, response) = connect_async(self.url.as_str()).await.ok()?;
+                let (ws, response) =
+                    connect_async_with_config(self.url.as_str(), Some(ws_config()), false)
+                        .await
+                        .ok()?;
                 self.relay_version = version(&response);
                 Some(Ws::Direct(Box::new(ws)))
             }
             #[cfg(feature = "tor")]
             Dial::Tor(dir, bridges) => {
                 let stream = self.tor_stream(&dir, &bridges).await?;
-                let (ws, response) = tokio_tungstenite::client_async(self.url.as_str(), stream)
-                    .await
-                    .ok()?;
+                let (ws, response) = tokio_tungstenite::client_async_with_config(
+                    self.url.as_str(),
+                    stream,
+                    Some(ws_config()),
+                )
+                .await
+                .ok()?;
                 self.relay_version = version(&response);
                 Some(Ws::Tor(Box::new(ws)))
             }
@@ -362,6 +370,14 @@ impl Link {
             _ => None,
         }
     }
+}
+
+/// The relay's own frame limit (protocol.md, section 11) instead of
+/// tungstenite's 64 MiB: a hostile relay must not make the client buffer that.
+fn ws_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(termchat_proto::MAX_FRAME_BYTES))
+        .max_frame_size(Some(termchat_proto::MAX_FRAME_BYTES))
 }
 
 async fn write<S: AsyncRead + AsyncWrite + Unpin>(
