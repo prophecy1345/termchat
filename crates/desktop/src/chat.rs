@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
 use termchat_engine::data::{Contact, Status};
-use termchat_engine::engine::{age, clean_text, next_timer, span};
+use termchat_engine::engine::{TIMERS, age, clean_text, next_timer, span};
 use termchat_engine::notify::{self, SOUND_GAP};
 use termchat_engine::settings::Settings;
 use termchat_engine::{Engine, Happened, themes};
@@ -413,13 +413,17 @@ impl Chat {
 
     fn input_row(&mut self, ui: &mut egui::Ui, p: &Pal, i: usize) {
         let timer = self.engine.data.contacts[i].expires_in;
-        let label = match timer {
-            Some(s) => format!("timer {}", span(u64::from(s))),
-            None => "timer off".into(),
+        let label = |t: Option<u32>| {
+            RichText::new(match t {
+                Some(s) => format!("timer {}", span(u64::from(s))),
+                None => "timer off".into(),
+            })
+            .monospace()
         };
         let file_text = RichText::new("File");
-        let timer_text = RichText::new(label).monospace();
-        // SEND is as wide as the two buttons under it.
+        let timer_text = label(timer);
+        // SEND is as wide as the two buttons under it; the timer button keeps
+        // the width of its longest label, so nothing jumps when it changes.
         let width = |t: &RichText| {
             egui::WidgetText::from(t.clone())
                 .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Button)
@@ -427,7 +431,8 @@ impl Chat {
                 .x
                 + 2.0 * ui.spacing().button_padding.x
         };
-        let send_width = width(&file_text) + ui.spacing().item_spacing.x + width(&timer_text);
+        let timer_width = TIMERS.iter().map(|t| width(&label(*t))).fold(0.0, f32::max);
+        let send_width = width(&file_text) + ui.spacing().item_spacing.x + timer_width;
         let mut send = false;
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -447,7 +452,11 @@ impl Chat {
                             });
                         }
                         let t = ui
-                            .add(egui::Button::new(timer_text).corner_radius(2))
+                            .add(
+                                egui::Button::new(timer_text)
+                                    .corner_radius(2)
+                                    .min_size(egui::vec2(timer_width, 0.0)),
+                            )
                             .on_hover_text("Disappearing messages: click for the next timer");
                         if t.clicked() {
                             self.engine
