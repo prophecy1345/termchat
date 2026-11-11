@@ -3,7 +3,10 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
-## 0.5.2
+## 0.5.3
+
+0.5.2 was tagged but never released: its build failed. 0.5.3 is the same
+code with the release build fixed.
 
 Fixes from a source review of the code (not an independent audit; the
 findings are in `docs/security/review-2026-11.md`).
