@@ -401,7 +401,7 @@ impl Account {
                         Status::System => "system".into(),
                         Status::Failed(why) => why.clone(),
                     },
-                    file_name: m.file.as_ref().map(|f| engine::clean(&f.name)),
+                    file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
                     file_unsaved: !m.mine
                         && m.file
                             .as_ref()

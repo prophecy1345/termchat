@@ -222,6 +222,30 @@ pub fn clean_text(s: &str) -> String {
     s.split('\n').map(clean).collect::<Vec<_>>().join("\n")
 }
 
+/// A received file's name, safe to create in a folder the user picked
+/// (ADR-017). The sender chose it, so it must not come out hidden (`.zshenv`
+/// in a home folder runs with the next shell) or, on Windows, as a device
+/// (`CON`), a stream of another file (`a.txt:b`) or a name Windows trims.
+pub fn safe_name(name: &str) -> String {
+    let name: String = clean(name)
+        .chars()
+        .map(|c| match c {
+            ':' | '*' | '?' | '"' | '<' | '>' | '|' | '/' | '\\' => '_',
+            c => c,
+        })
+        .collect();
+    let name = name.trim().trim_end_matches(['.', ' ']);
+    let stem = name.split('.').next().unwrap_or_default().to_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.ends_with(|c: char| c.is_ascii_digit() && c != '0'));
+    match name.is_empty() || name.starts_with('.') || device {
+        true => format!("_{name}"),
+        false => name.to_string(),
+    }
+}
+
 fn why(code: ErrorCode) -> String {
     match code {
         ErrorCode::UnknownRecipient => "contact is no longer on the relay".into(),
@@ -1533,7 +1557,7 @@ impl Engine {
     pub fn save_file(&mut self, i: usize, m: usize, dir: &Path) -> Result<PathBuf, String> {
         let (name, bytes) = self.file_bytes(i, m).ok_or("no file to save")?;
         let path =
-            data::save_new(dir, &clean(&name), &bytes).map_err(|e| format!("cannot save: {e}"))?;
+            data::save_new(dir, &safe_name(&name), &bytes).map_err(|e| format!("cannot save: {e}"))?;
         self.discard_file(i, m);
         Ok(path)
     }
@@ -1884,6 +1908,27 @@ mod tests {
     #[test]
     fn message_text_keeps_lines_but_not_bidi_overrides() {
         assert_eq!(clean_text("a\u{202E}b\nc\u{0007}d"), "ab\ncd");
+    }
+
+    #[test]
+    fn received_file_names_are_made_safe_to_save() {
+        for (from, to) in [
+            ("report.pdf", "report.pdf"),
+            ("Отчёт 2026.pdf", "Отчёт 2026.pdf"),
+            (".zshenv", "_.zshenv"),
+            (".bash_profile", "_.bash_profile"),
+            ("a.txt:evil", "a.txt_evil"),
+            ("what?*.txt", "what__.txt"),
+            ("CON", "_CON"),
+            ("nul.txt", "_nul.txt"),
+            ("com1.log", "_com1.log"),
+            ("common.log", "common.log"),
+            ("name. . ", "name"),
+            (" . ", "_"),
+            ("a\u{202E}fdp.exe", "afdp.exe"),
+        ] {
+            assert_eq!(safe_name(from), to, "{from:?}");
+        }
     }
 
     #[test]
