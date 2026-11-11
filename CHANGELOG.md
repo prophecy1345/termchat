@@ -3,6 +3,21 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.4
+
+- A message that went missing no longer fills the chat with warnings. One
+  "⚠ N message(s) missing" line stays per chat, changes with the count and
+  disappears once the message turns up.
+- A message or file chunk the relay refuses for now (sending too fast, a full
+  queue) is sent again as it was, so it no longer goes missing on the other
+  side. A chunk refused for good now fails its file instead of being lost
+  without a word (ADR-020).
+- Android: when a notification wakes the app or it comes on screen, it
+  reconnects at once. Before, a message could arrive up to a minute and a half
+  after its notification (ADR-012).
+- Desktop: the message field is three lines tall, wraps long text and scrolls
+  the rest. Enter sends, Shift+Enter starts a new line.
+
 ## 0.5.3
 
 0.5.2 was tagged but never released: its build failed. 0.5.3 is the same
