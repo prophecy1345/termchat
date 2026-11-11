@@ -1,6 +1,6 @@
 # ADR-012: waking the Android app for new messages
 
-Status: **accepted** (maintainer, 2026-10-17; section 2 amended the same day). Русская версия: [012-push.ru.md](012-push.ru.md).
+Status: **accepted** (maintainer, 2026-10-17; section 2 amended the same day and on 2026-11-11). Русская версия: [012-push.ru.md](012-push.ru.md).
 
 ## Context
 
@@ -42,6 +42,16 @@ ntfy.sh). The app gets an endpoint URL from it.
   memory, and signing in to the relay needs them. The messages arrive when
   the user opens and unlocks it. (Amended 2026-10-17; the first version had
   the app connect and fetch, which the password makes impossible.)
+- **An unlocked app** still holds its relay link, but in the background
+  Android freezes it: the socket may be dead while the link waits up to 90 s
+  of silence, or sleeps in its reconnect backoff (up to 60 s, on a clock that
+  stops while the phone sleeps). So a wake-up, and the app coming on screen,
+  ask the link to reconnect now: a backoff wait ends at once, and a link that
+  heard nothing from the relay for over 35 s (wall clock) is dropped and
+  dialled again. Unconfirmed sends are resent as after any reconnect. The relay
+  sees the connection a moment after its push, the same timing as a user
+  opening the app. (Amended 2026-11-11: messages came 30-90 s after the
+  notification.)
 
 ### 3. Endpoint rules (the relay must not be turned into a proxy)
 - Only `https://`, at most 512 bytes.
