@@ -29,8 +29,10 @@ state is stored.
 
 ### Fallback key
 - One active fallback key on the relay.
-- When a pre-key message built on the fallback key arrives, the client generates
-  a new one (`generate_fallback_key`) and publishes it.
+- When the relay reports that the fallback key was handed out, or the key is
+  older than 7 days, the client generates a new one (`generate_fallback_key`)
+  and publishes it (changed by ADR-019: the first version of this line said
+  "when a pre-key message built on the fallback key arrives").
 - The old fallback key is forgotten (`forget_fallback_key`) **relay queue TTL + 1
   day** after the rotation (15 days by default): messages sent to it while the
   owner was offline can wait in the queue for the whole TTL. The delay is derived

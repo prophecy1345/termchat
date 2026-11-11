@@ -1,6 +1,6 @@
 # ADR-019: replayed pre-key messages and fallback key age
 
-Status: **proposed**, waiting for the maintainer. Русская версия: [019-prekey-replay.ru.md](019-prekey-replay.ru.md).
+Status: **accepted** (maintainer, 2026-11-11). Русская версия: [019-prekey-replay.ru.md](019-prekey-replay.ru.md).
 
 ## Context
 
@@ -68,9 +68,11 @@ An id is the 43 characters vodozemac returns. 10 000 of them add about
 0.5 MB to the state file at most; a normal account holds a few dozen.
 
 ### 3. The fallback key also rotates by age
-The client notes when it published the current fallback key. On `KeyCount`
-it replaces the key if the relay says it was used (as today) **or** if it is
-older than 7 days.
+The client notes when it made the current fallback key. It replaces the key
+if the relay's `KeyCount` says it was used (as today) **or** if it is older
+than 7 days. The age is checked on every `KeyCount` and also on the client's
+own timer while it is connected: the relay chooses when to send `KeyCount`,
+so the check must not wait for one.
 
 vodozemac keeps one previous fallback key, and ADR-002 keeps it for the queue
 TTL plus a day (15 days). A new rotation waits for that. So in practice a key
@@ -127,7 +129,7 @@ call a vodozemac function twice for the same input, and calls
 - A fallback key older than 7 days is replaced with `fallback_used = false`;
   no second rotation happens while a previous key is still kept.
 
-## Documents to update on acceptance
+## Documents updated
 
 `docs/protocol.md` sections 4 and 7, ADR-002 (fallback key), and the threat
 model (item 5, and the note on the start of a session).

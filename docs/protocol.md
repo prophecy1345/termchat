@@ -81,7 +81,8 @@ R -> C  KeyCount { one_time_left: u32, fallback_used: bool }
 - `KeyCount` arrives right after `AuthOk`, in reply to `PublishKeys`, and to the
   key owner (if online) when someone claims one of their keys.
 - `fallback_used = true`: the relay handed out the fallback key; the client
-  rotates it (ADR-002).
+  rotates it (ADR-002). The client also rotates a fallback key older than 7
+  days on its own clock, whatever the relay reports (ADR-019).
 - An error on `ClaimKey` comes with `client_id: None`; the client claims keys one
   at a time.
 - Past the limit on `ClaimKey` towards one target, the relay hands out only the
@@ -185,6 +186,13 @@ Checks on receipt:
    `identity.curve25519` equals the Curve25519 key in the message, and the
    `identity` signature is valid. Such a sender goes to "requests".
 4. Anything else is dropped.
+5. A pre-key message never builds the same session twice (ADR-019). One whose
+   session id belongs to a session the contact already has, and which that
+   session cannot decrypt, is dropped. So is one whose session id is in the
+   list of inbound sessions this identity has built. The list holds at most
+   200 ids per sender and 10 000 in all, and an id goes when the fallback key
+   it could have used is forgotten. Without this, a pre-key message sent to a
+   fallback key, which stays in the account, could be delivered and read again.
 
 The nickname is the only thing a contact learns about a person. It travels only
 here, inside the ciphertext: up to 64 bytes of UTF-8, not empty, no control

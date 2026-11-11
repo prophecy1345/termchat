@@ -40,7 +40,8 @@ messages, or "who wrote to whom" beyond the queue.
 4. **A long-term key leak:** the Double Ratchet gives forward secrecy (old
    messages stay unreadable) and post-compromise security (the session heals).
 5. **Forged, replayed or reordered messages:** authenticated encryption and the
-   Olm ratchet state.
+   Olm ratchet state; a session is never built twice from the same first
+   message (ADR-019).
 6. **Registering under someone else's key:** the relay demands a signature over
    a nonce with the Ed25519 key.
 7. **Spam:** a stranger's first message lands in "requests". The relay rate-limits
@@ -72,7 +73,10 @@ messages, or "who wrote to whom" beyond the queue.
   - Incognito is opt-in per contact; the main identity's contacts stay visible
     to the relay as one circle. Sealed sender is not planned (ADR-014, section 5).
 - **The start of a new session.** An Olm pre-key message is longer than a normal
-  one; the relay can notice.
+  one; the relay can notice. The relay also chooses whether a new session
+  starts on a one-time key or on the fallback key. On the fallback key, the
+  messages sent before the first reply depend on a key that lives about 30
+  days (ADR-019), so a leak of that key within that time exposes them.
 - **Physical access to an unlocked device.** Auto-lock after idle time (5
   minutes by default) and a lock key: keys and message text are wiped from
   memory and the password is needed. This is best effort: the copies termchat.app
