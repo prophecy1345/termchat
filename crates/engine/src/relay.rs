@@ -6,14 +6,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
 use termchat_proto::{
     ClientFrame, Ed25519Key, ErrorCode, Identity, ServerFrame, Signature, VERSION, VERSION_HEADER,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::http::Uri;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -25,6 +26,9 @@ const MAX_DELAY: Duration = Duration::from_secs(60);
 const IDLE: Duration = Duration::from_secs(90);
 /// First wait before a refused `Send` goes again; doubles up to `MAX_DELAY` (ADR-020).
 const RETRY_DELAY: Duration = Duration::from_secs(2);
+/// ADR-012: on a wake-up, a link that heard nothing for this long (the relay
+/// pings every 30 s) is taken for dead and dialled again.
+const STALE: Duration = Duration::from_secs(35);
 
 /// Signs the relay's challenge: `(relay_host, nonce) -> signature`.
 pub type Signer = Box<dyn Fn(&str, &[u8; 32]) -> Signature + Send + Sync>;
@@ -89,6 +93,7 @@ pub fn bridge_transport(_line: &str) -> Option<String> {
 #[derive(Clone)]
 pub struct Relay {
     tx: mpsc::UnboundedSender<ClientFrame>,
+    wake: Arc<Notify>,
 }
 
 impl Relay {
@@ -140,6 +145,7 @@ impl Relay {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (tx, rx) = mpsc::unbounded_channel();
         let (events_tx, events) = mpsc::channel(256);
+        let wake = Arc::new(Notify::new());
         let link = Link {
             url: url.to_owned(),
             host,
@@ -157,14 +163,22 @@ impl Relay {
             relay_version: None,
             delay,
             spread,
+            wake: Arc::clone(&wake),
+            heard: SystemTime::now(),
         };
         tokio::spawn(link.run(rx));
-        Ok((Self { tx }, events))
+        Ok((Self { tx, wake }, events))
     }
 
     /// Queues a frame. `Send` frames survive reconnects until the relay answers.
     pub fn send(&self, frame: ClientFrame) -> Result<(), Error> {
         self.tx.send(frame).map_err(|_| Error::Closed)
+    }
+
+    /// The app woke up or came on screen (ADR-012): stop waiting to reconnect,
+    /// and drop a connection the phone may have let die while it slept.
+    pub fn reconnect(&self) {
+        self.wake.notify_one();
     }
 }
 
@@ -201,6 +215,10 @@ struct Link {
     delay: Duration,
     /// Add 0-30 s to every reconnect.
     spread: bool,
+    wake: Arc<Notify>,
+    /// Last word from the relay, wall clock: the monotonic one stops while
+    /// the phone sleeps.
+    heard: SystemTime,
 }
 
 enum Ws {
@@ -261,8 +279,15 @@ impl Link {
             }
             // Stop waiting as soon as the app is gone (e.g. locked): the signer
             // holds the keys and must not outlive it.
+            // A wake-up cuts the backoff short, never the spread: identities
+            // must not come back together (ADR-014).
             tokio::select! {
-                _ = tokio::time::sleep(jitter(delay) + self.spread_delay()) => {}
+                _ = tokio::time::sleep(jitter(delay)) => {}
+                () = self.wake.notified() => {}
+                _ = self.events.closed() => return,
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(self.spread_delay()) => {}
                 _ = self.events.closed() => return,
             }
             delay = (delay * 2).min(MAX_DELAY);
@@ -357,9 +382,17 @@ impl Link {
                 return End::Lost(true);
             }
         }
+        self.heard = SystemTime::now();
+        let wake = Arc::clone(&self.wake);
         loop {
             let due = self.retry.values().filter_map(|r| r.due).min();
             tokio::select! {
+                () = wake.notified() => {
+                    let quiet = self.heard.elapsed().unwrap_or(Duration::ZERO);
+                    if quiet > STALE {
+                        return End::Lost(true);
+                    }
+                }
                 frame = out.recv() => {
                     let Some(frame) = frame else { return End::Stop };
                     let sent = match &frame {
@@ -374,7 +407,7 @@ impl Link {
                         return End::Lost(true);
                     }
                 }
-                frame = read(&mut ws) => {
+                frame = read(&mut ws, &mut self.heard) => {
                     let Some(frame) = frame else { return End::Lost(true) };
                     match self.answered(&frame) {
                         Answer::Other => {}
@@ -468,7 +501,7 @@ impl Link {
         ws: &mut WebSocketStream<S>,
     ) -> Option<()> {
         write(ws, &ClientFrame::Hello { version: VERSION }).await?;
-        let ServerFrame::Challenge { nonce } = read(ws).await? else {
+        let ServerFrame::Challenge { nonce } = read(ws, &mut SystemTime::now()).await? else {
             return None;
         };
         let signature = (self.sign)(&self.host, &nonce);
@@ -480,7 +513,7 @@ impl Link {
             },
         )
         .await?;
-        match read(ws).await? {
+        match read(ws, &mut SystemTime::now()).await? {
             ServerFrame::AuthOk => Some(()),
             _ => None,
         }
@@ -503,12 +536,15 @@ async fn write<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 /// Next frame; `None` on close, error, garbage or silence longer than `IDLE`.
-/// Pings are answered by tungstenite itself while reading.
+/// Pings are answered by tungstenite itself while reading; any of them sets `heard`.
 async fn read<S: AsyncRead + AsyncWrite + Unpin>(
     ws: &mut WebSocketStream<S>,
+    heard: &mut SystemTime,
 ) -> Option<ServerFrame> {
     loop {
-        match tokio::time::timeout(IDLE, ws.next()).await.ok()?? {
+        let msg = tokio::time::timeout(IDLE, ws.next()).await.ok()??;
+        *heard = SystemTime::now();
+        match msg {
             Ok(Message::Binary(bytes)) => return ServerFrame::decode(&bytes).ok(),
             Ok(Message::Ping(_) | Message::Pong(_)) => {}
             _ => return None,

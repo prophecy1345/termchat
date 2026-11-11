@@ -1287,6 +1287,11 @@ impl Engine {
 
     /// Timers: disappearing messages, the rotated-out fallback key, a wipe
     /// waiting for the relay. Call about once a second.
+    /// The app woke up or came on screen: every link checks itself now (ADR-012).
+    pub fn reconnect(&self) {
+        self.lives.iter().for_each(|l| l.relay.reconnect());
+    }
+
     pub fn tick(&mut self) {
         self.expire();
         self.rotate_aged_fallbacks();

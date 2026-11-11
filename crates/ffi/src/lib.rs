@@ -330,6 +330,11 @@ impl Account {
         self.lock().toggle_tor()
     }
 
+    /// A push wake-up, or the app on screen again (ADR-012).
+    pub fn reconnect(&self) {
+        self.lock().reconnect();
+    }
+
     pub fn connected(&self) -> bool {
         self.lock().connected
     }

@@ -254,6 +254,33 @@ async fn reconnects_when_relay_comes_up_later() {
     alice.connected().await;
 }
 
+#[tokio::test]
+async fn a_wake_up_cuts_the_reconnect_wait_short() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    let url = format!("ws://{addr}/");
+    let (a, _) = pair();
+    let mut alice = Peer::new(&url, a);
+
+    // Four failures in: the link now waits 4-8 s before the next try.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let listener = TcpListener::bind(addr).await.unwrap();
+    let config = Config {
+        hosts: vec!["127.0.0.1".into()],
+        trust_proxy: false,
+        db: None,
+        reports: None,
+        limits: Limits::default(),
+    };
+    tokio::spawn(termchat_relay::serve(listener, None, config));
+    alice.relay.reconnect();
+    let connected = async { while alice.next().await != Event::Connected {} };
+    tokio::time::timeout(Duration::from_secs(1), connected)
+        .await
+        .expect("still waiting after the wake-up");
+}
+
 /// Raw WebSocket client, to speak to the relay without the honest transport.
 type Raw =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

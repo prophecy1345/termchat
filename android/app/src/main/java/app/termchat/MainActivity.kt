@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.visible = true
+        model.account?.reconnect()
     }
 }
 

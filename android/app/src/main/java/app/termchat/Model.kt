@@ -92,8 +92,10 @@ class Model(private val context: Context) : Listener {
         for (instance in a.pushInstances()) UnifiedPush.register(context, instance)
     }
 
-    /** A wake-up from the push server: a message waits on the relay. */
+    /** A wake-up from the push server: a message waits on the relay. An unlocked
+     *  account's link may have died while the phone slept: it checks now (ADR-012). */
     fun woken() {
+        account?.reconnect()
         if (account == null || !visible) {
             context.getSystemService(android.app.NotificationManager::class.java)
                 .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
