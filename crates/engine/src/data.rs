@@ -127,6 +127,21 @@ pub struct Msg {
     pub file: Option<FileMsg>,
 }
 
+/// What was said is wiped when a message goes: on lock, when its timer runs
+/// out, and with every copy made to save it.
+impl Drop for Msg {
+    fn drop(&mut self) {
+        self.text.zeroize();
+    }
+}
+
+impl Drop for FileMsg {
+    fn drop(&mut self) {
+        self.name.zeroize();
+        self.data.zeroize();
+    }
+}
+
 /// A document in a chat (ADR-017).
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct FileMsg {
@@ -218,7 +233,7 @@ impl Data {
                 f.done += 1;
                 return f.complete();
             }
-            let broken = c.messages.remove(m).text;
+            let broken = std::mem::take(&mut c.messages.remove(m).text);
             c.messages
                 .push(note(format!("{broken} did not arrive whole")));
         }
@@ -351,7 +366,7 @@ impl Data {
     pub fn to_json(
         &self,
         states: &[Zeroizing<String>],
-    ) -> Result<Zeroizing<String>, serde_json::Error> {
+    ) -> Result<Zeroizing<String>, termchat_core::Error> {
         let mut copy = self.clone();
         for c in copy.contacts.iter_mut().filter(|c| c.no_history) {
             c.messages.clear();
@@ -360,7 +375,7 @@ impl Data {
         for (p, state) in copy.profiles.iter_mut().zip(states) {
             p.state.clone_from(state);
         }
-        let json = serde_json::to_string(&copy).map(Zeroizing::new);
+        let json = termchat_core::to_json(&copy).and_then(termchat_core::json_string);
         copy.profiles.iter_mut().for_each(|p| p.state.zeroize());
         json
     }

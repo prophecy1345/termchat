@@ -74,9 +74,12 @@ messages, or "who wrote to whom" beyond the queue.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice.
 - **Physical access to an unlocked device.** Auto-lock after idle time (5
-  minutes by default) and a lock key: keys are wiped from memory and the
-  password is needed. Disappearing messages and "no history" chats limit what
-  can be read. No help if the device is taken within those minutes.
+  minutes by default) and a lock key: keys and message text are wiped from
+  memory and the password is needed. This is best effort: the copies termchat.app
+  holds itself are wiped, but libraries (JSON, vodozemac's serialization, the
+  interface toolkit, the terminal) make short-lived copies of their own that
+  are freed without being wiped. Disappearing messages and "no history" chats
+  limit what can be read. No help if the device is taken within those minutes.
 - **A relay that drops messages.** It cannot be prevented, but it is noticed:
   messages carry a sequence number inside the ciphertext, and a gap shows as
   "messages missing". Moving to another relay takes a new invite.

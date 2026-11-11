@@ -751,15 +751,16 @@ mod tests {
                 msg(false, "hi there", Status::Received),
                 msg(true, "hello", Status::Sent),
                 msg(false, "request accepted", Status::System),
-                termchat_engine::data::Msg {
-                    file: Some(termchat_engine::data::FileMsg {
+                {
+                    let mut m = msg(false, "notes.txt", Status::Received);
+                    m.file = Some(termchat_engine::data::FileMsg {
                         name: "notes.txt".into(),
                         size: 5,
                         done: 1,
                         data: Some(b"hello".to_vec()),
                         ..Default::default()
-                    }),
-                    ..msg(false, "notes.txt", Status::Received)
+                    });
+                    m
                 },
             ],
             ..Contact::default()

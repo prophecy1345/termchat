@@ -354,10 +354,7 @@ impl Client {
     /// The crypto state alone, unencrypted: an extra identity kept inside the
     /// app data of the main one, which is sealed with it (ADR-014).
     pub fn export(&self) -> Result<Zeroizing<String>, Error> {
-        let json = self.state_json("")?;
-        String::from_utf8(json.to_vec())
-            .map(Zeroizing::new)
-            .map_err(|_| Error::CorruptState)
+        json_string(self.state_json("")?)
     }
 
     pub fn import(json: &str) -> Result<Self, Error> {
@@ -388,9 +385,7 @@ impl Client {
                 })
                 .collect(),
         };
-        serde_json::to_vec(&state)
-            .map(Zeroizing::new)
-            .map_err(|_| Error::CorruptState)
+        to_json(&state)
     }
 
     /// Returns the client, the key to save it again, and the app data.
@@ -509,6 +504,46 @@ struct State {
     contacts: Vec<ContactState>,
 }
 
+/// JSON of `value` in a buffer that is wiped whenever it is outgrown, and when
+/// dropped. `serde_json::to_vec` grows a plain `Vec`, which leaves shorter
+/// copies of the keys and the history behind in freed memory.
+pub fn to_json<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let mut out = Wiped(Zeroizing::new(Vec::with_capacity(4096)));
+    serde_json::to_writer(&mut out, value).map_err(|_| Error::CorruptState)?;
+    Ok(out.0)
+}
+
+/// The same bytes as text, without another copy.
+pub fn json_string(mut json: Zeroizing<Vec<u8>>) -> Result<Zeroizing<String>, Error> {
+    String::from_utf8(std::mem::take(&mut *json))
+        .map(Zeroizing::new)
+        .map_err(|e| {
+            Zeroizing::new(e.into_bytes());
+            Error::CorruptState
+        })
+}
+
+/// A byte buffer in memory, nothing more: no file, no network (rule 11).
+struct Wiped(Zeroizing<Vec<u8>>);
+
+impl std::io::Write for Wiped {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let need = self.0.len() + bytes.len();
+        if need > self.0.capacity() {
+            let mut bigger = Zeroizing::new(Vec::with_capacity(need.max(self.0.capacity() * 2)));
+            bigger.extend_from_slice(&self.0);
+            // The outgrown buffer is wiped here, as it is dropped.
+            self.0 = bigger;
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Detects dropped and duplicated messages (protocol.md, section 7).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SeqTracker {
@@ -614,6 +649,21 @@ fn verify_message(signer: &Ed25519Key, msg: &[u8], sig: &Signature) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wiped_json_equals_serde_json_across_many_growths() {
+        let value: Vec<String> = (0..5000).map(|n| format!("line {n} \"quoted\"")).collect();
+        let json = to_json(&value).unwrap();
+        assert!(
+            json.len() > 16 * 4096,
+            "outgrew the first buffer many times"
+        );
+        assert_eq!(*json, serde_json::to_vec(&value).unwrap());
+        assert_eq!(
+            json_string(json).unwrap().as_str(),
+            serde_json::to_string(&value).unwrap()
+        );
+    }
 
     #[test]
     fn seq_tracker_gaps_duplicates_and_cap() {
