@@ -1,0 +1,1 @@
+Security fixes: a relay can no longer deliver a message a second time, the fallback key is replaced every 7 days on the phone's own clock, received documents are saved under safe names, and message text is wiped from memory on lock.

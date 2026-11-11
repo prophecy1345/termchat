@@ -847,7 +847,8 @@ mod tests {
                 "Type WIPE or MOVED",
             ),
             (Dialog::WipeAnyway("offline".into()), "Wipe without telling"),
-            (Dialog::News, "0.5.0"),
+            // The newest heading: older ones may be scrolled out of sight.
+            (Dialog::News, env!("CARGO_PKG_VERSION")),
         ];
         for (d, want) in dialogs {
             chat.dialog = Some(d);

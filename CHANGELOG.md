@@ -3,6 +3,26 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.2
+
+Fixes from a source review of the code (not an independent audit; the
+findings are in `docs/security/review-2026-11.md`).
+
+- A relay can no longer deliver a message a second time. This was possible
+  for messages written before the other side's first reply, when the session
+  had started on the fallback key (ADR-019).
+- The fallback key is now replaced after 7 days on your device's own clock,
+  whatever the relay reports (ADR-019).
+- A received document is saved under a safe name: never as a hidden file, and
+  on Windows never as a device or a stream of another file.
+- Message text and document bytes are wiped from memory when the app locks or
+  a message disappears.
+- The client refuses relay frames larger than the protocol allows.
+- A backup's temporary file is never written through a link someone planted.
+- Relay: a queue is delivered in pages, so a client that logs in and does not
+  read cannot make the relay hold whole queues in memory; push wake-ups in
+  flight are capped. Operators should update.
+
 ## 0.5.1
 
 - The desktop app shows What's new formatted (headings, lists, bold, code)
