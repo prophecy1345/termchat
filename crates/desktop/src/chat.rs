@@ -438,17 +438,46 @@ impl Chat {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let button = crate::synth::button(ui, p, "SEND", egui::vec2(84.0, 28.0));
-                let field = ui.add_sized(
-                    [ui.available_width(), 28.0],
-                    egui::TextEdit::singleline(&mut self.input)
-                        .hint_text("Encrypted message")
-                        .font(egui::TextStyle::Monospace),
-                );
-                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let id = ui.make_persistent_id("composer");
+                let focused = ui.memory(|m| m.has_focus(id));
+                // Enter sends; Shift+Enter breaks the line.
+                let enter = focused
+                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
                 send = button.clicked() || enter;
-                if enter {
-                    field.request_focus();
-                }
+                // Three lines on view, wrapped; the rest scrolls inside the frame.
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let rows = ui
+                    .fonts_mut(|f| f.layout_no_wrap("x\nx\nx".into(), font, Color32::WHITE))
+                    .size()
+                    .y;
+                let v = ui.visuals();
+                let stroke = match focused {
+                    true => v.selection.stroke,
+                    false => v.widgets.noninteractive.bg_stroke,
+                };
+                egui::Frame::new()
+                    .fill(v.extreme_bg_color)
+                    .stroke(stroke)
+                    .corner_radius(4)
+                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(rows)
+                            .min_scrolled_height(rows)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.input)
+                                        .id(id)
+                                        .frame(egui::Frame::NONE)
+                                        .margin(egui::Margin::ZERO)
+                                        .min_size(egui::vec2(0.0, rows))
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text("Encrypted message")
+                                        .font(egui::TextStyle::Monospace),
+                                )
+                            });
+                    });
             });
         });
         if !send || self.input.trim().is_empty() {
