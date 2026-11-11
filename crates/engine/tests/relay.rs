@@ -886,3 +886,34 @@ async fn transport_refuses_plain_ws_across_a_network() {
         "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/"
     ));
 }
+
+#[tokio::test]
+async fn a_long_queue_arrives_once_and_in_order() {
+    // More than the relay reads from its queue at a time (32).
+    const N: u64 = 80;
+    let limits = Limits {
+        sends_per_key: Rate::per(1000.0, 1.0),
+        stranger_queue_envelopes: 1000,
+        ..Limits::default()
+    };
+    let url = start_relay(limits).await;
+    let (a, b) = pair();
+    let mut bob = Peer::new(&url, Arc::clone(&b));
+    bob.connected().await;
+    bob.publish_keys().await;
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    let bob_key = bob.key();
+    alice.start_session(bob_key).await;
+    drop(bob);
+    for id in 0..N {
+        alice.send_text(bob_key, id, &id.to_string()).await;
+    }
+    let mut bob = Peer::new(&url, b);
+    for id in 0..N {
+        assert_eq!(bob.recv_text(true).await, id.to_string());
+    }
+    // Live again after the queue, and nothing from it comes twice.
+    alice.send_text(bob_key, N, "live").await;
+    assert_eq!(bob.recv_text(true).await, "live");
+}

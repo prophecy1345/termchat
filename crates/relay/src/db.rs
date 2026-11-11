@@ -243,11 +243,25 @@ impl Db {
         Ok(self.conn.last_insert_rowid() as u64)
     }
 
+    /// The whole queue; the relay itself reads it in pages (`queued_after`).
     pub fn queued(&self, recipient: &Ed25519Key) -> Result<Vec<Queued>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, sender, envelope FROM queue WHERE recipient = ? ORDER BY id")?;
-        let rows = stmt.query_map([recipient], |r| {
+        Ok(self.queued_after(recipient, 0, usize::MAX)?.0)
+    }
+
+    /// Up to `limit` envelopes with an id above `after`, oldest first, and the
+    /// id to continue from. A whole queue is 10 MiB: a connection holds one
+    /// page of it at a time, not all of it.
+    pub fn queued_after(
+        &self,
+        recipient: &Ed25519Key,
+        after: u64,
+        limit: usize,
+    ) -> Result<(Vec<Queued>, u64)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, sender, envelope FROM queue WHERE recipient = ? AND id > ? ORDER BY id LIMIT ?",
+        )?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![recipient, after as i64, limit], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, [u8; 32]>(1)?,
@@ -255,8 +269,10 @@ impl Db {
             ))
         })?;
         let mut out = Vec::new();
+        let mut last = after;
         for row in rows {
             let (id, sender, bytes) = row?;
+            last = id as u64;
             // Written by us, so it decodes; skip rather than fail if the file was tampered with.
             if let Ok(envelope) = Envelope::decode(&bytes) {
                 out.push(Queued {
@@ -266,7 +282,7 @@ impl Db {
                 });
             }
         }
-        Ok(out)
+        Ok((out, last))
     }
 
     /// Deletes a delivered envelope; only its recipient may do that.
@@ -401,6 +417,30 @@ mod tests {
         for ext in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{ext}", path.display()));
         }
+    }
+
+    #[test]
+    fn the_queue_reads_in_pages() {
+        let mut db = Db::open(None).unwrap();
+        db.register(&[2; 32], 0).unwrap();
+        db.register(&[3; 32], 0).unwrap();
+        for _ in 0..5 {
+            db.enqueue(&[2; 32], &[1; 32], &env(2), 0).unwrap();
+            db.enqueue(&[3; 32], &[1; 32], &env(3), 0).unwrap();
+        }
+        let (mut seen, mut after) = (Vec::new(), 0);
+        loop {
+            let (page, last) = db.queued_after(&[2; 32], after, 2).unwrap();
+            assert!(page.len() <= 2);
+            if page.is_empty() {
+                break;
+            }
+            assert_eq!(last, page[page.len() - 1].id);
+            seen.extend(page.iter().map(|q| q.id));
+            after = last;
+        }
+        let all: Vec<u64> = db.queued(&[2; 32]).unwrap().iter().map(|q| q.id).collect();
+        assert_eq!((seen.len(), &seen), (5, &all), "every envelope once, in order");
     }
 
     #[test]

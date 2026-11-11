@@ -404,8 +404,8 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
             None
         }
     };
-    if let Some((key, id, rx, queued)) = session {
-        if let Err(code) = serve_client(&shared, &mut ws, key, rx, queued).await {
+    if let Some((key, id, rx)) = session {
+        if let Err(code) = serve_client(&shared, &mut ws, key, rx).await {
             let _ = send(&mut ws, &error(None, code), timeout).await;
         }
         let mut relay = shared.lock();
@@ -427,13 +427,8 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
     }
 }
 
-/// The key, the connection id, live frames, and the queue to deliver first.
-type Session = (
-    Ed25519Key,
-    u64,
-    mpsc::Receiver<ServerFrame>,
-    Vec<ServerFrame>,
-);
+/// The key, the connection id and live frames.
+type Session = (Ed25519Key, u64, mpsc::Receiver<ServerFrame>);
 
 async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Session, ErrorCode> {
     let timeout = shared.config.limits.send_timeout;
@@ -462,7 +457,7 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
     let key = identity.ed25519;
 
     let (tx, rx) = mpsc::channel(256);
-    let (id, queued) = {
+    let id = {
         let mut relay = shared.lock();
         let now = Instant::now();
         let limits = &shared.config.limits;
@@ -485,35 +480,45 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
         let id = relay.next_conn;
         // A newer connection replaces the old one; the old loop ends when its sender drops.
         relay.online.insert(key, (id, tx));
-        let mut frames: Vec<ServerFrame> = db(relay.db.queued(&key))?
-            .into_iter()
-            .map(|q| ServerFrame::Deliver {
-                relay_id: q.id,
-                sender: q.sender,
-                envelope: q.envelope,
-            })
-            .collect();
-        frames.push(key_count(&relay.db, &key)?);
-        (id, frames)
+        id
     };
 
     send(ws, &ServerFrame::AuthOk, timeout).await?;
-    Ok((key, id, rx, queued))
+    Ok((key, id, rx))
 }
+
+/// Envelopes read from the queue at once: a connection that logs in and then
+/// does not read must not pin a whole queue (10 MiB) in memory.
+const QUEUE_PAGE: usize = 32;
 
 async fn serve_client(
     shared: &Shared,
     ws: &mut WebSocket,
     key: Ed25519Key,
     mut rx: mpsc::Receiver<ServerFrame>,
-    queued: Vec<ServerFrame>,
 ) -> Result<(), ErrorCode> {
     let limits = &shared.config.limits;
     // Outside the auth timeout: a full queue over Tor takes longer than that,
     // and cutting it off there would lock a slow client out for good.
-    for frame in &queued {
-        send(ws, frame, limits.send_timeout).await?;
+    // Page by page: the next one is read once this one is written out.
+    let mut sent_up_to = 0;
+    loop {
+        let (page, last) = db(shared.lock().db.queued_after(&key, sent_up_to, QUEUE_PAGE))?;
+        if page.is_empty() {
+            break;
+        }
+        sent_up_to = last;
+        for q in page {
+            let frame = ServerFrame::Deliver {
+                relay_id: q.id,
+                sender: q.sender,
+                envelope: q.envelope,
+            };
+            send(ws, &frame, limits.send_timeout).await?;
+        }
     }
+    let count = key_count(&shared.lock().db, &key)?;
+    send(ws, &count, limits.send_timeout).await?;
     let mut ping = tokio::time::interval(limits.ping_interval);
     let mut last_seen = Instant::now();
     loop {
@@ -533,6 +538,8 @@ async fn serve_client(
                 }
             }
             frame = rx.recv() => match frame {
+                // Queued while the pages above went out, and sent with them.
+                Some(ServerFrame::Deliver { relay_id, .. }) if relay_id <= sent_up_to => {}
                 Some(frame) => send(ws, &frame, limits.send_timeout).await?,
                 None => return Ok(()),
             },
