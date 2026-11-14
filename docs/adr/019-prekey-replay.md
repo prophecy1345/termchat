@@ -61,6 +61,12 @@ the ids of the inbound sessions it created.
 - At most 200 entries per sender and 10 000 in all; the oldest of that sender
   (then the oldest overall) is dropped first. A sender who starts hundreds of
   sessions only weakens the protection of its own old messages.
+  (Amended 2026-11-14 after the second source review: "sender" is the
+  Curve25519 key inside the pre-key message, which Olm vouches for, not the
+  Ed25519 key the relay names. Counted by the relay's word, the relay could
+  start 200 sessions of its own under someone's name, push out that
+  contact's entries, and deliver their old contact request once more. The
+  10 000 cap overall can still be filled by whoever reaches the fallback key.)
 - The list is part of the identity's state: it is saved with it, and a backup
   carries it, since a backup carries the fallback keys too.
 
