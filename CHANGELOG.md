@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.6.1
+
+- Android: the first message after the phone has slept arrives within
+  a second or two of its notification, not 10-15 s later under Tor. The
+  relay keeps the sleeping phone's connection open and wakes the phone
+  with a push; the app reads the message already waiting on that
+  connection instead of connecting again (ADR-012). Operators should
+  update the relay; with an older relay the app waits 5 s more.
+- Android: the "New message" notification goes away when you come back to
+  the unlocked app, also when the chat was already open.
+
 ## 0.6.0
 
 - **Choose when the app locks itself** (ADR-021): after 1, 5, 15 or 30
