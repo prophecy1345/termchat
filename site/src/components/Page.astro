@@ -51,6 +51,7 @@ const ld = {
         <a href="#desktop">{t.nav.desktop}</a>
         <a href="#protection">{t.nav.protection}</a>
         <a href="#install">{t.nav.install}</a>
+        <a href={url(`${p}/blog/`)}>{t.nav.blog}</a>
         <a href={REPO}>GitHub</a>
         <a class="lang" href={url(t.other.href)} hreflang={t.other.href === "/" ? "en" : "ru"}>{t.other.label}</a>
       </nav>
@@ -221,6 +222,7 @@ const ld = {
         <a href={url(`${p}/faq/`)}>{t.footer.faq}</a> ·
         <a href={url(`${p}/self-host/`)}>{t.relayLink}</a> ·
         <a href={url(`${p}/threat-model/`)}>{t.footer.threatModel}</a> ·
+        <a href={url(`${p}/blog/`)}>{t.nav.blog}</a> ·
         <a href={url(`${p}/changelog/`)}>{t.footer.changelog}</a> ·
         <a href={url("/rss.xml")}>RSS</a> ·
         <a href={url(`${p}/privacy/`)}>{t.footer.privacy}</a> ·
