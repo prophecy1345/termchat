@@ -1,6 +1,6 @@
 # ADR-012: waking the Android app for new messages
 
-Status: **accepted** (maintainer, 2026-10-17; section 2 amended the same day and on 2026-11-11). Русская версия: [012-push.ru.md](012-push.ru.md).
+Status: **accepted** (maintainer, 2026-10-17; section 2 amended the same day, on 2026-11-11 and twice on 2026-11-14). Русская версия: [012-push.ru.md](012-push.ru.md).
 
 ## Context
 
@@ -62,6 +62,33 @@ ntfy.sh). The app gets an endpoint URL from it.
   addressed to (its UnifiedPush instance) and dials again, unless a new
   connection came up since. The other identities stay as they are
   (ADR-014). The 35-second check remains for the app coming on screen.
+- **The sleeping link** (amended 2026-11-14, replaces the rule above).
+  In deep sleep Android stops the processor: the phone's kernel still takes
+  in and acknowledges the relay's pings, but the app answers none of them.
+  The relay closed such a connection after 60 s of silence, so the next
+  message needed a push and a new connection. Under Tor that is a new onion
+  circuit, 10-15 s; measured on a Pixel 9: deep sleep at 14:43:52, closed at
+  14:45:02. Now:
+  - The relay holds a silent connection for up to an hour, not 60 s, and
+    keeps pinging it. Messages go into it as for any connection; they leave
+    the queue only when the client acknowledges them, as before (ADR-007).
+  - A connection that did not answer a ping by the next one (30 s later)
+    counts as asleep. A message for it goes into the connection **and** sends a push,
+    with the same 30-second gap as before. A connection that answers gets no
+    push, and neither does a client without an endpoint.
+  - The app, woken by the push, finds the message already in its socket and
+    reads it: no new connection. To be sure the link lives, it sends a ping;
+    if nothing comes from the relay within 5 s, it drops the link and dials
+    again, as before. Coming on screen does the same after 35 s of silence,
+    instead of dropping the link outright.
+  - A new connection of the same identity still replaces the old one, so the
+    relay holds at most one per identity; the limits on connections per IP
+    and over Tor do not change.
+  - Metadata: the relay already saw when a phone went quiet (the connection
+    dropped); now it sees missed pings instead. The push server gets the same
+    wake-ups as before: one per message burst while the phone sleeps.
+  - The terminal and desktop clients change nothing; the relay only holds a
+    dead connection of theirs longer before it notices.
 
 ### 3. Endpoint rules (the relay must not be turned into a proxy)
 - Only `https://`, at most 512 bytes.
