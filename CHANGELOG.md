@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.6
+
+- Android: a message no longer waits on the relay after its notification.
+  The relay had closed the connection, but the phone did not hear it and
+  kept waiting on it; the message came only with the next one. A wake-up
+  now always connects again (ADR-012).
+- Android: with "stay connected" on, coming back to the app no longer asks
+  for the password within seconds when the screen was not touched first.
+- Android: the app no longer crashes when it locks with a chat open. The
+  crash, too, ended in the password prompt.
+
 ## 0.5.5
 
 - Desktop: SEND sits above File and the timer and is as wide as the two;

@@ -1,1 +1,0 @@
-Desktop layout fixes only; the Android app is unchanged since 0.5.4.
