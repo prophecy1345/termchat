@@ -1,7 +1,7 @@
 # AI-assisted security review, November 2026 (second pass)
 
-Status: findings 1, 3, 4, 5 and 7 fixed, 2 partly fixed, 6, 8 and 9 open
-(see "Fixes" below).
+Status: findings 1 to 7 fixed, 8 partly fixed, 9 left as it is (see "Fixes"
+below).
 Reviewed commit: `d49d78f` (0.6.1). Date: 2026-11-14.
 The first pass: [review-2026-11.md](review-2026-11.md).
 
@@ -149,11 +149,11 @@ Made on the day of the review, and not looked at by anyone else yet.
 | # | State | What changed |
 |---|---|---|
 | 1 | fixed | The relay sets `max_frame_size` to the same 64 KiB; a larger frame is refused by its header |
-| 2 | partly | The idle time is checked on `onStart`, before anything shows, and a touch after the time is up locks first. Open: without "stay connected" a frozen background process still holds the keys past the chosen time |
+| 2 | fixed | The idle time is checked on `onStart`, before anything shows, and a touch after the time is up locks first. Without "stay connected" an alarm wakes the frozen app and locks it when the time is up ([ADR-022](../adr/022-review-hardening.md)); the alarm is inexact and may come some minutes late |
 | 3 | fixed | [ADR-019](../adr/019-prekey-replay.md), amended: entries are counted under the Curve25519 key Olm vouches for. The 10 000 cap overall can still be filled by whoever reaches the fallback key |
 | 4 | fixed | [ADR-004](../adr/004-tor.md), amended: an `.onion` host only through Tor; the relay field refuses onion addresses |
 | 5 | fixed | Idle time counts on both the monotonic and the wall clock, the longer one wins; input after the time is up locks instead of resetting it |
-| 6 | open | Notes only; nothing changed |
+| 6 | fixed | ADR-022: logins limited to 30 at once, then one a minute per key; the report journal stops at 10 MiB (reports still count); the delivery channel holds 32 frames |
 | 7 | fixed | The request note is not shown |
-| 8 | open | Nothing changed |
-| 9 | open | Nothing changed |
+| 8 | partly | `caddy` pinned by digest. The SQLite advisory stays ignored until Arti allows `rusqlite` 0.41; the notes of item 10 are unchanged |
+| 9 | not changed | Only the relay can send `KeyCount`, and the relay can deny service anyway |
