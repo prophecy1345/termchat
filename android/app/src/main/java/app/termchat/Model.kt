@@ -17,8 +17,8 @@ import app.termchat.engine.Listener
 import java.io.File
 import kotlin.concurrent.thread
 
-/** Idle time before the app locks itself, as in the terminal client. */
-const val AUTOLOCK_MS = 5 * 60 * 1000L
+/** Minutes without a touch before the app locks itself; no "never" (ADR-021). */
+val LOCK_CHOICES = listOf(1, 5, 15, 30)
 
 sealed interface Screen {
     data object Start : Screen
@@ -63,6 +63,15 @@ class Model(private val context: Context) : Listener {
     /** Keep the relay connection while the app is in the background (ADR-012). */
     var stay by mutableStateOf(prefs.getBoolean("stay", false))
         private set
+    /** Minutes before the idle lock (ADR-021); plain, so the lock screen has it. */
+    var lockMinutes by mutableIntStateOf(prefs.getInt("lock", 5).coerceIn(1, 30))
+        private set
+
+    fun nextLock() {
+        val at = LOCK_CHOICES.indexOf(lockMinutes)
+        lockMinutes = LOCK_CHOICES[if (at < 0) 1 else (at + 1) % LOCK_CHOICES.size]
+        prefs.edit().putInt("lock", lockMinutes).apply()
+    }
 
     /** The UnifiedPush endpoint the relay should wake (ADR-012); kept for the next unlock. */
     var push by mutableStateOf(prefs.getString("push", null))
@@ -185,10 +194,10 @@ class Model(private val context: Context) : Listener {
     /** After the user changed something: the engine only reports the relay's changes. */
     fun changed() { version++ }
 
-    /** Five minutes without a touch lock it, on screen or in the background (ADR-011),
+    /** [lockMinutes] without a touch lock it, on screen or in the background (ADR-011, ADR-021),
      *  unless it is in the background and the user asked to stay connected (ADR-012). */
     fun lockIfIdle() {
-        if (account != null && (visible || !stay) && System.currentTimeMillis() - lastInput >= AUTOLOCK_MS) lock()
+        if (account != null && (visible || !stay) && System.currentTimeMillis() - lastInput >= lockMinutes * 60_000L) lock()
     }
 
     /** The state file is gone: SAF backups we know of go too (ADR-003, ADR-011). */
@@ -208,6 +217,7 @@ class Model(private val context: Context) : Listener {
         Tc.use(DEFAULT_THEME)
         notify = false
         stay = false
+        lockMinutes = 5
         // Incognito instances stay with the distributor; the relay already forgot their keys.
         if (push != null) UnifiedPush.unregister(context)
         push = null

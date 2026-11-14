@@ -14,7 +14,7 @@ use chat::{Chat, Pal};
 use eframe::egui;
 use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
 use termchat_engine::settings::{self, Settings};
-use termchat_engine::{AUTOLOCK, Engine, Setup, Unlocked, data};
+use termchat_engine::{Engine, Setup, Unlocked, data};
 use zeroize::Zeroizing;
 
 fn main() -> eframe::Result {
@@ -150,7 +150,7 @@ impl eframe::App for App {
         let Screen::Main(chat) = &mut self.screen else {
             return;
         };
-        if self.last_input.elapsed() >= AUTOLOCK {
+        if self.last_input.elapsed() >= self.settings.lock_after() {
             return self.lock();
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));

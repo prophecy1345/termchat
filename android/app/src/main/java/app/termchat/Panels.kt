@@ -263,6 +263,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             "\"termchat.app is connected\" notice, and keeps your keys in memory: " +
             "the app no longer locks itself in the background.",
     ) { m.stayOn(!m.stay) }
+    MenuRow(
+        "Lock after ${m.lockMinutes} min without a touch",
+        "Tap to change: 1, 5, 15 or 30 minutes. A longer time gives whoever " +
+            "picks up the unlocked phone more time to read.",
+    ) { m.nextLock() }
     val activity = LocalContext.current as android.app.Activity
     val startPush = {
         UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->

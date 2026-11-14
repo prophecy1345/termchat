@@ -3,6 +3,7 @@
 //! here says anything about contacts.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +24,12 @@ pub struct Settings {
     pub notify: bool,
     /// The desktop window's theme; it starts with the Android look (ADR-018).
     pub desktop_theme: String,
+    /// Minutes without input before the app locks itself (ADR-021).
+    pub lock_minutes: u64,
 }
+
+/// The lock times a user can pick, in minutes; no "never" (ADR-021).
+pub const LOCK_CHOICES: [u64; 4] = [1, 5, 15, 30];
 
 impl Default for Settings {
     fn default() -> Self {
@@ -34,6 +40,7 @@ impl Default for Settings {
             sound: true,
             notify: false,
             desktop_theme: "termchat".into(),
+            lock_minutes: 5,
         }
     }
 }
@@ -50,6 +57,18 @@ impl Settings {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default()
+    }
+
+    /// Idle time before the lock. The file is plain: a value edited outside
+    /// the choices is held to 1-30 minutes.
+    pub fn lock_after(&self) -> Duration {
+        Duration::from_secs(self.lock_minutes.clamp(1, 30) * 60)
+    }
+
+    /// The next of `LOCK_CHOICES`, round.
+    pub fn next_lock(&mut self) {
+        let at = LOCK_CHOICES.iter().position(|m| *m == self.lock_minutes);
+        self.lock_minutes = LOCK_CHOICES[at.map_or(1, |i| (i + 1) % LOCK_CHOICES.len())];
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -75,5 +94,24 @@ mod tests {
         std::fs::write(&path, b"{oops").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lock_time_stays_within_the_choices() {
+        let mut s = Settings::default();
+        assert_eq!(s.lock_after(), Duration::from_secs(300));
+        let seen: Vec<u64> = (0..4)
+            .map(|_| {
+                s.next_lock();
+                s.lock_minutes
+            })
+            .collect();
+        assert_eq!(seen, [15, 30, 1, 5]);
+        s.lock_minutes = 0;
+        assert_eq!(s.lock_after(), Duration::from_secs(60));
+        s.lock_minutes = u64::MAX;
+        assert_eq!(s.lock_after(), Duration::from_secs(30 * 60));
+        s.next_lock();
+        assert_eq!(s.lock_minutes, 5);
     }
 }

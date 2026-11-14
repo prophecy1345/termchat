@@ -15,7 +15,7 @@ use crate::input::Input;
 use crate::notify;
 use crate::settings::{self, Settings};
 use crate::ui::Hits;
-use crate::{AUTOLOCK, RelayEvent, theme};
+use crate::{RelayEvent, theme};
 use termchat_engine::notify::SOUND_GAP;
 
 const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
@@ -273,7 +273,7 @@ impl App {
     pub fn on_tick(&mut self) {
         self.toasts.retain(|t| t.until > Instant::now());
         if let Screen::Main(m) = &mut self.screen {
-            if m.last_input.elapsed() >= AUTOLOCK {
+            if m.last_input.elapsed() >= self.settings.lock_after() {
                 self.lock();
             } else {
                 m.engine.tick();
@@ -722,6 +722,13 @@ impl Main {
                     "accept requests without an invite code (old invites)",
                     !self.engine.data.invites.codes_only,
                 ),
+                row(
+                    &format!(
+                        "lock after {} min idle (longer: riskier if left open)",
+                        s.lock_minutes.clamp(1, 30)
+                    ),
+                    false,
+                ),
                 row("wipe everything from this device", false),
             ],
         }
@@ -778,6 +785,7 @@ impl Main {
                 self.engine.set_codes_only(!on);
                 return Some(Popup::Settings { tab, at });
             }
+            (3, 6) => s.next_lock(),
             (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),
             (0, _) => {
                 s.theme = theme::THEMES

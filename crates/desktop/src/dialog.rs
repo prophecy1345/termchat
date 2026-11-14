@@ -4,7 +4,7 @@
 use eframe::egui::{self, RichText};
 use termchat_core::{fingerprint, safety_number};
 use termchat_engine::engine::{clean_text, news};
-use termchat_engine::settings::Settings;
+use termchat_engine::settings::{LOCK_CHOICES, Settings};
 use termchat_engine::{data, themes};
 use zeroize::Zeroizing;
 
@@ -412,7 +412,26 @@ impl Chat {
                         ui.label("New messages");
                         ui.checkbox(&mut s.sound, "Play the system sound");
                         ui.end_row();
+                        ui.label("Lock after");
+                        egui::ComboBox::from_id_salt("lock")
+                            .width(220.0)
+                            .selected_text(format!("{} min idle", s.lock_minutes.clamp(1, 30)))
+                            .show_ui(ui, |ui| {
+                                for m in LOCK_CHOICES {
+                                    ui.selectable_value(
+                                        &mut s.lock_minutes,
+                                        m,
+                                        format!("{m} min idle"),
+                                    );
+                                }
+                            });
+                        ui.end_row();
                     });
+                hint(
+                    ui,
+                    p,
+                    "A longer time gives whoever finds this computer unlocked more time to read.",
+                );
                 section(ui, p, "Contacts");
                 let mut codes_only = self.engine.data.invites.codes_only;
                 if ui
