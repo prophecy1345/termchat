@@ -21,7 +21,7 @@ class WakeService : PushService() {
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
-        main.post { model.woken() }
+        main.post { model.woken(instance) }
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {

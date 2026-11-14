@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
@@ -94,6 +95,7 @@ pub fn bridge_transport(_line: &str) -> Option<String> {
 pub struct Relay {
     tx: mpsc::UnboundedSender<ClientFrame>,
     wake: Arc<Notify>,
+    dead: Arc<AtomicBool>,
 }
 
 impl Relay {
@@ -146,6 +148,7 @@ impl Relay {
         let (tx, rx) = mpsc::unbounded_channel();
         let (events_tx, events) = mpsc::channel(256);
         let wake = Arc::new(Notify::new());
+        let dead = Arc::new(AtomicBool::new(false));
         let link = Link {
             url: url.to_owned(),
             host,
@@ -164,10 +167,11 @@ impl Relay {
             delay,
             spread,
             wake: Arc::clone(&wake),
+            dead: Arc::clone(&dead),
             heard: SystemTime::now(),
         };
         tokio::spawn(link.run(rx));
-        Ok((Self { tx, wake }, events))
+        Ok((Self { tx, wake, dead }, events))
     }
 
     /// Queues a frame. `Send` frames survive reconnects until the relay answers.
@@ -178,6 +182,14 @@ impl Relay {
     /// The app woke up or came on screen (ADR-012): stop waiting to reconnect,
     /// and drop a connection the phone may have let die while it slept.
     pub fn reconnect(&self) {
+        self.wake.notify_one();
+    }
+
+    /// A push for this identity (ADR-012): the relay pushes only when it holds
+    /// no connection of ours, so the one we hold is dead however recent its
+    /// last ping. Dial again, unless a new connection came up meanwhile.
+    pub fn redial(&self) {
+        self.dead.store(true, Ordering::Relaxed);
         self.wake.notify_one();
     }
 }
@@ -216,6 +228,8 @@ struct Link {
     /// Add 0-30 s to every reconnect.
     spread: bool,
     wake: Arc<Notify>,
+    /// Set by `Relay::redial`: the connection held now is dead.
+    dead: Arc<AtomicBool>,
     /// Last word from the relay, wall clock: the monotonic one stops while
     /// the phone sleeps.
     heard: SystemTime,
@@ -383,13 +397,15 @@ impl Link {
             }
         }
         self.heard = SystemTime::now();
+        // A redial asked for before this connection came up is answered by it.
+        self.dead.store(false, Ordering::Relaxed);
         let wake = Arc::clone(&self.wake);
         loop {
             let due = self.retry.values().filter_map(|r| r.due).min();
             tokio::select! {
                 () = wake.notified() => {
                     let quiet = self.heard.elapsed().unwrap_or(Duration::ZERO);
-                    if quiet > STALE {
+                    if self.dead.swap(false, Ordering::Relaxed) || quiet > STALE {
                         return End::Lost(true);
                     }
                 }

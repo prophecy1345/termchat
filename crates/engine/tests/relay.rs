@@ -281,6 +281,77 @@ async fn a_wake_up_cuts_the_reconnect_wait_short() {
         .expect("still waiting after the wake-up");
 }
 
+/// A proxy to the relay whose `cut` drops the relay's side of every
+/// connection so far but keeps the client's socket open and silent: the
+/// half-open link a phone keeps after its sleep.
+async fn half_open_proxy(relay: &str) -> (String, tokio::sync::watch::Sender<u32>) {
+    let upstream = relay
+        .trim_start_matches("ws://")
+        .trim_end_matches('/')
+        .to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/", listener.local_addr().unwrap());
+    let (cut, cuts) = tokio::sync::watch::channel(0u32);
+    tokio::spawn(async move {
+        loop {
+            let (mut client, _) = listener.accept().await.unwrap();
+            let mut cuts = cuts.clone();
+            cuts.mark_unchanged();
+            let upstream = upstream.clone();
+            tokio::spawn(async move {
+                let mut relay = tokio::net::TcpStream::connect(upstream).await.unwrap();
+                tokio::select! {
+                    _ = tokio::io::copy_bidirectional(&mut client, &mut relay) => {}
+                    _ = cuts.changed() => {
+                        drop(relay);
+                        std::future::pending::<()>().await;
+                    }
+                }
+            });
+        }
+    });
+    (url, cut)
+}
+
+#[tokio::test]
+async fn a_push_redials_a_link_that_only_looks_alive() {
+    let url = start_relay(Limits::default()).await;
+    let (proxy, cut) = half_open_proxy(&url).await;
+    let (a, b) = pair();
+    let mut bob = Peer::new(&proxy, b);
+    bob.connected().await;
+    bob.publish_keys().await;
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    let bob_key = bob.key();
+    alice.start_session(bob_key).await;
+    // Alice took one of Bob's keys; the relay tells him before the cut.
+    while !matches!(
+        bob.next().await,
+        Event::Frame(ServerFrame::KeyCount {
+            one_time_left: 49,
+            ..
+        })
+    ) {}
+
+    // The relay lets Bob go; Bob's socket stays open and heard a frame just now.
+    cut.send_modify(|n| *n += 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    alice.send_text(bob_key, 1, "secret queued").await;
+
+    // Coming on screen trusts a link heard within 35 s: nothing arrives.
+    bob.relay.reconnect();
+    let early = tokio::time::timeout(Duration::from_secs(1), bob.events.recv()).await;
+    assert!(
+        early.is_err(),
+        "the on-screen check dropped a fresh-looking link: {early:?}"
+    );
+
+    // The push says the relay has no connection of Bob's: he dials again.
+    bob.relay.redial();
+    assert_eq!(bob.recv_text(true).await, "secret queued");
+}
+
 /// Raw WebSocket client, to speak to the relay without the honest transport.
 type Raw =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;

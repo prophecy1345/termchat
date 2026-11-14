@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use termchat_core::proto::Invite;
+use termchat_core::proto::{Ed25519Key, Invite};
 use termchat_engine::data::{Contact, Status};
 use termchat_engine::engine::{self, Setup, next_timer};
 use termchat_engine::{Engine, Happened, Unlocked};
@@ -330,7 +330,7 @@ impl Account {
         self.lock().toggle_tor()
     }
 
-    /// A push wake-up, or the app on screen again (ADR-012).
+    /// The app on screen again (ADR-012).
     pub fn reconnect(&self) {
         self.lock().reconnect();
     }
@@ -565,17 +565,16 @@ impl Account {
     /// The UnifiedPush endpoint of `instance`, or `None` to stop its wake-ups (ADR-012).
     pub fn set_push(&self, instance: String, endpoint: Option<String>) {
         let mut e = self.lock();
-        let who = match instance.as_str() {
-            MAIN_INSTANCE => Some(e.me()),
-            _ => e
-                .data
-                .profiles
-                .iter()
-                .find(|p| hex(&p.key) == instance)
-                .map(|p| p.key),
-        };
-        if let Some(who) = who {
+        if let Some(who) = identity_of(&e, &instance) {
             e.set_push(&who, endpoint);
+        }
+    }
+
+    /// A push for `instance`: that identity's link dials again (ADR-012).
+    pub fn woken(&self, instance: String) {
+        let e = self.lock();
+        if let Some(who) = identity_of(&e, &instance) {
+            e.woken(&who);
         }
     }
 
@@ -585,6 +584,19 @@ impl Account {
 
     pub fn news_seen(&self) {
         self.lock().news_seen();
+    }
+}
+
+/// The identity behind a UnifiedPush instance name (ADR-014).
+fn identity_of(e: &Engine, instance: &str) -> Option<Ed25519Key> {
+    match instance {
+        MAIN_INSTANCE => Some(e.me()),
+        _ => e
+            .data
+            .profiles
+            .iter()
+            .find(|p| hex(&p.key) == instance)
+            .map(|p| p.key),
     }
 }
 
