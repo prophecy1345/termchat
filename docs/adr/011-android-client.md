@@ -45,7 +45,7 @@ chose UniFFI for mobile; this ADR fixes the rest.
     apps list.
   - Text fields ask the keyboard not to learn (`IME_FLAG_NO_PERSONALIZED_LEARNING`).
 - **Lock.** Locks after 5 minutes idle and when the app has been in the
-  background for 5 minutes, like the TUI auto-lock.
+  background for 5 minutes, like the TUI auto-lock. The time is a setting since ADR-021.
 - **Notifications.** The same rule as ADR-008: "New message", with no name and
   no text, and off unless turned on.
 - **Backups.**
