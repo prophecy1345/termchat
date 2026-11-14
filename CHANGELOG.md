@@ -3,6 +3,13 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.5.7
+
+- Relay: a message to someone who had just received everything waiting
+  for them no longer stays on the relay until their next reconnect. It
+  showed as messages that went missing and arrived later, on every
+  client, since 0.5.3. Operators should update; the apps are unchanged.
+
 ## 0.5.6
 
 - Android: a message no longer waits on the relay after its notification.

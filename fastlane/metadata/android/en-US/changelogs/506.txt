@@ -1,1 +1,0 @@
-Fixes: a message no longer waits on the relay after its notification, and the app no longer asks for the password on return when it stays connected.
