@@ -31,6 +31,9 @@
             android:name=".ConnectionService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+        <receiver
+            android:name=".LockAlarm"
+            android:exported="false" />
         <service
             android:name=".WakeService"
             android:exported="false">

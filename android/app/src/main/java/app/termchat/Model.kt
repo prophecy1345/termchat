@@ -195,6 +195,11 @@ class Model(private val context: Context) : Listener {
         link()
     }
 
+    /** Into the background: without "stay connected", an alarm locks the frozen app when the time is up (ADR-022). */
+    fun armLock() {
+        if (account != null && !stay) LockAlarm.arm(context, lastInput + lockMinutes * 60_000L)
+    }
+
     /** Input. A touch after the time is up locks first: it must not undo a lock that is due. */
     fun touch() {
         lockIfIdle()

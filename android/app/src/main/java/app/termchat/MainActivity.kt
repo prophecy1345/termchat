@@ -31,10 +31,12 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         model.visible = false
+        model.armLock()
     }
 
     override fun onStart() {
         super.onStart()
+        LockAlarm.disarm(this)
         // Before anything shows or a touch can reset the time: the periodic
         // check stops while the phone sleeps. Stay connected: time in the
         // background does not count (ADR-012); otherwise it does (ADR-011).
