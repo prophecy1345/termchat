@@ -15,9 +15,9 @@ Binaries:
   https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
 
 Builds:
-  - versionName: 0.5.6
-    versionCode: 506
-    commit: acc7448b2425d9ebc8eb37f0046008965a515a24
+  - versionName: 0.5.7
+    versionCode: 507
+    commit: ab4dec8c573a6cc9139452d8d5f840cbefe2d461
     subdir: android/app
     submodules: true
     sudo:
@@ -36,5 +36,5 @@ AllowedAPKSigningKeys: 9ffb611cdd1b3aae63303fb7120b85f7670d08bdb824d67c7c8537098
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.5.6
-CurrentVersionCode: 506
+CurrentVersion: 0.5.7
+CurrentVersionCode: 507
