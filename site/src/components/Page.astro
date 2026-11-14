@@ -2,6 +2,7 @@
 import "../styles/site.css";
 import { REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
 import Cmd from "./Cmd.astro";
+import Head from "./Head.astro";
 
 interface Props {
   lang: Lang;
@@ -10,36 +11,34 @@ const t = texts[Astro.props.lang];
 // The site may live under a sub-path (GitHub Pages: /termchat/).
 const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const blob = (path: string) => `${REPO}/blob/main/${path}`;
+const p = t.lang === "en" ? "" : "/ru";
 const groups = [
   ["ok", t.protected],
   ["part", t.partly],
   ["no", t.notProtected],
 ] as const;
-const csp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'";
+// What search engines show about the app (schema.org).
+const ld = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "termchat.app",
+  url: new URL(url(t.lang === "en" ? "/" : "/ru/"), Astro.site).href,
+  description: t.description,
+  applicationCategory: "CommunicationApplication",
+  operatingSystem: "Linux, macOS, Windows, Android",
+  license: "https://www.gnu.org/licenses/agpl-3.0.html",
+  isAccessibleForFree: true,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  downloadUrl: `${REPO}/releases/latest`,
+  sameAs: [REPO],
+  inLanguage: t.lang,
+};
 ---
 
 <!doctype html>
 <html lang={t.lang}>
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content={csp} />
-    <meta name="referrer" content="no-referrer" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#11111b" />
-    <title>{t.title}</title>
-    <meta name="description" content={t.description} />
-    <link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
-    <link rel="icon" href={url("/favicon.ico")} sizes="32x32" />
-    <link rel="apple-touch-icon" href={url("/apple-touch-icon.png")} />
-    <link rel="canonical" href={new URL(url(t.lang === "en" ? "/" : "/ru/"), Astro.site)} />
-    <link rel="alternate" hreflang="en" href={new URL(url("/"), Astro.site)} />
-    <link rel="alternate" hreflang="ru" href={new URL(url("/ru/"), Astro.site)} />
-    <link rel="alternate" hreflang="x-default" href={new URL(url("/"), Astro.site)} />
-    <meta property="og:title" content={t.title} />
-    <meta property="og:description" content={t.description} />
-    <meta property="og:type" content="website" />
+    <Head lang={t.lang} title={t.title} description={t.description} en="/" ru="/ru/" ld={ld} />
   </head>
   <body>
     <canvas id="cipher" aria-hidden="true"></canvas>
@@ -62,9 +61,9 @@ const csp =
         <p class="badge">{t.status}</p>
         <div class="title">
           <img class="mark" src={url("/logo.svg")} alt="" width="112" height="112" />
-          <h1 class="glow" data-decrypt aria-label="termchat.app">termchat.app</h1>
+          <p class="name glow" data-decrypt aria-label="termchat.app">termchat.app</p>
         </div>
-        <p class="tagline">{t.tagline}</p>
+        <h1 class="tagline">{t.tagline}</h1>
         <p class="lead">{t.lead}</p>
         <div class="cta">
           <a class="button primary" href="#install">{t.cta.install}</a>
@@ -141,7 +140,7 @@ const csp =
             </article>
           ))}
         </div>
-        <p class="more"><a href={blob(t.docs.threatModel)}>{t.threatModel} →</a></p>
+        <p class="more"><a href={url(`${p}/threat-model/`)}>{t.threatModel} →</a> · <a href={url(`${p}/compare/`)}>{t.compareLink} →</a></p>
       </section>
 
       <section>
@@ -203,7 +202,7 @@ const csp =
       <section>
         <h2>{t.relayTitle}</h2>
         <p class="sub">{t.relay}</p>
-        <p class="more"><a href={blob(t.docs.selfHost)}>{t.relayLink} →</a></p>
+        <p class="more"><a href={url(`${p}/self-host/`)}>{t.relayLink} →</a></p>
       </section>
 
       <section id="sponsor">
@@ -218,7 +217,11 @@ const csp =
         <a href={blob("LICENSE")}>{t.footer.licence}</a> ·
         <a href={REPO}>GitHub</a> ·
         <a href={blob(t.docs.use)}>{t.footer.use}</a> ·
-        <a href={url(t.lang === "en" ? "/privacy/" : "/ru/privacy/")}>{t.footer.privacy}</a> ·
+        <a href={url(`${p}/compare/`)}>{t.footer.compare}</a> ·
+        <a href={url(`${p}/faq/`)}>{t.footer.faq}</a> ·
+        <a href={url(`${p}/self-host/`)}>{t.relayLink}</a> ·
+        <a href={url(`${p}/threat-model/`)}>{t.footer.threatModel}</a> ·
+        <a href={url(`${p}/privacy/`)}>{t.footer.privacy}</a> ·
         <a href={SPONSOR}>{t.footer.sponsor}</a> ·
         <a href="https://findahelpline.com">{t.footer.help}</a> ·
         <a href={url(t.other.href)}>{t.other.label}</a>

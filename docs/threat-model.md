@@ -77,8 +77,8 @@ messages, or "who wrote to whom" beyond the queue.
   starts on a one-time key or on the fallback key. On the fallback key, the
   messages sent before the first reply depend on a key that lives about 30
   days (ADR-019), so a leak of that key within that time exposes them.
-- **Physical access to an unlocked device.** Auto-lock after idle time (5
-  minutes by default) and a lock key: keys and message text are wiped from
+- **Physical access to an unlocked device.** Auto-lock after idle time (1 to
+  30 minutes, 5 by default, ADR-021) and a lock key: keys and message text are wiped from
   memory and the password is needed. This is best effort: the copies termchat.app
   holds itself are wiped, but libraries (JSON, vodozemac's serialization, the
   interface toolkit, the terminal) make short-lived copies of their own that

@@ -200,7 +200,9 @@ h2::before {
   overflow: hidden;
 }
 
-.hero h1 {
+.hero .name {
+  margin: 0;
+  font-weight: 700;
   font-size: 1em;
   letter-spacing: -0.02em;
   background: linear-gradient(180deg, var(--text) 30%, var(--mauve) 75%, var(--pink));
@@ -220,6 +222,7 @@ h2::before {
 }
 
 .tagline {
+  font-weight: 400;
   font-size: clamp(1.1rem, 2.6vw, 1.5rem);
   color: var(--pink);
   margin: 0.75rem 0 0.5rem;
@@ -671,4 +674,67 @@ footer .about {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+}
+
+/* Text pages: comparison, FAQ, documents from docs/ */
+.doc section {
+  max-width: 60rem;
+}
+
+.doc h1 {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  margin-bottom: 1.5rem;
+}
+
+.doc h2 {
+  margin: 2.5rem 0 1rem;
+}
+
+.doc h3 {
+  margin: 1.5rem 0 0.5rem;
+  color: var(--pink);
+}
+
+.doc li {
+  margin: 0.35rem 0;
+}
+
+.doc pre {
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+.doc code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+.doc .scroll {
+  overflow-x: auto;
+}
+
+.doc table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.doc th,
+.doc td {
+  border: 1px solid var(--surface0);
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc th {
+  color: var(--mauve);
+  background: var(--mantle);
+}
+
+.doc td:first-child {
+  color: var(--subtext);
 }

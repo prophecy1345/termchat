@@ -1,0 +1,14 @@
+---
+import MdDoc from "../../../components/MdDoc.astro";
+import { compiledContent } from "../../../../../docs/self-host.ru.md";
+const html = await compiledContent();
+---
+
+<MdDoc
+  lang="ru"
+  title="Свой relay для termchat.app: сервер мессенджера на своём хостинге"
+  description="Как запустить свой relay для termchat.app: один бинарник или Docker, SQLite, TLS, onion-адрес через Tor, лимиты и обновления. Ваши друзья пользуются вашим сервером."
+  en="/self-host/"
+  ru="/ru/self-host/"
+  html={html}
+/>

@@ -19,9 +19,9 @@ type Item = [title: string, text: string];
 
 const en = {
   lang: "en",
-  title: "termchat.app: private messages in your terminal, on your desktop and on Android",
+  title: "termchat.app: encrypted messenger without a phone number, for terminal, desktop and Android",
   description:
-    "An end-to-end encrypted messenger for text and documents, in the terminal, as a desktop app and on Android. No accounts, no phone numbers, optional Tor.",
+    "A free, open-source end-to-end encrypted messenger for text and documents: in the terminal, as a desktop app and on Android. No phone number, no accounts, Tor built in, run your own relay.",
   other: { href: "/ru/", label: "RU" },
   // Documents in this language, relative to the repository root.
   docs: {
@@ -31,7 +31,7 @@ const en = {
     use: "README.md#acceptable-use",
   },
   nav: { features: "Features", desktop: "Desktop", protection: "Protection", install: "Install" },
-  tagline: "Private messages, in your terminal, in a window and on your phone.",
+  tagline: "An encrypted messenger without a phone number: in your terminal, in a window and on your phone.",
   lead: "End-to-end encrypted text and documents, no accounts. You are a key pair and a nickname you choose; the server only ever sees ciphertext.",
   status: "not audited · experimental",
   cta: { install: "Install", github: "GitHub", download: "Download" },
@@ -49,7 +49,7 @@ const en = {
     ["Documents", "Send a PDF, a config or a key of up to 1 MiB, encrypted end to end like any message. Saved only when you choose, never opened by the app."],
     ["Disappearing messages", "From 5 minutes to a week, per chat. Or keep a chat in memory only, never on disk."],
     ["Duress password", "A second password that silently erases everything and shows a fresh install."],
-    ["Auto-lock", "Keys leave memory after 5 idle minutes, or at once with Ctrl+K."],
+    ["Auto-lock", "Keys leave memory after 1 to 30 idle minutes, as you choose, or at once with Ctrl+K."],
     ["Backups and moving", "Back up your identity and restore it on a new device; the old one is wiped without telling anyone."],
     ["Safety numbers", "Compare 60 digits with a friend once and rule out anyone in the middle."],
     ["Requests, not inboxes", "Strangers wait until you accept. Block, reject or report to the relay operator."],
@@ -129,6 +129,7 @@ const en = {
   relayTitle: "Run your own relay",
   relay: "The relay is one binary next to termchat.app in every release: SQLite, rate limits, an optional onion address. Your friends use your server; nobody else needs to know.",
   relayLink: "Self-hosting guide",
+  compareLink: "Compared with Signal, Session, SimpleX and Briar",
   sponsorTitle: "Support the project",
   sponsor: "termchat.app is free and stays free: no ads, no paid features, no data to sell. It is built by one person. Donations through GitHub Sponsors let me keep working on it, and pay for the public relay server, signing certificates for the apps and, some day, an independent security audit. A sponsor gets nothing extra in the app and no one is treated differently: thank you is all it buys.",
   sponsorLink: "Sponsor on GitHub",
@@ -136,6 +137,9 @@ const en = {
     licence: "AGPL-3.0",
     use: "Acceptable use",
     privacy: "Privacy",
+    compare: "Compare",
+    faq: "FAQ",
+    threatModel: "Threat model",
     sponsor: "Sponsor",
     help: "Need help now? findahelpline.com",
     note: "No cookies, no analytics, no third-party requests.",
@@ -146,9 +150,9 @@ const en = {
 
 const ru: typeof en = {
   lang: "ru",
-  title: "termchat.app: приватные сообщения в терминале, на компьютере и на Android",
+  title: "termchat.app: зашифрованный мессенджер без номера телефона для терминала, компьютера и Android",
   description:
-    "Мессенджер для текста и документов в терминале, в приложении для компьютера и на Android со сквозным шифрованием. Без аккаунтов и номеров телефона, Tor по желанию.",
+    "Бесплатный мессенджер с открытым кодом и сквозным шифрованием для текста и документов: в терминале, в приложении для компьютера и на Android. Без номера телефона и аккаунтов, Tor встроен, свой relay по желанию.",
   other: { href: "/", label: "EN" },
   docs: {
     threatModel: "docs/threat-model.ru.md",
@@ -157,7 +161,7 @@ const ru: typeof en = {
     use: "README.ru.md#правила-использования",
   },
   nav: { features: "Возможности", desktop: "Приложение", protection: "Защита", install: "Установка" },
-  tagline: "Приватная переписка в терминале, в окне и в телефоне.",
+  tagline: "Зашифрованный мессенджер без номера телефона: в терминале, в окне и в телефоне.",
   lead: "Текст и документы со сквозным шифрованием, никаких аккаунтов. Вы — это пара ключей и ник, который выбираете сами; сервер видит только шифртекст.",
   status: "без аудита · экспериментально",
   cta: { install: "Установить", github: "GitHub", download: "Скачать" },
@@ -175,7 +179,7 @@ const ru: typeof en = {
     ["Документы", "PDF, конфиг или ключ до 1 МиБ, со сквозным шифрованием, как любое сообщение. Сохраняется только по вашему решению, приложение файл не открывает."],
     ["Исчезающие сообщения", "От 5 минут до недели, для каждого чата. Или чат только в памяти, без записи на диск."],
     ["Пароль под принуждением", "Второй пароль, который молча стирает всё и показывает чистую установку."],
-    ["Автоблокировка", "Ключи уходят из памяти после 5 минут бездействия или сразу по Ctrl+K."],
+    ["Автоблокировка", "Ключи уходят из памяти после 1–30 минут бездействия, как выберете, или сразу по Ctrl+K."],
     ["Копия и переезд", "Сохраните личность и восстановите её на новом устройстве; старое стирается, никого не оповещая."],
     ["Номер безопасности", "Один раз сверьте 60 цифр с другом и исключите посредника."],
     ["Запросы, а не входящие", "Незнакомцы ждут, пока вы их примете. Блокировка, отказ, жалоба оператору relay."],
@@ -254,7 +258,8 @@ const ru: typeof en = {
   copied: "скопировано",
   relayTitle: "Свой relay",
   relay: "Relay — один бинарник рядом с termchat.app в каждом релизе: SQLite, лимиты, onion-адрес по желанию. Ваши друзья пользуются вашим сервером, больше никому знать не нужно.",
-  relayLink: "Инструкция по установке",
+  relayLink: "Свой relay: инструкция",
+  compareLink: "Сравнение с Signal, Session, SimpleX и Briar",
   sponsorTitle: "Поддержать проект",
   sponsor: "termchat.app бесплатный и останется бесплатным: без рекламы, платных функций и данных на продажу. Его делает один человек. Пожертвования через GitHub Sponsors позволяют мне продолжать над ним работать и оплачивают публичный relay, сертификаты для подписи приложений, а когда-нибудь и независимый аудит безопасности. Спонсор не получает в приложении ничего сверх остальных и ни к кому не относятся иначе: это просто спасибо.",
   sponsorLink: "Поддержать на GitHub",
@@ -262,6 +267,9 @@ const ru: typeof en = {
     licence: "AGPL-3.0",
     use: "Правила использования",
     privacy: "Конфиденциальность",
+    compare: "Сравнение",
+    faq: "Вопросы",
+    threatModel: "Модель угроз",
     sponsor: "Поддержать",
     help: "Нужна помощь? findahelpline.com",
     note: "Без cookies, аналитики и сторонних запросов.",

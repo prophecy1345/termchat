@@ -1,0 +1,14 @@
+---
+import MdDoc from "../../../components/MdDoc.astro";
+import { compiledContent } from "../../../../../docs/threat-model.ru.md";
+const html = await compiledContent();
+---
+
+<MdDoc
+  lang="ru"
+  title="Модель угроз termchat.app: от чего защищает зашифрованный мессенджер, а от чего нет"
+  description="От чего termchat.app защищает и от чего нет: содержимое сообщений, метаданные на relay, Tor, потерянное или изъятое устройство, оператор relay. Честная модель угроз мессенджера без аудита."
+  en="/threat-model/"
+  ru="/ru/threat-model/"
+  html={html}
+/>

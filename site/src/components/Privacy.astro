@@ -1,6 +1,7 @@
 ---
 import "../styles/site.css";
 import { REPO, type Lang } from "../i18n";
+import Head from "./Head.astro";
 
 // The privacy policy Google Play asks for. Keep in step with
 // docs/threat-model.md: it must not promise more than the threat model does.
@@ -10,6 +11,7 @@ interface Props {
 const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const en = {
   title: "termchat.app: privacy policy",
+  description: "What termchat.app collects (nothing about you), what stays on your device, what the relay server keeps, and how to delete your account.",
   home: "/",
   updated: "Last updated: 20 October 2026",
   sections: [
@@ -51,6 +53,7 @@ const en = {
 };
 const ru: typeof en = {
   title: "termchat.app: политика конфиденциальности",
+  description: "Что собирает termchat.app (ничего о вас), что хранится на устройстве, что держит relay-сервер и как удалить аккаунт.",
   home: "/ru/",
   updated: "Обновлено: 20 октября 2026",
   sections: [
@@ -91,20 +94,12 @@ const ru: typeof en = {
   threatModelPath: "docs/threat-model.ru.md",
 };
 const t = Astro.props.lang === "en" ? en : ru;
-const csp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'";
 ---
 
 <!doctype html>
 <html lang={Astro.props.lang}>
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content={csp} />
-    <meta name="referrer" content="no-referrer" />
-    <meta name="color-scheme" content="dark" />
-    <title>{t.title}</title>
-    <link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
+    <Head lang={Astro.props.lang} title={t.title} description={t.description} en="/privacy/" ru="/ru/privacy/" />
   </head>
   <body>
     <header class="top">

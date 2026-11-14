@@ -1,0 +1,36 @@
+---
+// A document from docs/, published as a page: one source, read on GitHub or here.
+import Doc from "./Doc.astro";
+import type { Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+  title: string;
+  description: string;
+  en: string;
+  ru: string;
+  /** The document as Astro compiled it. */
+  html: string;
+}
+const { html, ...page } = Astro.props;
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+// The document's own title becomes the page heading; links between the
+// documents point at their pages.
+const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/s)?.[1]?.replace(/<[^>]+>/g, "") ?? page.title;
+const pages: Record<string, [string, string]> = {
+  "threat-model.md": ["/threat-model/", "threat model"],
+  "threat-model.ru.md": ["/ru/threat-model/", "модель угроз"],
+  "self-host.md": ["/self-host/", "running your own relay"],
+  "self-host.ru.md": ["/ru/self-host/", "свой relay"],
+};
+const body = html
+  .replace(/<h1[^>]*>.*?<\/h1>/s, "")
+  .replace(/href="([^"#]+\.md)">([^<]*)</g, (all, file, text) => {
+    const page = pages[file];
+    return page ? `href="${url(page[0])}">${text === file ? page[1] : text}<` : all;
+  });
+---
+
+<Doc {...page} h1={h1}>
+  <div class="md" set:html={body} />
+</Doc>

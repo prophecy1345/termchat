@@ -10,4 +10,54 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/"/>
     <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/"/>
   </url>
+  <url>
+    <loc>https://termchat.app/compare/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/compare/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/compare/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/ru/compare/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/compare/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/compare/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/faq/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/faq/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/faq/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/ru/faq/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/faq/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/faq/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/self-host/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/self-host/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/self-host/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/ru/self-host/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/self-host/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/self-host/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/threat-model/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/threat-model/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/threat-model/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/ru/threat-model/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/threat-model/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/threat-model/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/privacy/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/privacy/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/privacy/"/>
+  </url>
+  <url>
+    <loc>https://termchat.app/ru/privacy/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://termchat.app/privacy/"/>
+    <xhtml:link rel="alternate" hreflang="ru" href="https://termchat.app/ru/privacy/"/>
+  </url>
 </urlset>

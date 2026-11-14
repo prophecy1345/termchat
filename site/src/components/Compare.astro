@@ -1,0 +1,101 @@
+---
+// termchat.app next to the messengers people compare it with. Facts about the
+// others come from their own documentation; keep them dated and modest.
+import Doc from "./Doc.astro";
+import type { Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+}
+const apps = ["termchat.app", "Signal", "Session", "SimpleX Chat", "Briar"];
+const en = {
+  title: "termchat.app vs Signal, Session, SimpleX and Briar: messengers without a phone number",
+  description:
+    "An honest comparison of termchat.app with Signal, Session, SimpleX Chat and Briar: phone number, encryption, servers, Tor, platforms, audits and what the server sees.",
+  h1: "termchat.app compared with Signal, Session, SimpleX and Briar",
+  intro: [
+    "Each of these messengers protects your messages with end-to-end encryption. They differ in what you hand over to sign up, who runs the servers, what those servers see, and how mature the code is. termchat.app is the youngest of them and has had no independent audit; the table says so too.",
+  ],
+  rows: [
+    ["Phone number to sign up", "No", "Yes (a username can hide it from contacts)", "No", "No", "No"],
+    ["Encryption", "Olm (X3DH-style handshake, Double Ratchet) from vodozemac", "Signal Protocol", "Session protocol", "Double Ratchet with a post-quantum key exchange", "Bramble protocols"],
+    ["Servers", "A relay: the public one or your own, a single binary", "Signal's servers", "A network of community-run nodes", "Relays (SMP servers): public or your own", "None: peer to peer (an optional Mailbox)"],
+    ["Tor", "Built in, with bridges", "Not built in (proxy support)", "Onion routing through its own network", "Optional (SOCKS proxy, .onion servers)", "Always"],
+    ["What the server sees", "Who writes to whom and when, as random keys; IP addresses unless Tor is on", "Phone numbers; sealed sender hides most senders", "Onion routing hides IP addresses from nodes", "No user identifiers; a separate queue per contact", "No server"],
+    ["Platforms", "Terminal, desktop (macOS, Linux, Windows), Android", "Android, iOS, desktop (linked to a phone)", "Android, iOS, desktop", "Android, iOS, desktop, terminal", "Android (desktop in beta)"],
+    ["Groups and calls", "No: one-to-one text and documents", "Yes", "Yes", "Yes", "Groups and forums, no calls"],
+    ["Independent audit", "Not yet (vodozemac, its crypto library, was audited in 2022)", "Protocol studied widely", "Yes", "Yes", "Yes"],
+    ["Licence", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
+  ],
+  when: "When termchat.app fits",
+  fits: [
+    "You want to chat where you already work: in a terminal, over SSH, or in a small desktop window.",
+    "You do not want to give anyone a phone number or an email address.",
+    "You want Tor without installing it separately, with bridges where Tor is blocked.",
+    "You want to run the server for your friends yourself: one binary and a SQLite file.",
+    "You want to read why it is built the way it is: every protocol and security decision has a public ADR.",
+  ],
+  other: "When to choose something else",
+  others: [
+    "You need years of scrutiny and an audited codebase: Signal.",
+    "You need groups, calls or an iPhone app: Signal or SimpleX Chat.",
+    "You need the strongest metadata protection: SimpleX Chat (no user identifiers) or Briar (no servers at all).",
+  ],
+  note: "Compared in November 2026 from each project's own documentation. Something wrong or out of date? Open an issue on GitHub.",
+};
+const ru: typeof en = {
+  title: "termchat.app, Signal, Session, SimpleX и Briar: сравнение мессенджеров без номера телефона",
+  description:
+    "Честное сравнение termchat.app с Signal, Session, SimpleX Chat и Briar: номер телефона, шифрование, серверы, Tor, платформы, аудит и что видит сервер.",
+  h1: "termchat.app рядом с Signal, Session, SimpleX и Briar",
+  intro: [
+    "Все эти мессенджеры защищают сообщения сквозным шифрованием. Различаются они тем, что нужно отдать при регистрации, кто держит серверы, что эти серверы видят и насколько зрелый у них код. termchat.app среди них самый молодой и независимого аудита не проходил; таблица говорит это тоже.",
+  ],
+  rows: [
+    ["Номер телефона для регистрации", "Нет", "Да (имя пользователя может скрыть его от контактов)", "Нет", "Нет", "Нет"],
+    ["Шифрование", "Olm (рукопожатие в духе X3DH, Double Ratchet) из vodozemac", "Signal Protocol", "Протокол Session", "Double Ratchet с постквантовым обменом ключами", "Протоколы Bramble"],
+    ["Серверы", "Relay: публичный или свой, один бинарник", "Серверы Signal", "Сеть узлов, которые держит сообщество", "Relay (SMP-серверы): публичные или свои", "Нет: напрямую между устройствами (по желанию Mailbox)"],
+    ["Tor", "Встроен, с мостами", "Не встроен (есть прокси)", "Луковая маршрутизация через свою сеть", "По желанию (SOCKS-прокси, .onion-серверы)", "Всегда"],
+    ["Что видит сервер", "Кто кому и когда пишет, как случайные ключи; IP-адреса, если Tor выключен", "Номера телефонов; sealed sender скрывает большинство отправителей", "Луковая маршрутизация скрывает IP-адреса от узлов", "Нет идентификаторов пользователей; отдельная очередь на каждый контакт", "Сервера нет"],
+    ["Платформы", "Терминал, компьютер (macOS, Linux, Windows), Android", "Android, iOS, компьютер (привязан к телефону)", "Android, iOS, компьютер", "Android, iOS, компьютер, терминал", "Android (компьютер в бете)"],
+    ["Группы и звонки", "Нет: переписка один на один, текст и документы", "Да", "Да", "Да", "Группы и форумы, без звонков"],
+    ["Независимый аудит", "Пока нет (vodozemac, его криптобиблиотека, проверена в 2022)", "Протокол изучен широко", "Да", "Да", "Да"],
+    ["Лицензия", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
+  ],
+  when: "Когда подходит termchat.app",
+  fits: [
+    "Хочется переписываться там, где вы и так работаете: в терминале, по SSH или в небольшом окне.",
+    "Не хочется никому давать номер телефона или email.",
+    "Нужен Tor без отдельной установки, с мостами там, где Tor блокируют.",
+    "Хочется самому держать сервер для друзей: один бинарник и файл SQLite.",
+    "Хочется понимать, почему всё устроено именно так: у каждого решения по протоколу и безопасности есть открытый ADR.",
+  ],
+  other: "Когда лучше выбрать другое",
+  others: [
+    "Нужны годы проверки и код с аудитом: Signal.",
+    "Нужны группы, звонки или приложение для iPhone: Signal или SimpleX Chat.",
+    "Нужна самая сильная защита метаданных: SimpleX Chat (нет идентификаторов пользователей) или Briar (нет серверов вообще).",
+  ],
+  note: "Сравнение сделано в ноябре 2026 по документации самих проектов. Нашли ошибку или устаревшее? Откройте issue на GitHub.",
+};
+const t = Astro.props.lang === "en" ? en : ru;
+---
+
+<Doc lang={Astro.props.lang} title={t.title} description={t.description} h1={t.h1} en="/compare/" ru="/ru/compare/">
+  {t.intro.map((p) => <p class="sub">{p}</p>)}
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th></th>{apps.map((a) => <th>{a}</th>)}</tr>
+      </thead>
+      <tbody>
+        {t.rows.map(([label, ...cells]) => <tr><td>{label}</td>{cells.map((c) => <td>{c}</td>)}</tr>)}
+      </tbody>
+    </table>
+  </div>
+  <h2>{t.when}</h2>
+  <ul>{t.fits.map((f) => <li>{f}</li>)}</ul>
+  <h2>{t.other}</h2>
+  <ul>{t.others.map((f) => <li>{f}</li>)}</ul>
+  <p class="dim">{t.note}</p>
+</Doc>

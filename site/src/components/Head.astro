@@ -1,0 +1,51 @@
+---
+// The <head> of every page: search engines and link previews read it.
+import type { Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+  title: string;
+  description: string;
+  /** This page in English and in Russian, from the site root: "/faq/", "/ru/faq/". */
+  en: string;
+  ru: string;
+  /** Structured data (schema.org) for search engines. */
+  ld?: object;
+}
+const { lang, title, description, en, ru, ld } = Astro.props;
+// The site may live under a sub-path (GitHub Pages: /termchat/).
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const abs = (path: string) => new URL(url(path), Astro.site).href;
+const self = abs(lang === "en" ? en : ru);
+const image = abs(lang === "en" ? "/og.png" : "/og-ru.png");
+const csp =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'";
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content={csp} />
+<meta name="referrer" content="no-referrer" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#11111b" />
+<title>{title}</title>
+<meta name="description" content={description} />
+<link rel="icon" href={url("/favicon.svg")} type="image/svg+xml" />
+<link rel="icon" href={url("/favicon.ico")} sizes="32x32" />
+<link rel="apple-touch-icon" href={url("/apple-touch-icon.png")} />
+<link rel="canonical" href={self} />
+<link rel="alternate" hreflang="en" href={abs(en)} />
+<link rel="alternate" hreflang="ru" href={abs(ru)} />
+<link rel="alternate" hreflang="x-default" href={abs(en)} />
+<meta property="og:site_name" content="termchat.app" />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:type" content="website" />
+<meta property="og:url" content={self} />
+<meta property="og:locale" content={lang === "en" ? "en_US" : "ru_RU"} />
+<meta property="og:image" content={image} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={description} />
+<meta name="twitter:card" content="summary_large_image" />
+{ld && <script is:inline type="application/ld+json" set:html={JSON.stringify(ld)} />}

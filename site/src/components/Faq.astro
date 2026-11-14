@@ -1,0 +1,65 @@
+---
+// Questions people ask before trying termchat.app. Keep in step with README.md
+// and docs/threat-model.md: answers must not promise more than they do.
+import Doc from "./Doc.astro";
+import type { Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+}
+const en = {
+  title: "termchat.app FAQ: phone number, encryption, audit, Android, your own server",
+  description:
+    "Answers about termchat.app: no phone number or email, what the relay can see, whether it is audited, Android without Google services, iPhone, groups, backups and running your own server.",
+  h1: "Questions and answers",
+  qa: [
+    ["Do I need a phone number or an email address?", "No. termchat.app has no accounts. Your identity is a key pair made on your device, plus a nickname that only your contacts see."],
+    ["Can the server read my messages?", "No. Messages are end-to-end encrypted with Olm from vodozemac, the library behind Matrix. The relay passes along envelopes it cannot open. It does see metadata: which key writes to which, when, and roughly how much. Turn on Tor to hide your IP address from it. The threat model lists everything it sees."],
+    ["Has termchat.app been audited?", "Not independently, not yet. Its cryptography comes from vodozemac, which was audited in 2022. termchat.app's own code has had two source reviews made with an AI model; their findings and fixes are published. Treat it as experimental."],
+    ["How do I add a contact?", "There is no search and no directory. You exchange invites: a line of text or a QR code that works once. The other person pastes it, and you accept their request. Comparing safety numbers once rules out anyone in the middle."],
+    ["Does the Android app need Google services?", "No. The app uses no Google services, analytics or trackers. Messages arrive over a background connection, or through UnifiedPush (for example ntfy) if you want wake-ups. The APK is on GitHub; F-Droid and Google Play are on the way."],
+    ["Is there an iPhone app?", "No. termchat.app runs in the terminal, as a desktop app on macOS, Linux and Windows, and on Android."],
+    ["Are there groups or calls?", "No. termchat.app is for one-to-one text and documents of up to 1 MiB. No images in the chat, no link previews, no formatting: less to leak and less to exploit."],
+    ["What if I lose my phone or forget my password?", "Nobody can reset your password or recover your identity for you: there is no account to recover. Make a backup of your identity (keys and contacts, not messages) and keep it off the device; restore it on the new one."],
+    ["Can I run my own server?", "Yes. The relay is one binary in every release, with SQLite, rate limits and an optional onion address. Your friends point their apps at it, and nobody else needs to know."],
+    ["What does it cost?", "Nothing. termchat.app is free and open source (AGPL-3.0), with no ads, paid features or data to sell. Donations through GitHub Sponsors pay for the public relay and, some day, an independent audit."],
+  ],
+};
+const ru: typeof en = {
+  title: "termchat.app: вопросы и ответы — номер телефона, шифрование, аудит, Android, свой сервер",
+  description:
+    "Ответы о termchat.app: без номера телефона и email, что видит relay, был ли аудит, Android без сервисов Google, iPhone, группы, резервные копии и свой сервер.",
+  h1: "Вопросы и ответы",
+  qa: [
+    ["Нужен ли номер телефона или email?", "Нет. Аккаунтов в termchat.app нет. Ваша личность — пара ключей, созданная на устройстве, и ник, который видят только ваши контакты."],
+    ["Может ли сервер прочитать мои сообщения?", "Нет. Сообщения зашифрованы сквозным шифрованием Olm из vodozemac, библиотеки, на которой работает Matrix. Relay пересылает конверты, которые не может открыть. Метаданные он видит: какой ключ кому пишет, когда и примерно сколько. Включите Tor, чтобы скрыть от него свой IP-адрес. Всё, что он видит, перечислено в модели угроз."],
+    ["Проходил ли termchat.app аудит?", "Независимый — пока нет. Криптография взята из vodozemac, которую проверили в 2022 году. Собственный код termchat.app прошёл два обзора кода, сделанных с помощью ИИ-модели; находки и исправления опубликованы. Считайте проект экспериментальным."],
+    ["Как добавить контакт?", "Поиска и каталога нет. Вы обмениваетесь приглашениями: строкой текста или QR-кодом, который работает один раз. Собеседник вставляет его, вы принимаете запрос. Один раз сверив коды безопасности, вы исключаете посредника."],
+    ["Нужны ли приложению на Android сервисы Google?", "Нет. В приложении нет сервисов Google, аналитики и трекеров. Сообщения приходят по фоновому соединению или через UnifiedPush (например, ntfy), если нужны пробуждения. APK лежит на GitHub; F-Droid и Google Play на подходе."],
+    ["Есть ли приложение для iPhone?", "Нет. termchat.app работает в терминале, как приложение для macOS, Linux и Windows и на Android."],
+    ["Есть ли группы и звонки?", "Нет. termchat.app — для переписки один на один: текст и документы до 1 МиБ. Без картинок в чате, превью ссылок и разметки: меньше утечек и меньше поверхности для атак."],
+    ["Что если я потеряю телефон или забуду пароль?", "Никто не сбросит пароль и не восстановит вашу личность: восстанавливать нечего, аккаунта нет. Сделайте резервную копию личности (ключи и контакты, без сообщений), храните её не на устройстве и восстановите на новом."],
+    ["Можно ли держать свой сервер?", "Да. Relay — один бинарник в каждом релизе, с SQLite, лимитами и onion-адресом по желанию. Друзья указывают его в приложении, больше никому знать не нужно."],
+    ["Сколько это стоит?", "Нисколько. termchat.app бесплатный и с открытым кодом (AGPL-3.0), без рекламы, платных функций и данных на продажу. Пожертвования через GitHub Sponsors оплачивают публичный relay и, когда-нибудь, независимый аудит."],
+  ],
+};
+const t = Astro.props.lang === "en" ? en : ru;
+const ld = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: t.qa.map(([q, a]) => ({
+    "@type": "Question",
+    name: q,
+    acceptedAnswer: { "@type": "Answer", text: a },
+  })),
+};
+---
+
+<Doc lang={Astro.props.lang} title={t.title} description={t.description} h1={t.h1} en="/faq/" ru="/ru/faq/" ld={ld}>
+  {t.qa.map(([q, a]) => (
+    <>
+      <h2>{q}</h2>
+      <p class="sub">{a}</p>
+    </>
+  ))}
+</Doc>

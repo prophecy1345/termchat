@@ -1,0 +1,14 @@
+---
+import MdDoc from "../../components/MdDoc.astro";
+import { compiledContent } from "../../../../docs/threat-model.md";
+const html = await compiledContent();
+---
+
+<MdDoc
+  lang="en"
+  title="termchat.app threat model: what an encrypted messenger protects, and what it does not"
+  description="What termchat.app protects against and what it does not: message contents, metadata the relay sees, Tor, a lost or seized device, the relay operator. An honest threat model for an unaudited messenger."
+  en="/threat-model/"
+  ru="/ru/threat-model/"
+  html={html}
+/>

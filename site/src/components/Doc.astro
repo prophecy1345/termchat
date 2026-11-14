@@ -1,0 +1,57 @@
+---
+// A text page: comparison, FAQ, guides. Same look as the privacy policy.
+import "../styles/site.css";
+import { REPO, SPONSOR, type Lang } from "../i18n";
+import Head from "./Head.astro";
+
+interface Props {
+  lang: Lang;
+  title: string;
+  description: string;
+  /** The heading on the page; the <title> may say more. */
+  h1: string;
+  en: string;
+  ru: string;
+  ld?: object;
+}
+const { lang, title, description, h1, en, ru, ld } = Astro.props;
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const p = lang === "en" ? "" : "/ru";
+const links =
+  lang === "en"
+    ? [["/compare/", "Compare"], ["/faq/", "FAQ"], ["/self-host/", "Run a relay"], ["/threat-model/", "Threat model"]]
+    : [["/compare/", "Сравнение"], ["/faq/", "Вопросы"], ["/self-host/", "Свой relay"], ["/threat-model/", "Модель угроз"]];
+const install = lang === "en" ? "Install termchat.app" : "Установить termchat.app";
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <Head lang={lang} title={title} description={description} en={en} ru={ru} ld={ld} />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href={url(`${p}/`)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
+      <nav>
+        {links.map(([path, label]) => <a href={url(`${p}${path}`)}>{label}</a>)}
+        <a href={REPO}>GitHub</a>
+        <a class="lang" href={url(lang === "en" ? ru : en)} hreflang={lang === "en" ? "ru" : "en"}>{lang === "en" ? "RU" : "EN"}</a>
+      </nav>
+    </header>
+    <main class="doc">
+      <section>
+        <h1>{h1}</h1>
+        <slot />
+        <p class="more"><a class="button primary" href={url(`${p}/#install`)}>{install}</a></p>
+      </section>
+    </main>
+    <footer>
+      <p>
+        {links.map(([path, label]) => <><a href={url(`${p}${path}`)}>{label}</a> · </>)}
+        <a href={url(`${p}/privacy/`)}>{lang === "en" ? "Privacy" : "Конфиденциальность"}</a> ·
+        <a href={SPONSOR}>{lang === "en" ? "Sponsor" : "Поддержать"}</a>
+      </p>
+      <p class="dim">© 2026 termchat.app</p>
+    </footer>
+  </body>
+</html>
