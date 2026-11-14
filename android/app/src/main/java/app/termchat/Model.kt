@@ -169,6 +169,7 @@ class Model(private val context: Context) : Listener {
         lastInput = System.currentTimeMillis()
         screen = Screen.Chats
         link()
+        seen()
     }
 
     /** "New message", nothing else, and only when the chat is not in front of the user. */
@@ -177,6 +178,11 @@ class Model(private val context: Context) : Listener {
         if (!notify || (visible && open != null && open == index)) return
         context.getSystemService(android.app.NotificationManager::class.java)
             .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
+    }
+
+    /** Back in front of an unlocked app: the chats show what arrived, the alert has done its job. */
+    fun seen() {
+        if (account != null) context.getSystemService(android.app.NotificationManager::class.java).cancel(ID_MESSAGE)
     }
 
     /** Saves and drops every key and message from memory. */

@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
         // idle lock, else the next check (within 10 s) locks before a touch.
         if (model.stay) model.touch()
         model.account?.reconnect()
+        model.seen()
     }
 }
 
