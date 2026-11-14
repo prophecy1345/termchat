@@ -52,6 +52,16 @@ ntfy.sh). The app gets an endpoint URL from it.
   sees the connection a moment after its push, the same timing as a user
   opening the app. (Amended 2026-11-11: messages came 30-90 s after the
   notification.)
+- **A push always redials** (amended 2026-11-14). The relay pushes only
+  when it holds no connection of that identity, so a push proves the link
+  the app holds is dead, however recent its last ping. The relay can close
+  a connection a few seconds after its last ping; if the close is lost
+  (sleep, NAT, a network change), the app's socket stays open and silent,
+  passes the 35-second check, and the message waits on the relay until the
+  next send or push. So a push drops the link of the identity it was
+  addressed to (its UnifiedPush instance) and dials again, unless a new
+  connection came up since. The other identities stay as they are
+  (ADR-014). The 35-second check remains for the app coming on screen.
 
 ### 3. Endpoint rules (the relay must not be turned into a proxy)
 - Only `https://`, at most 512 bytes.
