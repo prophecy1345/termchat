@@ -28,8 +28,8 @@ android {
         targetSdk = 37
         // Written out for F-Droid's update checker, which reads them here;
         // checked against the workspace's Cargo.toml at the end of this file.
-        versionName = "0.5.7"
-        versionCode = 507
+        versionName = "0.6.0"
+        versionCode = 600
         if (forPlay) ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     buildFeatures { compose = true }

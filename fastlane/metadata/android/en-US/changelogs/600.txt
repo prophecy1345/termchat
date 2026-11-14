@@ -1,0 +1,1 @@
+Settings: choose when the app locks itself: after 1, 5, 15 or 30 minutes without a touch (5 by default).

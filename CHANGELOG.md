@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.6.0
+
+- **Choose when the app locks itself** (ADR-021): after 1, 5, 15 or 30
+  minutes without input, in all three apps. The default stays 5 minutes,
+  and there is no "never". Terminal: Settings, security tab. Desktop:
+  Settings, "Lock after". Android: Settings, under "Stay connected". A
+  longer time gives whoever finds the device unlocked more time to read.
+
 ## 0.5.7
 
 - Relay: a message to someone who had just received everything waiting
