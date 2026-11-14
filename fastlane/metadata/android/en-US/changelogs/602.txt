@@ -1,0 +1,1 @@
+Security fixes: coming back after the lock time locks the app at once; an onion relay is used only through Tor; a deleted contact cannot be brought back by the relay.

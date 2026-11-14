@@ -3,6 +3,24 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.6.2
+
+Fixes from a second AI-assisted source review
+([docs/security/review-2026-11b.md](docs/security/review-2026-11b.md)).
+
+- Android: coming back to the app after the lock time has passed locks it
+  at once. Before, the chats could show for a few seconds, and a touch in
+  that time kept the app unlocked.
+- Terminal and desktop: time asleep counts toward the idle lock, and a key
+  pressed after the time is up locks the app instead of extending it.
+- An onion relay address is used only through Tor, never through plain DNS
+  (ADR-004).
+- A deleted contact can no longer be brought back as a contact request by
+  a relay that floods the list of sessions already seen (ADR-019).
+- Relay: a WebSocket frame larger than 64 KiB is refused before it is read
+  into memory. Operators should update.
+- The note of a contact request is no longer shown.
+
 ## 0.6.1
 
 - Android: the first message after the phone has slept arrives within
