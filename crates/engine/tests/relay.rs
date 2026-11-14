@@ -1050,9 +1050,12 @@ async fn transport_refuses_plain_ws_across_a_network() {
     assert!(!connect("http://relay.example.org/"));
     assert!(connect("wss://relay.example.org/"));
     assert!(connect("ws://127.0.0.1:1/"));
-    assert!(connect(
-        "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/"
-    ));
+    // ADR-004: an onion host directly would go through plain DNS.
+    for onion in ["ws", "wss"] {
+        let url =
+            format!("{onion}://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/");
+        assert!(!connect(&url), "{url}");
+    }
 }
 
 #[tokio::test]

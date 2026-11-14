@@ -199,9 +199,9 @@ pub fn relay_url_ok(url: &str) -> bool {
     let Some(host) = ws_host(url) else {
         return false;
     };
-    url.starts_with("wss://")
-        || matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        || host.ends_with(".onion")
+    // The address used without Tor: an onion one goes in its own field (ADR-004).
+    !host.ends_with(".onion")
+        && (url.starts_with("wss://") || matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1"))
 }
 
 /// The host the transport will actually connect to. Parsed the same way as in
@@ -1246,19 +1246,15 @@ impl Engine {
                 });
                 self.happened.push(alert(false));
             }
-            Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. } => {
+            // The note is never shown: our clients send none, and a stranger's
+            // text inside a system line would pass for the app speaking.
+            Body::ContactRequest { .. } | Body::ContactRequestV2 { .. } => {
                 let request = self.core_at(slot).is_request(&sender);
                 if request == Some(true) {
                     self.happened.push(alert(true));
                 }
-                let text = match request {
-                    Some(true) => format!(
-                        "contact request{}: accept it, or delete to reject",
-                        match note.is_empty() {
-                            true => String::new(),
-                            false => format!(": {note}"),
-                        }
-                    ),
+                let text: String = match request {
+                    Some(true) => "contact request: accept it, or delete to reject".into(),
                     _ => "connected".into(),
                 };
                 self.system(i, text);
@@ -2100,7 +2096,6 @@ mod tests {
             "ws://localhost:8080/",
             "ws://127.0.0.1:8080",
             "ws://[::1]:8080/",
-            "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/",
         ] {
             assert!(relay_url_ok(ok), "{ok}");
         }
@@ -2116,6 +2111,9 @@ mod tests {
             "ws://evil.org#.onion",
             "ws://evil.org?x=.onion",
             "ws://evil.org/.onion",
+            // Onion addresses go in their own field, used only through Tor.
+            "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/",
+            "wss://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/",
         ] {
             assert!(!relay_url_ok(bad), "{bad}");
         }

@@ -126,8 +126,15 @@ impl Relay {
         let host = uri.host().map(str::to_owned).ok_or(Error::BadUrl)?;
         // Plain ws:// only where TLS adds nothing: this machine, or an onion
         // service. The signed `Auth` must not cross a network in the clear.
+        // An onion host only through Tor: directly it would go through plain
+        // DNS, and whoever answers that stands in for the relay (ADR-004).
         let bare = host.trim_start_matches('[').trim_end_matches(']');
-        let local = matches!(bare, "localhost" | "127.0.0.1" | "::1") || bare.ends_with(".onion");
+        let onion = bare.ends_with(".onion");
+        let tor = matches!(dial, Dial::Tor(..));
+        if onion && !tor {
+            return Err(Error::BadUrl);
+        }
+        let local = matches!(bare, "localhost" | "127.0.0.1" | "::1") || onion;
         match uri.scheme_str() {
             Some("wss") => {}
             Some("ws") if local => {}
