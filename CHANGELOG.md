@@ -5,8 +5,8 @@ the desktop app.
 
 ## 0.6.2
 
-Fixes from a second AI-assisted source review
-([docs/security/review-2026-11b.md](docs/security/review-2026-11b.md)).
+Fixes from a second source review of the code (not an independent audit;
+the findings are in `docs/security/review-2026-11b.md`).
 
 - Android: coming back to the app after the lock time has passed locks it
   at once. Before, the chats could show for a few seconds, and a touch in
