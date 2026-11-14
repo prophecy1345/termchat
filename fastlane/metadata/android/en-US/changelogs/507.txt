@@ -1,1 +1,0 @@
-The Android app is unchanged since 0.5.6; the fix is on the relay, which no longer holds back messages to a client that has just emptied its queue.

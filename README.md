@@ -520,6 +520,12 @@ Not message contents, not nicknames, not IP history.
   [011 Android client](docs/adr/011-android-client.md), [012 push](docs/adr/012-push.md)
 - [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
 
+## Support the project
+
+termchat.app is free, with no ads or paid features. If you want to help, [sponsor it on GitHub](https://github.com/sponsors/prophecy1345):
+it is built by one person, and donations let me keep working on it and pay for the public relay, signing
+certificates for the apps and, one day, an independent security audit. Sponsors get nothing extra in the app.
+
 ## Licence
 
 AGPL-3.0-or-later. If you run a modified relay as a service, you must publish your changes.

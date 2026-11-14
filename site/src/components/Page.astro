@@ -1,6 +1,6 @@
 ---
 import "../styles/site.css";
-import { REPO, commands, texts, type Lang } from "../i18n";
+import { REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
 import Cmd from "./Cmd.astro";
 
 interface Props {
@@ -205,6 +205,12 @@ const csp =
         <p class="sub">{t.relay}</p>
         <p class="more"><a href={blob(t.docs.selfHost)}>{t.relayLink} →</a></p>
       </section>
+
+      <section id="sponsor">
+        <h2>{t.sponsorTitle}</h2>
+        <p class="sub">{t.sponsor}</p>
+        <p class="more"><a class="button primary" href={SPONSOR}>♥ {t.sponsorLink}</a></p>
+      </section>
     </main>
 
     <footer>
@@ -213,6 +219,7 @@ const csp =
         <a href={REPO}>GitHub</a> ·
         <a href={blob(t.docs.use)}>{t.footer.use}</a> ·
         <a href={url(t.lang === "en" ? "/privacy/" : "/ru/privacy/")}>{t.footer.privacy}</a> ·
+        <a href={SPONSOR}>{t.footer.sponsor}</a> ·
         <a href="https://findahelpline.com">{t.footer.help}</a> ·
         <a href={url(t.other.href)}>{t.other.label}</a>
       </p>

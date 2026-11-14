@@ -2,6 +2,7 @@
 // README.ru.md: the site must not promise more than they do.
 
 export const REPO = "https://github.com/prophecy1345/termchat";
+export const SPONSOR = "https://github.com/sponsors/prophecy1345";
 const RAW = "https://raw.githubusercontent.com/prophecy1345/termchat/main";
 
 export const commands = {
@@ -128,14 +129,18 @@ const en = {
   relayTitle: "Run your own relay",
   relay: "The relay is one binary next to termchat.app in every release: SQLite, rate limits, an optional onion address. Your friends use your server; nobody else needs to know.",
   relayLink: "Self-hosting guide",
+  sponsorTitle: "Support the project",
+  sponsor: "termchat.app is free and stays free: no ads, no paid features, no data to sell. It is built by one person. Donations through GitHub Sponsors let me keep working on it, and pay for the public relay server, signing certificates for the apps and, some day, an independent security audit. A sponsor gets nothing extra in the app and no one is treated differently: thank you is all it buys.",
+  sponsorLink: "Sponsor on GitHub",
   footer: {
     licence: "AGPL-3.0",
     use: "Acceptable use",
     privacy: "Privacy",
+    sponsor: "Sponsor",
     help: "Need help now? findahelpline.com",
     note: "No cookies, no analytics, no third-party requests.",
     about:
-      "termchat.app is a free, non-commercial, open-source project created and maintained as a personal hobby. It has no advertising, subscriptions, paid features or commercial monetization. Anyone can run their own relay server.",
+      "termchat.app is a free, non-commercial, open-source project created and maintained as a personal hobby. It has no advertising, subscriptions, paid features or commercial monetization; voluntary donations cover its costs. Anyone can run their own relay server.",
   },
 };
 
@@ -250,14 +255,18 @@ const ru: typeof en = {
   relayTitle: "Свой relay",
   relay: "Relay — один бинарник рядом с termchat.app в каждом релизе: SQLite, лимиты, onion-адрес по желанию. Ваши друзья пользуются вашим сервером, больше никому знать не нужно.",
   relayLink: "Инструкция по установке",
+  sponsorTitle: "Поддержать проект",
+  sponsor: "termchat.app бесплатный и останется бесплатным: без рекламы, платных функций и данных на продажу. Его делает один человек. Пожертвования через GitHub Sponsors позволяют мне продолжать над ним работать и оплачивают публичный relay, сертификаты для подписи приложений, а когда-нибудь и независимый аудит безопасности. Спонсор не получает в приложении ничего сверх остальных и ни к кому не относятся иначе: это просто спасибо.",
+  sponsorLink: "Поддержать на GitHub",
   footer: {
     licence: "AGPL-3.0",
     use: "Правила использования",
     privacy: "Конфиденциальность",
+    sponsor: "Поддержать",
     help: "Нужна помощь? findahelpline.com",
     note: "Без cookies, аналитики и сторонних запросов.",
     about:
-      "termchat.app — бесплатный некоммерческий проект с открытым кодом, который создаётся и поддерживается как личное хобби. В нём нет рекламы, подписок, платных функций и монетизации. Любой может запустить свой relay-сервер.",
+      "termchat.app — бесплатный некоммерческий проект с открытым кодом, который создаётся и поддерживается как личное хобби. В нём нет рекламы, подписок, платных функций и монетизации; расходы покрывают добровольные пожертвования. Любой может запустить свой relay-сервер.",
   },
 };
 
