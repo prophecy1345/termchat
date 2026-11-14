@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.6.3
+
+More fixes from the second source review (ADR-022).
+
+- Android: without "stay connected", a backgrounded app now locks when the
+  lock time is up, also when Android has frozen it. Before, it held its
+  keys until you came back. The lock may come a few minutes late.
+- Relay: logins of one key are limited (30 at once, then one a minute),
+  the report journal stops growing at 10 MiB, and a slow reader holds less
+  memory. Operators should update.
+
 ## 0.6.2
 
 Fixes from a second source review of the code (not an independent audit;

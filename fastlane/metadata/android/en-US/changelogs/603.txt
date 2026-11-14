@@ -1,0 +1,1 @@
+Without "stay connected", the app now locks in the background when the lock time is up, even when Android has frozen it.
