@@ -36,6 +36,9 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         model.visible = true
+        // Stay connected: time in the background does not count toward the
+        // idle lock, else the next check (within 10 s) locks before a touch.
+        if (model.stay) model.touch()
         model.account?.reconnect()
     }
 }

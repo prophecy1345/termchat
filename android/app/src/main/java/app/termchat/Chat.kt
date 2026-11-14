@@ -42,7 +42,8 @@ fun Chat(m: Model, index: UInt) {
     var query by remember(index) { mutableStateOf<String?>(null) }
     DisposableEffect(index) {
         a.open(index)
-        onDispose { a.open(null) }
+        // After a lock `a` is destroyed; calling it would crash the app.
+        onDispose { if (m.account === a) a.open(null) }
     }
     LaunchedEffect(m.version) { a.open(index) }
     val context = LocalContext.current
