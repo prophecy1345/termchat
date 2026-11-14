@@ -3,7 +3,7 @@
 //! here says anything about contacts.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +76,42 @@ impl Settings {
     }
 }
 
+/// Time without input, for the idle lock (ADR-011, ADR-021). It counts on
+/// both clocks and takes the longer: the monotonic one stops while the
+/// computer sleeps, the wall clock can be set back.
+#[derive(Clone, Copy)]
+pub struct Idle {
+    mono: Instant,
+    wall: SystemTime,
+}
+
+impl Default for Idle {
+    fn default() -> Self {
+        Self {
+            mono: Instant::now(),
+            wall: SystemTime::now(),
+        }
+    }
+}
+
+impl Idle {
+    pub fn elapsed(&self) -> Duration {
+        let wall = self.wall.elapsed().unwrap_or_default();
+        self.mono.elapsed().max(wall)
+    }
+
+    /// Input: count again from now, unless `limit` has already passed;
+    /// `false` then, and the caller locks. The key that wakes the computer
+    /// must not undo the lock that was due while it slept.
+    pub fn touch(&mut self, limit: Duration) -> bool {
+        let fresh = self.elapsed() < limit;
+        if fresh {
+            *self = Self::default();
+        }
+        fresh
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +130,23 @@ mod tests {
         std::fs::write(&path, b"{oops").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sleep_counts_and_late_input_does_not_undo_the_lock() {
+        // The computer slept 10 minutes: only the wall clock moved.
+        let mut idle = Idle {
+            mono: Instant::now(),
+            wall: SystemTime::now() - Duration::from_secs(600),
+        };
+        assert!(idle.elapsed() >= Duration::from_secs(600));
+        assert!(!idle.touch(Duration::from_secs(300)));
+        assert!(
+            idle.elapsed() >= Duration::from_secs(600),
+            "late input reset the time"
+        );
+        assert!(idle.touch(Duration::from_secs(900)));
+        assert!(idle.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

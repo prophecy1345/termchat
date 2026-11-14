@@ -8,12 +8,12 @@ mod logo;
 mod synth;
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chat::{Chat, Pal};
 use eframe::egui;
 use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
-use termchat_engine::settings::{self, Settings};
+use termchat_engine::settings::{self, Idle, Settings};
 use termchat_engine::{Engine, Setup, Unlocked, data};
 use zeroize::Zeroizing;
 
@@ -60,7 +60,7 @@ fn main() -> eframe::Result {
                 path,
                 screen,
                 pal,
-                last_input: Instant::now(),
+                idle: Idle::default(),
                 _lock: lock,
             }))
         }),
@@ -114,7 +114,7 @@ struct App {
     screen: Screen,
     settings: Settings,
     pal: Pal,
-    last_input: Instant,
+    idle: Idle,
     /// Held while the window is open (ADR-018).
     _lock: std::io::Result<Option<std::fs::File>>,
 }
@@ -141,8 +141,9 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Input after the time is up does not count: the check below locks.
         if ctx.input(|i| !i.events.is_empty()) {
-            self.last_input = Instant::now();
+            self.idle.touch(self.settings.lock_after());
         }
         // Relay events arrive on a channel; a few checks a second are enough.
         // Polling for now; a waker from the relay task if latency matters.
@@ -150,7 +151,7 @@ impl eframe::App for App {
         let Screen::Main(chat) = &mut self.screen else {
             return;
         };
-        if self.last_input.elapsed() >= self.settings.lock_after() {
+        if self.idle.elapsed() >= self.settings.lock_after() {
             return self.lock();
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));

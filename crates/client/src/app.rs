@@ -13,7 +13,7 @@ use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
 use crate::notify;
-use crate::settings::{self, Settings};
+use crate::settings::{self, Idle, Settings};
 use crate::ui::Hits;
 use crate::{RelayEvent, theme};
 use termchat_engine::notify::SOUND_GAP;
@@ -167,7 +167,7 @@ pub struct Main {
     /// New messages (`false`) and requests (`true`) to tell the user about.
     pub alerts: Vec<(Ed25519Key, bool)>,
     pub status: String,
-    pub last_input: Instant,
+    pub idle: Idle,
     path: PathBuf,
     /// Everything was erased; the app returns to the first-run screen with this note.
     wiped: Option<String>,
@@ -273,7 +273,7 @@ impl App {
     pub fn on_tick(&mut self) {
         self.toasts.retain(|t| t.until > Instant::now());
         if let Screen::Main(m) = &mut self.screen {
-            if m.last_input.elapsed() >= self.settings.lock_after() {
+            if m.idle.elapsed() >= self.settings.lock_after() {
                 self.lock();
             } else {
                 m.engine.tick();
@@ -285,7 +285,23 @@ impl App {
         }
     }
 
+    /// Input in an unlocked app: `true` if it came too late, and the app locked.
+    fn idle_lock(&mut self) -> bool {
+        let limit = self.settings.lock_after();
+        let late = match &mut self.screen {
+            Screen::Main(m) => !m.idle.touch(limit),
+            _ => false,
+        };
+        if late {
+            self.lock();
+        }
+        late
+    }
+
     pub fn on_key(&mut self, k: KeyEvent) {
+        if self.idle_lock() {
+            return;
+        }
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && matches!(k.code, KeyCode::Char('c' | 'q')) {
             if let Screen::Main(m) = &mut self.screen {
@@ -326,7 +342,6 @@ impl App {
                 Unlocking::Wiped => self.wiped(String::new()),
             },
             Screen::Main(m) => {
-                m.last_input = Instant::now();
                 let hits = self.hits.borrow().clone();
                 let pager = matches!(m.popup, Some(Popup::Pager { .. }));
                 let view = if pager { hits.pager } else { hits.history };
@@ -366,11 +381,11 @@ impl App {
 
     /// Clicks act like the key a button shows, so the mouse adds no new paths.
     pub fn on_mouse(&mut self, e: MouseEvent) {
+        if self.idle_lock() {
+            return;
+        }
         let at = Position::new(e.column, e.row);
         let hits = self.hits.borrow().clone();
-        if let Screen::Main(m) = &mut self.screen {
-            m.last_input = Instant::now();
-        }
         let left = MouseEventKind::Down(MouseButton::Left);
         if e.kind == left
             && let Some((_, k)) = hits.keys.iter().find(|(r, _)| r.contains(at))
@@ -429,12 +444,14 @@ impl App {
     /// Bracketed paste: the text goes into the active field as text only.
     /// Control characters are dropped so a pasted string cannot act as keys.
     pub fn on_paste(&mut self, text: &str) {
+        if self.idle_lock() {
+            return;
+        }
         let plain: String = text.chars().filter(|c| !c.is_control()).collect();
         match &mut self.screen {
             Screen::Setup(f) => f.paste(&plain),
             Screen::Unlock(u) => u.input.insert(&plain),
             Screen::Main(m) => {
-                m.last_input = Instant::now();
                 match &mut m.popup {
                     Some(
                         Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s) | Popup::Search(s),
@@ -521,7 +538,7 @@ impl Main {
             popup: None,
             alerts: Vec::new(),
             status: String::new(),
-            last_input: Instant::now(),
+            idle: Idle::default(),
             path: path.to_owned(),
             wiped: None,
         });
