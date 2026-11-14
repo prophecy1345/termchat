@@ -9,6 +9,7 @@ mod push;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -105,7 +106,7 @@ impl Default for Limits {
         Self {
             auth_timeout: Duration::from_secs(10),
             ping_interval: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_secs(3600),
             send_timeout: Duration::from_secs(30),
             connections_per_ip: 50,
             frames_per_key: Rate {
@@ -215,7 +216,8 @@ impl Shared {
 
 struct Relay {
     db: db::Db,
-    online: HashMap<Ed25519Key, (u64, mpsc::Sender<ServerFrame>)>,
+    /// Per key: connection id, its frames, and whether it is asleep (ADR-012).
+    online: HashMap<Ed25519Key, (u64, mpsc::Sender<ServerFrame>, Arc<AtomicBool>)>,
     // grows with every key seen since start, bounded by the registration limit.
     mem: HashMap<Ed25519Key, Account>,
     connections: HashMap<Origin, usize>,
@@ -404,15 +406,15 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
             None
         }
     };
-    if let Some((key, id, rx)) = session {
-        if let Err(code) = serve_client(&shared, &mut ws, key, rx).await {
+    if let Some((key, id, rx, asleep)) = session {
+        if let Err(code) = serve_client(&shared, &mut ws, key, rx, &asleep).await {
             let _ = send(&mut ws, &error(None, code), timeout).await;
         }
         let mut relay = shared.lock();
         if relay
             .online
             .get(&key)
-            .is_some_and(|(current, _)| *current == id)
+            .is_some_and(|(current, ..)| *current == id)
         {
             relay.online.remove(&key);
         }
@@ -428,7 +430,12 @@ async fn connection(shared: Arc<Shared>, mut ws: WebSocket, ip: Origin) {
 }
 
 /// The key, the connection id and live frames.
-type Session = (Ed25519Key, u64, mpsc::Receiver<ServerFrame>);
+type Session = (
+    Ed25519Key,
+    u64,
+    mpsc::Receiver<ServerFrame>,
+    Arc<AtomicBool>,
+);
 
 async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Session, ErrorCode> {
     let timeout = shared.config.limits.send_timeout;
@@ -457,6 +464,7 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
     let key = identity.ed25519;
 
     let (tx, rx) = mpsc::channel(256);
+    let asleep = Arc::new(AtomicBool::new(false));
     let id = {
         let mut relay = shared.lock();
         let now = Instant::now();
@@ -479,12 +487,12 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
         relay.next_conn += 1;
         let id = relay.next_conn;
         // A newer connection replaces the old one; the old loop ends when its sender drops.
-        relay.online.insert(key, (id, tx));
+        relay.online.insert(key, (id, tx, Arc::clone(&asleep)));
         id
     };
 
     send(ws, &ServerFrame::AuthOk, timeout).await?;
-    Ok((key, id, rx))
+    Ok((key, id, rx, asleep))
 }
 
 /// Envelopes read from the queue at once: a connection that logs in and then
@@ -496,6 +504,7 @@ async fn serve_client(
     ws: &mut WebSocket,
     key: Ed25519Key,
     mut rx: mpsc::Receiver<ServerFrame>,
+    asleep: &AtomicBool,
 ) -> Result<(), ErrorCode> {
     let limits = &shared.config.limits;
     // Outside the auth timeout: a full queue over Tor takes longer than that,
@@ -521,10 +530,12 @@ async fn serve_client(
     send(ws, &count, limits.send_timeout).await?;
     let mut ping = tokio::time::interval(limits.ping_interval);
     let mut last_seen = Instant::now();
+    let mut pinged = last_seen;
     loop {
         tokio::select! {
             msg = ws.recv() => {
                 last_seen = Instant::now();
+                asleep.store(false, Ordering::Relaxed);
                 match msg {
                     Some(Ok(Message::Binary(bytes))) => {
                         let frame = ClientFrame::decode(&bytes).map_err(ErrorCode::from)?;
@@ -547,6 +558,11 @@ async fn serve_client(
                 if last_seen.elapsed() > limits.idle_timeout {
                     return Ok(());
                 }
+                // ADR-012, the sleeping link: a phone in deep sleep answers no
+                // ping, yet its kernel takes in what we send. Hold the link
+                // (up to `idle_timeout`) and push for what goes into it.
+                asleep.store(last_seen < pinged, Ordering::Relaxed);
+                pinged = Instant::now();
                 write(ws, Message::Ping(Default::default()), limits.send_timeout).await?;
             }
         }
@@ -621,7 +637,7 @@ fn handle(
             let Some(key) = db(relay.db.claim(&target, one_time_allowed))? else {
                 return Ok(vec![error(None, ErrorCode::NoKeys)]);
             };
-            if let Some((_, tx)) = relay.online.get(&target) {
+            if let Some((_, tx, _)) = relay.online.get(&target) {
                 let _ = tx.try_send(key_count(&relay.db, &target)?);
             }
             vec![ServerFrame::ClaimedKey { target, key }]
@@ -676,24 +692,27 @@ fn handle(
             };
             // A full channel means the client lags: drop its connection so it
             // reconnects and gets the whole queue (ADR-007).
-            match relay.online.get(&to) {
-                Some((_, tx)) => {
+            // Not here, or asleep (ADR-012): wake it, if it asked for that.
+            let wake = match relay.online.get(&to) {
+                Some((_, tx, asleep)) => {
+                    let asleep = asleep.load(Ordering::Relaxed);
                     if tx.try_send(deliver).is_err() {
                         relay.online.remove(&to);
                     }
+                    asleep
                 }
-                // Not here: wake it, if it asked for that (ADR-012).
-                None => {
-                    let t = relay
-                        .mem
-                        .entry(to)
-                        .or_insert_with(|| Account::new(limits, now));
-                    if t.pushed.is_none_or(|at| now.duration_since(at) >= PUSH_GAP)
-                        && let Some(url) = db(relay.db.push(&to))?
-                    {
-                        t.pushed = Some(now);
-                        tokio::spawn(push::wake(url));
-                    }
+                None => true,
+            };
+            if wake {
+                let t = relay
+                    .mem
+                    .entry(to)
+                    .or_insert_with(|| Account::new(limits, now));
+                if t.pushed.is_none_or(|at| now.duration_since(at) >= PUSH_GAP)
+                    && let Some(url) = db(relay.db.push(&to))?
+                {
+                    t.pushed = Some(now);
+                    tokio::spawn(push::wake(url));
                 }
             }
             vec![ServerFrame::Accepted { client_id }]

@@ -28,8 +28,10 @@ const IDLE: Duration = Duration::from_secs(90);
 /// First wait before a refused `Send` goes again; doubles up to `MAX_DELAY` (ADR-020).
 const RETRY_DELAY: Duration = Duration::from_secs(2);
 /// ADR-012: on a wake-up, a link that heard nothing for this long (the relay
-/// pings every 30 s) is taken for dead and dialled again.
+/// pings every 30 s) is checked with a ping of ours.
 const STALE: Duration = Duration::from_secs(35);
+/// ADR-012, the sleeping link: a checked link silent this long is dialled again.
+const PROBE: Duration = Duration::from_secs(5);
 
 /// Signs the relay's challenge: `(relay_host, nonce) -> signature`.
 pub type Signer = Box<dyn Fn(&str, &[u8; 32]) -> Signature + Send + Sync>;
@@ -95,7 +97,7 @@ pub fn bridge_transport(_line: &str) -> Option<String> {
 pub struct Relay {
     tx: mpsc::UnboundedSender<ClientFrame>,
     wake: Arc<Notify>,
-    dead: Arc<AtomicBool>,
+    pushed: Arc<AtomicBool>,
 }
 
 impl Relay {
@@ -148,7 +150,7 @@ impl Relay {
         let (tx, rx) = mpsc::unbounded_channel();
         let (events_tx, events) = mpsc::channel(256);
         let wake = Arc::new(Notify::new());
-        let dead = Arc::new(AtomicBool::new(false));
+        let pushed = Arc::new(AtomicBool::new(false));
         let link = Link {
             url: url.to_owned(),
             host,
@@ -167,11 +169,11 @@ impl Relay {
             delay,
             spread,
             wake: Arc::clone(&wake),
-            dead: Arc::clone(&dead),
+            pushed: Arc::clone(&pushed),
             heard: SystemTime::now(),
         };
         tokio::spawn(link.run(rx));
-        Ok((Self { tx, wake, dead }, events))
+        Ok((Self { tx, wake, pushed }, events))
     }
 
     /// Queues a frame. `Send` frames survive reconnects until the relay answers.
@@ -185,11 +187,12 @@ impl Relay {
         self.wake.notify_one();
     }
 
-    /// A push for this identity (ADR-012): the relay pushes only when it holds
-    /// no connection of ours, so the one we hold is dead however recent its
-    /// last ping. Dial again, unless a new connection came up meanwhile.
-    pub fn redial(&self) {
-        self.dead.store(true, Ordering::Relaxed);
+    /// A push for this identity (ADR-012, the sleeping link): the relay holds
+    /// our connection but heard nothing from it, so the message may already
+    /// sit in the socket. Read it, and check the link with a ping however
+    /// recent its last word; dial again only if the ping goes unanswered.
+    pub fn check(&self) {
+        self.pushed.store(true, Ordering::Relaxed);
         self.wake.notify_one();
     }
 }
@@ -228,8 +231,8 @@ struct Link {
     /// Add 0-30 s to every reconnect.
     spread: bool,
     wake: Arc<Notify>,
-    /// Set by `Relay::redial`: the connection held now is dead.
-    dead: Arc<AtomicBool>,
+    /// Set by `Relay::check`: a push came, check the connection held now.
+    pushed: Arc<AtomicBool>,
     /// Last word from the relay, wall clock: the monotonic one stops while
     /// the phone sleeps.
     heard: SystemTime,
@@ -397,15 +400,28 @@ impl Link {
             }
         }
         self.heard = SystemTime::now();
-        // A redial asked for before this connection came up is answered by it.
-        self.dead.store(false, Ordering::Relaxed);
+        // A check asked for before this connection came up is answered by it.
+        self.pushed.store(false, Ordering::Relaxed);
         let wake = Arc::clone(&self.wake);
+        // A ping of ours waits for an answer: the deadline, and when it went.
+        let mut probe: Option<(Instant, SystemTime)> = None;
         loop {
             let due = self.retry.values().filter_map(|r| r.due).min();
             tokio::select! {
                 () = wake.notified() => {
                     let quiet = self.heard.elapsed().unwrap_or(Duration::ZERO);
-                    if self.dead.swap(false, Ordering::Relaxed) || quiet > STALE {
+                    let pushed = self.pushed.swap(false, Ordering::Relaxed);
+                    if (pushed || quiet > STALE) && probe.is_none() {
+                        if ws.send(Message::Ping(Default::default())).await.is_err() {
+                            return End::Lost(true);
+                        }
+                        probe = Some((Instant::now() + PROBE, SystemTime::now()));
+                    }
+                }
+                () = sleep_until(probe.map(|(at, _)| at)) => {
+                    // Any word from the relay since the ping (its pong, a frame) will do.
+                    let asked = probe.take().map_or(SystemTime::now(), |(_, t)| t);
+                    if self.heard < asked {
                         return End::Lost(true);
                     }
                 }

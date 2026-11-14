@@ -339,7 +339,7 @@ async fn half_open_proxy(relay: &str) -> (String, tokio::sync::watch::Sender<u32
 }
 
 #[tokio::test]
-async fn a_push_redials_a_link_that_only_looks_alive() {
+async fn a_push_redials_a_link_whose_ping_goes_unanswered() {
     let url = start_relay(Limits::default()).await;
     let (proxy, cut) = half_open_proxy(&url).await;
     let (a, b) = pair();
@@ -372,9 +372,48 @@ async fn a_push_redials_a_link_that_only_looks_alive() {
         "the on-screen check dropped a fresh-looking link: {early:?}"
     );
 
-    // The push says the relay has no connection of Bob's: he dials again.
-    bob.relay.redial();
+    // A push: Bob pings; nothing answers within 5 s, so he dials again.
+    bob.relay.check();
+    let dropped = async { while bob.events.recv().await != Some(Event::Disconnected) {} };
+    tokio::time::timeout(Duration::from_secs(10), dropped)
+        .await
+        .expect("the unanswered link was kept");
     assert_eq!(bob.recv_text(true).await, "secret queued");
+}
+
+/// ADR-012, the sleeping link: a push for a link that still answers reads
+/// what came and keeps the link; a new connection would cost a Tor circuit.
+#[tokio::test]
+async fn a_push_keeps_a_link_that_answers() {
+    let url = start_relay(Limits::default()).await;
+    let (a, b) = pair();
+    let mut bob = Peer::new(&url, b);
+    bob.connected().await;
+    bob.publish_keys().await;
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    let bob_key = bob.key();
+    alice.start_session(bob_key).await;
+    alice.send_text(bob_key, 1, "secret one").await;
+    assert_eq!(bob.recv_text(true).await, "secret one");
+
+    bob.relay.check();
+    let events = async {
+        let mut seen = Vec::new();
+        while let Ok(Some(e)) =
+            tokio::time::timeout(Duration::from_secs(7), bob.events.recv()).await
+        {
+            seen.push(e);
+        }
+        seen
+    };
+    let seen = events.await;
+    assert!(
+        !seen
+            .iter()
+            .any(|e| matches!(e, Event::Disconnected | Event::Connected)),
+        "a push dropped a live link: {seen:?}"
+    );
 }
 
 /// Raw WebSocket client, to speak to the relay without the honest transport.

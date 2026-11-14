@@ -1290,11 +1290,11 @@ impl Engine {
         self.lives.iter().for_each(|l| l.relay.reconnect());
     }
 
-    /// A push for `who`: the relay has no connection of that identity, so its
-    /// link dials again. The other identities stay as they are (ADR-014).
+    /// A push for `who`: the relay heard nothing from that identity's link,
+    /// which checks itself (ADR-012). The other identities stay as they are (ADR-014).
     pub fn woken(&self, who: &Ed25519Key) {
         if let Some(slot) = self.slot_of(who) {
-            self.lives[slot].relay.redial();
+            self.lives[slot].relay.check();
         }
     }
 
