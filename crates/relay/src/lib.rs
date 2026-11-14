@@ -350,8 +350,11 @@ async fn upgrade(
         true => Origin::Onion,
         false => Origin::Ip(client_ip(&shared.config, addr, &headers)),
     };
+    // Both limits: tungstenite reads a whole frame before it checks the
+    // message size, so one 16 MiB frame would sit in memory otherwise.
     let mut response = ws
         .max_message_size(MAX_FRAME_BYTES)
+        .max_frame_size(MAX_FRAME_BYTES)
         .on_upgrade(move |socket| connection(shared, socket, origin));
     // ADR-010: clients tell their user when a newer version is out.
     response.headers_mut().insert(
