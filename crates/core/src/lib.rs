@@ -103,7 +103,9 @@ pub struct Client {
 #[derive(Clone, Serialize, Deserialize)]
 struct Seen {
     id: String,
-    sender: Ed25519Key,
+    /// The Curve25519 key that built the session (ADR-019); entries saved
+    /// before 0.6.2 hold the relay-reported Ed25519 key instead.
+    sender: Curve25519Key,
     /// The fallback key that was current when the session was built.
     fallback: u64,
 }
@@ -325,7 +327,8 @@ impl Client {
             .create_inbound_session(SessionConfig::version_1(), their_curve, pre)
             .map_err(|_| Error::DecryptFailed)?;
         // At once, whatever the checks below say: refused once, refused again.
-        self.remember(id, *sender);
+        // Counted under the key Olm vouches for, not the one the relay names.
+        self.remember(id, their_curve.to_bytes());
         let inner = open_inner(&created.plaintext, sender, &me)?;
 
         if !self.contacts.contains_key(sender) {
@@ -376,7 +379,7 @@ impl Client {
         })
     }
 
-    fn remember(&mut self, id: String, sender: Ed25519Key) {
+    fn remember(&mut self, id: String, sender: Curve25519Key) {
         let of_sender = |s: &&Seen| s.sender == sender;
         if self.seen.iter().filter(of_sender).count() >= MAX_SEEN_PER_SENDER
             && let Some(oldest) = self.seen.iter().position(|s| s.sender == sender)

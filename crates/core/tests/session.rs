@@ -383,4 +383,15 @@ fn replay_does_not_bring_back_a_removed_contact() {
     // A backup carries the list along with the fallback key.
     let mut restored = bob.without_sessions();
     assert_eq!(restored.decrypt(&c, &env), Err(Error::DecryptFailed));
+
+    // The relay names Carol as the sender of 200 sessions of its own: they
+    // count against the key that built them, and Carol's entry stays.
+    let mut mallory = Client::default();
+    mallory.add_contact(&bob.identity()).unwrap();
+    for n in 0..201 {
+        on_fallback(&mut mallory, &bob, &fallback);
+        let fake = mallory.encrypt(&b, text(&n.to_string())).unwrap();
+        assert!(bob.decrypt(&c, &fake).is_err());
+    }
+    assert_eq!(bob.decrypt(&c, &env), Err(Error::DecryptFailed));
 }
