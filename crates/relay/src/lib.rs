@@ -53,6 +53,8 @@ pub struct Limits {
     /// (`queue_envelopes`) being acknowledged after a reconnect.
     pub frames_per_key: Rate,
     pub registrations_per_ip: Rate,
+    /// ADR-022: logins of one key; each costs database work under the lock.
+    pub logins_per_key: Rate,
     /// All onion connections arrive from 127.0.0.1, so they share one budget (ADR-004).
     pub onion_connections: usize,
     pub onion_registrations: Rate,
@@ -114,6 +116,10 @@ impl Default for Limits {
                 per_sec: 20.0,
             },
             registrations_per_ip: Rate::per(20.0, HOUR),
+            logins_per_key: Rate {
+                burst: 30.0,
+                per_sec: 1.0 / 60.0,
+            },
             onion_connections: 2000,
             onion_registrations: Rate::per(200.0, HOUR),
             sends_per_key: Rate {
@@ -239,6 +245,7 @@ struct Account {
     claims: Bucket,
     claimed: Bucket,
     reports: Bucket,
+    logins: Bucket,
     /// The last UnifiedPush wake-up sent for this key (ADR-012).
     pushed: Option<Instant>,
 }
@@ -258,6 +265,7 @@ impl Account {
             claims: Bucket::full(l.claims_per_key, now),
             claimed: Bucket::full(l.claims_per_target, now),
             reports: Bucket::full(l.reports_per_key, now),
+            logins: Bucket::full(l.logins_per_key, now),
             pushed: None,
         }
     }
@@ -466,12 +474,23 @@ async fn handshake(shared: &Shared, ws: &mut WebSocket, ip: Origin) -> Result<Se
     }
     let key = identity.ed25519;
 
-    let (tx, rx) = mpsc::channel(256);
+    // ADR-022: a slow reader holds at most one queue page here.
+    let (tx, rx) = mpsc::channel(QUEUE_PAGE);
     let asleep = Arc::new(AtomicBool::new(false));
     let id = {
         let mut relay = shared.lock();
         let now = Instant::now();
         let limits = &shared.config.limits;
+        // After the signature: nobody can use up someone else's logins.
+        let fresh = relay
+            .mem
+            .entry(key)
+            .or_insert_with(|| Account::new(limits, now))
+            .logins
+            .take(limits.logins_per_key, now);
+        if !fresh {
+            return Err(ErrorCode::RateLimited);
+        }
         match db(relay.db.banned(&key))? {
             Some(true) => return Err(ErrorCode::Banned),
             Some(false) => {}
@@ -780,6 +799,9 @@ fn handle(
     })
 }
 
+/// ADR-022: the report journal stops growing here.
+const MAX_JOURNAL: u64 = 10 << 20;
+
 /// One JSON line per report: time, reported key, whether it is now banned, the
 /// disclosed text. No reporter, no IP (rule 14). The operator deletes entries once reviewed.
 // file IO under the global lock; reports are rare and rate-limited.
@@ -796,6 +818,16 @@ fn journal(
         .unwrap_or(0);
     let sender: String = sender.iter().map(|b| format!("{b:02x}")).collect();
     let line = serde_json::json!({ "at": at, "sender": sender, "banned": banned, "text": text });
+    // ADR-022: the report still counts; past the cap its text is not kept.
+    if std::fs::metadata(path).is_ok_and(|m| m.len() >= MAX_JOURNAL) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "report journal is full ({MAX_JOURNAL} bytes); new report texts are dropped"
+            );
+        }
+        return Ok(());
+    }
     let mut opts = std::fs::OpenOptions::new();
     opts.create(true).append(true);
     #[cfg(unix)]

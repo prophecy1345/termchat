@@ -1088,3 +1088,33 @@ async fn a_long_queue_arrives_once_and_in_order() {
     alice.send_text(bob_key, N, "live").await;
     assert_eq!(bob.recv_text(true).await, "live");
 }
+
+/// ADR-022: logins of one key are rate-limited, after the signature check.
+#[tokio::test]
+async fn logins_of_one_key_are_rate_limited() {
+    let limits = Limits {
+        logins_per_key: Rate {
+            burst: 2.0,
+            per_sec: 0.0,
+        },
+        ..Limits::default()
+    };
+    let url = start_relay(limits).await;
+    let alice = Mutex::new(Client::default());
+    for _ in 0..2 {
+        let mut ws = raw(&url).await;
+        assert_eq!(auth(&mut ws, &alice).await, ServerFrame::AuthOk);
+    }
+    let mut ws = raw(&url).await;
+    assert_eq!(
+        auth(&mut ws, &alice).await,
+        ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::RateLimited
+        }
+    );
+    // Someone else is not affected.
+    let bob = Mutex::new(Client::default());
+    let mut ws = raw(&url).await;
+    assert_eq!(auth(&mut ws, &bob).await, ServerFrame::AuthOk);
+}
