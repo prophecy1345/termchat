@@ -1,0 +1,41 @@
+---
+import Doc from "./Doc.astro";
+import type { Lang } from "../i18n";
+import { posts } from "../releases";
+
+interface Props {
+  lang: Lang;
+}
+const lang = Astro.props.lang;
+const list = await posts(lang);
+const p = lang === "en" ? "" : "/ru";
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const t =
+  lang === "en"
+    ? {
+        title: "termchat.app blog: building an encrypted messenger",
+        description: "Articles about building termchat.app: encryption, Tor, Android in the background, relay design and security reviews, with the numbers and the trade-offs.",
+        h1: "Blog",
+        empty: "Nothing here yet.",
+        locale: "en-GB",
+      }
+    : {
+        title: "Блог termchat.app: как делается зашифрованный мессенджер",
+        description: "Статьи о том, как устроен termchat.app: шифрование, Tor, Android в фоне, устройство relay и обзоры безопасности, с цифрами и компромиссами.",
+        h1: "Блог",
+        empty: "Пока пусто.",
+        locale: "ru-RU",
+      };
+const day = (d: Date) => d.toLocaleDateString(t.locale, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+---
+
+<Doc lang={lang} title={t.title} description={t.description} h1={t.h1} en="/blog/" ru="/ru/blog/">
+  {list.length === 0 && <p class="sub">{t.empty}</p>}
+  {list.map((post) => (
+    <article>
+      <h2><a href={url(`${p}/blog/${post.slug}/`)}>{post.title}</a></h2>
+      <p class="dim">{day(post.date)}</p>
+      <p class="sub">{post.description}</p>
+    </article>
+  ))}
+</Doc>

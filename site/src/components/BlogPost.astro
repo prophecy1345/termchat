@@ -1,0 +1,29 @@
+---
+import Doc from "./Doc.astro";
+import type { Post } from "../releases";
+
+interface Props {
+  post: Post;
+  /** The same article in the other language, if there is one. */
+  other: boolean;
+}
+const { post, other } = Astro.props;
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const en = other || post.lang === "en" ? `/blog/${post.slug}/` : "/blog/";
+const ru = other || post.lang === "ru" ? `/ru/blog/${post.slug}/` : "/ru/blog/";
+const locale = post.lang === "en" ? "en-GB" : "ru-RU";
+const ld = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  headline: post.title,
+  description: post.description,
+  datePublished: post.date.toISOString(),
+  inLanguage: post.lang,
+  author: { "@type": "Organization", name: "termchat.app", url: new URL(url("/"), Astro.site).href },
+};
+---
+
+<Doc lang={post.lang} title={`${post.title} | termchat.app`} description={post.description} h1={post.title} en={en} ru={ru} ld={ld}>
+  <p class="dim">{post.date.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}</p>
+  <div class="md" set:html={post.html} />
+</Doc>

@@ -1,0 +1,47 @@
+---
+// CHANGELOG.md as a page, with the date each release went out.
+import Doc from "./Doc.astro";
+import { REPO, type Lang } from "../i18n";
+import { releases } from "../releases";
+
+interface Props {
+  lang: Lang;
+}
+const lang = Astro.props.lang;
+const list = await releases();
+const t =
+  lang === "en"
+    ? {
+        title: "termchat.app changelog: what is new in each release",
+        description: "Every termchat.app release with what changed: features, fixes and security work, newest first. Also as an RSS feed.",
+        h1: "Changelog",
+        intro: "What changed in each release, newest first. The apps show the same notes under What's new.",
+        feed: "Subscribe with RSS",
+        release: "Release on GitHub",
+        locale: "en-GB",
+      }
+    : {
+        title: "termchat.app: история версий — что нового в каждом релизе",
+        description: "Все релизы termchat.app и что в них изменилось: новые возможности, исправления и работа над безопасностью. Есть RSS-лента.",
+        h1: "История версий",
+        intro: "Что менялось в каждом релизе, новые сверху. Заметки пишутся на английском, как и в самих приложениях (What's new).",
+        feed: "Подписаться через RSS",
+        release: "Релиз на GitHub",
+        locale: "ru-RU",
+      };
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const day = (d: Date) => d.toLocaleDateString(t.locale, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+---
+
+<Doc lang={lang} title={t.title} description={t.description} h1={t.h1} en="/changelog/" ru="/ru/changelog/">
+  <p class="sub">{t.intro} <a href={url("/rss.xml")}>{t.feed}</a>.</p>
+  <div class="md">
+    {list.map((r) => (
+      <article lang="en">
+        <h2 id={`v${r.version}`}>{r.version}</h2>
+        <p class="dim">{r.date ? day(r.date) + " · " : ""}<a href={`${REPO}/releases/tag/v${r.version}`}>{t.release}</a></p>
+        <Fragment set:html={r.html} />
+      </article>
+    ))}
+  </div>
+</Doc>

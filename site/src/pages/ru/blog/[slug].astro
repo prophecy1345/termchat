@@ -1,0 +1,13 @@
+---
+import BlogPost from "../../../components/BlogPost.astro";
+import { posts } from "../../../releases";
+
+export async function getStaticPaths() {
+  const mine = await posts("ru");
+  const other = new Set((await posts("en")).map((p) => p.slug));
+  return mine.map((post) => ({ params: { slug: post.slug }, props: { post, other: other.has(post.slug) } }));
+}
+const { post, other } = Astro.props;
+---
+
+<BlogPost post={post} other={other} />

@@ -3,6 +3,7 @@
 import "../styles/site.css";
 import { REPO, SPONSOR, type Lang } from "../i18n";
 import Head from "./Head.astro";
+import { posts } from "../releases";
 
 interface Props {
   lang: Lang;
@@ -17,10 +18,12 @@ interface Props {
 const { lang, title, description, h1, en, ru, ld } = Astro.props;
 const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const p = lang === "en" ? "" : "/ru";
-const links =
+const blog = (await posts(lang)).length > 0;
+const links = (
   lang === "en"
-    ? [["/compare/", "Compare"], ["/faq/", "FAQ"], ["/self-host/", "Run a relay"], ["/threat-model/", "Threat model"]]
-    : [["/compare/", "Сравнение"], ["/faq/", "Вопросы"], ["/self-host/", "Свой relay"], ["/threat-model/", "Модель угроз"]];
+    ? [["/compare/", "Compare"], ["/faq/", "FAQ"], ["/self-host/", "Run a relay"], ["/threat-model/", "Threat model"], ["/changelog/", "Changelog"], ["/blog/", "Blog"]]
+    : [["/compare/", "Сравнение"], ["/faq/", "Вопросы"], ["/self-host/", "Свой relay"], ["/threat-model/", "Модель угроз"], ["/changelog/", "Версии"], ["/blog/", "Блог"]]
+).filter(([path]) => blog || path !== "/blog/");
 const install = lang === "en" ? "Install termchat.app" : "Установить termchat.app";
 ---
 

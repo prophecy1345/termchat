@@ -48,4 +48,5 @@ const csp =
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content={description} />
 <meta name="twitter:card" content="summary_large_image" />
+<link rel="alternate" type="application/rss+xml" title="termchat.app" href={url("/rss.xml")} />
 {ld && <script is:inline type="application/ld+json" set:html={JSON.stringify(ld)} />}
