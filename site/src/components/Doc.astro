@@ -1,8 +1,9 @@
 ---
 // A text page: comparison, FAQ, guides. Same look as the privacy policy.
 import "../styles/site.css";
-import { REPO, SPONSOR, type Lang } from "../i18n";
+import { REPO, type Lang } from "../i18n";
 import Head from "./Head.astro";
+import Footer from "./Footer.astro";
 import { posts } from "../releases";
 
 interface Props {
@@ -48,13 +49,6 @@ const install = lang === "en" ? "Install termchat.app" : "Установить t
         <p class="more"><a class="button primary" href={url(`${p}/#install`)}>{install}</a></p>
       </section>
     </main>
-    <footer>
-      <p>
-        {links.map(([path, label]) => <><a href={url(`${p}${path}`)}>{label}</a> · </>)}
-        <a href={url(`${p}/privacy/`)}>{lang === "en" ? "Privacy" : "Конфиденциальность"}</a> ·
-        <a href={SPONSOR}>{lang === "en" ? "Sponsor" : "Поддержать"}</a>
-      </p>
-      <p class="dim">© 2026 termchat.app</p>
-    </footer>
+    <Footer lang={lang} other={lang === "en" ? ru : en} />
   </body>
 </html>

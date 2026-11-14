@@ -1,0 +1,60 @@
+---
+// The same footer on every page, links grouped by what they are for.
+import { REPO, SPONSOR, texts, type Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+  /** This page in the other language; the other home page by default. */
+  other?: string;
+}
+const lang = Astro.props.lang;
+const t = texts[lang];
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const p = lang === "en" ? "" : "/ru";
+const blob = (path: string) => `${REPO}/blob/main/${path}`;
+const g =
+  lang === "en"
+    ? { app: "termchat.app", security: "Security", project: "Project", install: "Install", reviews: "Security reviews" }
+    : { app: "termchat.app", security: "Безопасность", project: "Проект", install: "Установка", reviews: "Обзоры безопасности" };
+const groups: [string, [string, string][]][] = [
+  [g.app, [
+    [url(`${p}/#install`), g.install],
+    [url(`${p}/changelog/`), t.footer.changelog],
+    [url(`${p}/blog/`), t.nav.blog],
+    [url("/rss.xml"), "RSS"],
+    [url(`${p}/compare/`), t.footer.compare],
+    [url(`${p}/faq/`), t.footer.faq],
+  ]],
+  [g.security, [
+    [url(`${p}/threat-model/`), t.footer.threatModel],
+    [url(`${p}/privacy/`), t.footer.privacy],
+    [blob(t.docs.verify), t.install.verify],
+    [`${REPO}/tree/main/docs/security`, g.reviews],
+  ]],
+  [g.project, [
+    [REPO, "GitHub"],
+    [url(`${p}/self-host/`), t.relayLink],
+    [blob("LICENSE"), t.footer.licence],
+    [blob(t.docs.use), t.footer.use],
+    [SPONSOR, t.footer.sponsor],
+  ]],
+];
+---
+
+<footer>
+  <nav class="groups">
+    {groups.map(([title, links]) => (
+      <div>
+        <p class="group">{title}</p>
+        <ul>{links.map(([href, label]) => <li><a href={href}>{label}</a></li>)}</ul>
+      </div>
+    ))}
+  </nav>
+  <p class="about">{t.footer.about}</p>
+  <p class="dim">{t.footer.note}</p>
+  <p class="dim">
+    <a href="https://findahelpline.com">{t.footer.help}</a> ·
+    <a href={url(Astro.props.other ?? t.other.href)} hreflang={lang === "en" ? "ru" : "en"}>{t.other.label}</a> ·
+    © 2026 termchat.app
+  </p>
+</footer>

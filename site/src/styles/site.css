@@ -738,3 +738,31 @@ footer .about {
 .doc td:first-child {
   color: var(--subtext);
 }
+
+footer .groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1.5rem;
+  max-width: 44rem;
+  margin: 0 auto 1.5rem;
+  text-align: left;
+}
+
+footer .group {
+  color: var(--mauve);
+  margin: 0 0 0.5rem;
+}
+
+footer ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+footer li {
+  margin: 0.3rem 0;
+}
+
+footer li a {
+  color: var(--subtext);
+}

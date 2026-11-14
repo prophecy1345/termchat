@@ -3,6 +3,7 @@ import "../styles/site.css";
 import { REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
 import Cmd from "./Cmd.astro";
 import Head from "./Head.astro";
+import Footer from "./Footer.astro";
 
 interface Props {
   lang: Lang;
@@ -213,27 +214,7 @@ const ld = {
       </section>
     </main>
 
-    <footer>
-      <p>
-        <a href={blob("LICENSE")}>{t.footer.licence}</a> ·
-        <a href={REPO}>GitHub</a> ·
-        <a href={blob(t.docs.use)}>{t.footer.use}</a> ·
-        <a href={url(`${p}/compare/`)}>{t.footer.compare}</a> ·
-        <a href={url(`${p}/faq/`)}>{t.footer.faq}</a> ·
-        <a href={url(`${p}/self-host/`)}>{t.relayLink}</a> ·
-        <a href={url(`${p}/threat-model/`)}>{t.footer.threatModel}</a> ·
-        <a href={url(`${p}/blog/`)}>{t.nav.blog}</a> ·
-        <a href={url(`${p}/changelog/`)}>{t.footer.changelog}</a> ·
-        <a href={url("/rss.xml")}>RSS</a> ·
-        <a href={url(`${p}/privacy/`)}>{t.footer.privacy}</a> ·
-        <a href={SPONSOR}>{t.footer.sponsor}</a> ·
-        <a href="https://findahelpline.com">{t.footer.help}</a> ·
-        <a href={url(t.other.href)}>{t.other.label}</a>
-      </p>
-      <p class="about">{t.footer.about}</p>
-      <p class="dim">{t.footer.note}</p>
-      <p class="dim">© 2026 termchat.app</p>
-    </footer>
+    <Footer lang={t.lang} />
 
     <script>
       import "../scripts/cipher";

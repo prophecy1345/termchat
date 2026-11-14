@@ -2,6 +2,7 @@
 import "../styles/site.css";
 import { REPO, type Lang } from "../i18n";
 import Head from "./Head.astro";
+import Footer from "./Footer.astro";
 
 // The privacy policy Google Play asks for. Keep in step with
 // docs/threat-model.md: it must not promise more than the threat model does.
@@ -118,5 +119,6 @@ const t = Astro.props.lang === "en" ? en : ru;
         <p class="more"><a href={`${REPO}/blob/main/${t.threatModelPath}`}>{t.threatModel} →</a></p>
       </section>
     </main>
+    <Footer lang={Astro.props.lang} other={Astro.props.lang === "en" ? "/ru/privacy/" : "/privacy/"} />
   </body>
 </html>
