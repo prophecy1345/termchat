@@ -44,6 +44,12 @@ pub struct Db {
     conn: Connection,
     /// Sum of queued envelope sizes, kept here instead of summing on every send.
     queue_bytes: u64,
+    /// Last envelope id handed out. SQLite alone gives `max(id) + 1`, so an
+    /// emptied queue starts again at 1, and a connection that already got
+    /// ids up to N in its login pages would skip the live ones (lib.rs).
+    /// Kept here, ids only grow while the relay runs; a restart drops every
+    /// connection, so starting over from the table then is safe.
+    last_id: u64,
 }
 
 pub struct Queued {
@@ -76,11 +82,15 @@ impl Db {
                 "ALTER TABLE accounts ADD COLUMN push TEXT; PRAGMA user_version = 2;",
             )?;
         }
-        let queue_bytes: i64 =
-            conn.query_row("SELECT COALESCE(SUM(size), 0) FROM queue", [], |r| r.get(0))?;
+        let (queue_bytes, last_id): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(size), 0), COALESCE(MAX(id), 0) FROM queue",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
         Ok(Self {
             conn,
             queue_bytes: queue_bytes as u64,
+            last_id: last_id as u64,
         })
     }
 
@@ -235,12 +245,14 @@ impl Db {
         now: i64,
     ) -> Result<u64> {
         let size = envelope.body.len();
+        let id = self.last_id + 1;
         self.conn.execute(
-            "INSERT INTO queue (recipient, sender, envelope, size, created_at) VALUES (?, ?, ?, ?, ?)",
-            params![recipient, sender, envelope.encode(), size as i64, now],
+            "INSERT INTO queue (id, recipient, sender, envelope, size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            params![id as i64, recipient, sender, envelope.encode(), size as i64, now],
         )?;
+        self.last_id = id;
         self.queue_bytes += size as u64;
-        Ok(self.conn.last_insert_rowid() as u64)
+        Ok(id)
     }
 
     /// The whole queue; the relay itself reads it in pages (`queued_after`).

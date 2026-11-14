@@ -233,6 +233,31 @@ async fn online_offline_and_redelivery() {
 }
 
 #[tokio::test]
+async fn a_live_message_after_an_emptied_queue_is_delivered() {
+    let url = start_relay(Limits::default()).await;
+    let (a, b) = pair();
+    let mut bob = Peer::new(&url, Arc::clone(&b));
+    bob.connected().await;
+    bob.publish_keys().await;
+    let bob_key = bob.key();
+    drop(bob);
+    let mut alice = Peer::new(&url, a);
+    alice.connected().await;
+    alice.start_session(bob_key).await;
+
+    // Bob logs in to a queue of one and empties it.
+    alice.send_text(bob_key, 1, "secret queued").await;
+    let mut bob = Peer::new(&url, b);
+    assert_eq!(bob.recv_text(true).await, "secret queued");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The next one comes live, on the same connection, with an id that
+    // must not look like one the login page already carried.
+    alice.send_text(bob_key, 2, "secret live").await;
+    assert_eq!(bob.recv_text(true).await, "secret live");
+}
+
+#[tokio::test]
 async fn reconnects_when_relay_comes_up_later() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
