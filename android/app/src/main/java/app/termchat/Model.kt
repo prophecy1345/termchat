@@ -195,7 +195,11 @@ class Model(private val context: Context) : Listener {
         link()
     }
 
-    fun touch() { lastInput = System.currentTimeMillis() }
+    /** Input. A touch after the time is up locks first: it must not undo a lock that is due. */
+    fun touch() {
+        lockIfIdle()
+        lastInput = System.currentTimeMillis()
+    }
 
     /** After the user changed something: the engine only reports the relay's changes. */
     fun changed() { version++ }

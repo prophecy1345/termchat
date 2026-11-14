@@ -35,10 +35,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Before anything shows or a touch can reset the time: the periodic
+        // check stops while the phone sleeps. Stay connected: time in the
+        // background does not count (ADR-012); otherwise it does (ADR-011).
+        if (model.stay) model.touch() else model.lockIfIdle()
         model.visible = true
-        // Stay connected: time in the background does not count toward the
-        // idle lock, else the next check (within 10 s) locks before a touch.
-        if (model.stay) model.touch()
         model.account?.reconnect()
         model.seen()
     }
