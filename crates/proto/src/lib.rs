@@ -7,7 +7,8 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u16 = 1;
+/// Anonymous queues (ADR-023). Version 1 had accounts and is not supported.
+pub const VERSION: u16 = 2;
 /// Padded plaintext sizes (protocol.md, section 8).
 pub const BUCKETS: [usize; 3] = [512, 4096, 16384];
 pub const MAX_TEXT_BYTES: usize = 16_000;
@@ -37,6 +38,10 @@ pub const QUEUE_TTL_DAYS: u64 = 14;
 pub type Ed25519Key = [u8; 32];
 pub type Curve25519Key = [u8; 32];
 pub type Signature = [u8; 64];
+/// A queue address (ADR-023): `recv_id` to read it, `send_id` to write to it.
+pub type QueueId = [u8; 16];
+/// The queue owner's secret; the relay keeps only its SHA-256.
+pub type QueueToken = [u8; 32];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -52,7 +57,6 @@ pub enum Error {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Envelope {
     pub version: u16,
-    pub recipient: Ed25519Key,
     /// 0 = pre-key, 1 = normal (vodozemac `OlmMessage::to_parts`).
     pub olm_type: u8,
     pub body: Vec<u8>,
@@ -85,77 +89,98 @@ impl Envelope {
     }
 }
 
-/// Client to relay (protocol.md, sections 3-5).
+/// Client to relay (protocol.md, sections 3-5). Nothing here names a person:
+/// the relay knows queues only (ADR-023).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientFrame {
+    /// First frame on every connection. Stays variant 0, so a version 1
+    /// client still gets a readable `UnsupportedVersion`.
     Hello {
         version: u16,
     },
-    /// `signature` over `"termchat-auth-v1" || relay_host || nonce`.
-    Auth {
-        identity: Identity,
-        #[serde(with = "serde_big_array")]
-        signature: Signature,
+    CreateQueue,
+    DeleteQueue {
+        recv_id: QueueId,
+        token: QueueToken,
     },
+    Subscribe {
+        recv_id: QueueId,
+        token: QueueToken,
+    },
+    /// Prekeys of the queue; a contact queue carries one-time keys only.
     PublishKeys {
+        recv_id: QueueId,
+        token: QueueToken,
         one_time: Vec<SignedKey>,
         fallback: Option<SignedKey>,
     },
     ClaimKey {
-        target: Ed25519Key,
+        send_id: QueueId,
     },
+    /// No authentication: knowing `send_id` is the right to write.
     Send {
         client_id: u64,
+        send_id: QueueId,
         envelope: Envelope,
     },
     Ack {
+        recv_id: QueueId,
         relay_id: u64,
     },
-    /// The recipient chose to disclose `text` from `sender` to the relay operator (ADR-006).
+    /// The queue owner chose to disclose `text` to the relay operator (ADR-006).
     Report {
-        sender: Ed25519Key,
+        recv_id: QueueId,
+        token: QueueToken,
         text: String,
     },
-    /// Forget this key, its prekeys and its queue (ADR-009).
-    Unregister,
-    /// Where to wake this key when a message waits for it; `None` forgets it (ADR-012).
+    /// Where to wake the owner when a message waits in the queue; `None` forgets it (ADR-012).
     SetPush {
+        recv_id: QueueId,
+        token: QueueToken,
         endpoint: Option<String>,
     },
 }
 
-/// Relay to client.
+/// Relay to client. `Error` stays variant 7, as in version 1, so an old
+/// client can read why it was turned away.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerFrame {
-    Challenge {
-        nonce: [u8; 32],
+    QueueCreated {
+        recv_id: QueueId,
+        send_id: QueueId,
+        token: QueueToken,
     },
-    AuthOk,
+    Subscribed {
+        recv_id: QueueId,
+    },
     ClaimedKey {
-        target: Ed25519Key,
+        send_id: QueueId,
         key: SignedKey,
     },
-    /// `fallback_used`: the relay handed out the fallback key; rotate it (ADR-002).
+    /// Sent to the queue's subscriber. `fallback_used`: the relay handed out
+    /// the fallback key; rotate it (ADR-002).
     KeyCount {
+        recv_id: QueueId,
         one_time_left: u32,
         fallback_used: bool,
     },
     Accepted {
         client_id: u64,
     },
-    /// Same answer whatever the relay did, so reports cannot probe bans.
+    /// Same answer whatever the relay did.
     Reported,
     Deliver {
+        recv_id: QueueId,
         relay_id: u64,
-        sender: Ed25519Key,
         envelope: Envelope,
     },
     Error {
         client_id: Option<u64>,
         code: ErrorCode,
     },
-    /// The key is gone from the relay; the connection closes next (ADR-009).
-    Unregistered,
+    QueueDeleted {
+        recv_id: QueueId,
+    },
     /// `SetPush` was stored (ADR-012).
     PushSet,
 }
@@ -163,18 +188,16 @@ pub enum ServerFrame {
 /// protocol.md, section 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ErrorCode {
+    /// Variant 0, as in version 1 (see `ServerFrame`).
     UnsupportedVersion,
     Malformed,
     TooLarge,
-    NotAuthenticated,
-    BadSignature,
-    ChallengeExpired,
     RateLimited,
     NoKeys,
-    UnknownRecipient,
+    /// No such queue, or a wrong token: one answer, so a token cannot probe
+    /// which queues exist.
+    UnknownQueue,
     QueueFull,
-    /// Banned on this relay after reports (ADR-006).
-    Banned,
     Internal,
 }
 
@@ -208,6 +231,7 @@ impl ClientFrame {
             }
             Self::SetPush {
                 endpoint: Some(url),
+                ..
             } if url.len() > MAX_PUSH_URL_BYTES => return Err(Error::TooLarge),
             _ => {}
         }
@@ -243,57 +267,38 @@ pub struct Identity {
 }
 
 /// What a user hands out to be added: `termchat:<base64url(postcard)>` (protocol.md, section 9).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Versions 1 and 2 named only the identity; they are refused (ADR-023).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Invite {
+    pub version: u16,
     pub relay_url: String,
     /// The same relay as a Tor onion service, if it has one (ADR-004).
     pub onion_url: Option<String>,
     pub identity: Identity,
-    /// Echoed in `ContactRequestV2`; `None` only in old (version 1) invites (ADR-013).
-    pub code: Option<InviteCode>,
+    /// `send_id` of the invite queue, where strangers write.
+    pub queue: QueueId,
+    /// Echoed in `ContactRequestV2` (ADR-013).
+    pub code: InviteCode,
 }
 
 pub type InviteCode = [u8; 16];
 
-/// On the wire: version 1 has no code, version 2 ends with one.
-#[derive(Serialize, Deserialize)]
-struct InviteWire<C> {
-    version: u16,
-    relay_url: String,
-    onion_url: Option<String>,
-    identity: Identity,
-    code: C,
-}
-
+pub const INVITE_VERSION: u16 = 3;
 const INVITE_PREFIX: &str = "termchat:";
 const MAX_RELAY_URL: usize = 256;
 
+fn check_urls(relay_url: &str, onion_url: Option<&str>) -> Result<(), Error> {
+    if relay_url.len() > MAX_RELAY_URL || onion_url.is_some_and(|u| u.len() > MAX_RELAY_URL) {
+        return Err(Error::TooLarge);
+    }
+    Ok(())
+}
+
 impl Invite {
     pub fn encode(&self) -> String {
-        let (relay_url, onion_url, identity) = (
-            self.relay_url.clone(),
-            self.onion_url.clone(),
-            self.identity.clone(),
-        );
-        let bytes = match self.code {
-            None => postcard::to_allocvec(&InviteWire {
-                version: 1,
-                relay_url,
-                onion_url,
-                identity,
-                code: (),
-            }),
-            Some(code) => postcard::to_allocvec(&InviteWire {
-                version: 2,
-                relay_url,
-                onion_url,
-                identity,
-                code,
-            }),
-        };
         format!(
             "{INVITE_PREFIX}{}",
-            URL_SAFE_NO_PAD.encode(bytes.unwrap_or_default())
+            URL_SAFE_NO_PAD.encode(postcard::to_allocvec(self).unwrap_or_default())
         )
     }
 
@@ -309,35 +314,11 @@ impl Invite {
         let bytes = URL_SAFE_NO_PAD.decode(b64).map_err(|_| Error::Malformed)?;
         let (version, _): (u16, _) =
             postcard::take_from_bytes(&bytes).map_err(|_| Error::Malformed)?;
-        let invite = match version {
-            1 => {
-                let w: InviteWire<()> = decode_exact(&bytes)?;
-                Self {
-                    relay_url: w.relay_url,
-                    onion_url: w.onion_url,
-                    identity: w.identity,
-                    code: None,
-                }
-            }
-            2 => {
-                let w: InviteWire<InviteCode> = decode_exact(&bytes)?;
-                Self {
-                    relay_url: w.relay_url,
-                    onion_url: w.onion_url,
-                    identity: w.identity,
-                    code: Some(w.code),
-                }
-            }
-            _ => return Err(Error::UnsupportedVersion),
-        };
-        if invite.relay_url.len() > MAX_RELAY_URL
-            || invite
-                .onion_url
-                .as_ref()
-                .is_some_and(|u| u.len() > MAX_RELAY_URL)
-        {
-            return Err(Error::TooLarge);
+        if version != INVITE_VERSION {
+            return Err(Error::UnsupportedVersion);
         }
+        let invite: Self = decode_exact(&bytes)?;
+        check_urls(&invite.relay_url, invite.onion_url.as_deref())?;
         Ok(invite)
     }
 }
@@ -397,6 +378,13 @@ pub enum Body {
         expires_in: Option<u32>,
         data: Vec<u8>,
     },
+    /// Write to me here from now on (ADR-023). Sent only inside Olm, so only
+    /// the contact learns the address.
+    QueueOffer {
+        relay_url: String,
+        onion_url: Option<String>,
+        send_id: QueueId,
+    },
 }
 
 impl Inner {
@@ -440,6 +428,11 @@ impl Inner {
             Body::ContactRequest { nickname, .. }
             | Body::ContactRequestV2 { nickname, .. }
             | Body::ContactAccept { nickname } => check_nickname(nickname),
+            Body::QueueOffer {
+                relay_url,
+                onion_url,
+                ..
+            } => check_urls(relay_url, onion_url.as_deref()),
             Body::File {
                 name,
                 size,
@@ -736,36 +729,50 @@ mod tests {
     fn frames_roundtrip_and_check_limits() {
         let env = Envelope {
             version: VERSION,
-            recipient: [3; 32],
             olm_type: 0,
             body: vec![1; 10],
         };
         let send = ClientFrame::Send {
             client_id: 7,
+            send_id: [5; 16],
             envelope: env.clone(),
         };
         assert_eq!(ClientFrame::decode(&send.encode()).unwrap(), send);
         let deliver = ServerFrame::Deliver {
+            recv_id: [4; 16],
             relay_id: 1,
-            sender: [4; 32],
             envelope: env.clone(),
         };
         assert_eq!(ServerFrame::decode(&deliver.encode()).unwrap(), deliver);
-        let bye = ClientFrame::Unregister;
-        assert_eq!(ClientFrame::decode(&bye.encode()).unwrap(), bye);
-        let mut trailing = bye.encode();
+        let create = ClientFrame::CreateQueue;
+        assert_eq!(ClientFrame::decode(&create.encode()).unwrap(), create);
+        let mut trailing = create.encode();
         trailing.push(0);
         assert_eq!(ClientFrame::decode(&trailing), Err(Error::Malformed));
-        let gone = ServerFrame::Unregistered;
-        assert_eq!(ServerFrame::decode(&gone.encode()).unwrap(), gone);
+        let created = ServerFrame::QueueCreated {
+            recv_id: [1; 16],
+            send_id: [2; 16],
+            token: [3; 32],
+        };
+        assert_eq!(ServerFrame::decode(&created.encode()).unwrap(), created);
         let push = ClientFrame::SetPush {
+            recv_id: [1; 16],
+            token: [3; 32],
             endpoint: Some("https://ntfy.sh/upAbc".into()),
         };
         assert_eq!(ClientFrame::decode(&push.encode()).unwrap(), push);
         let long = ClientFrame::SetPush {
+            recv_id: [1; 16],
+            token: [3; 32],
             endpoint: Some("x".repeat(MAX_PUSH_URL_BYTES + 1)),
         };
         assert_eq!(ClientFrame::decode(&long.encode()), Err(Error::TooLarge));
+        let report = ClientFrame::Report {
+            recv_id: [1; 16],
+            token: [3; 32],
+            text: "x".repeat(MAX_TEXT_BYTES + 1),
+        };
+        assert_eq!(ClientFrame::decode(&report.encode()), Err(Error::TooLarge));
         assert_eq!(
             ServerFrame::decode(&ServerFrame::PushSet.encode()).unwrap(),
             ServerFrame::PushSet
@@ -773,6 +780,7 @@ mod tests {
 
         let old = ClientFrame::Send {
             client_id: 7,
+            send_id: [5; 16],
             envelope: Envelope { version: 9, ..env },
         };
         assert_eq!(
@@ -784,6 +792,8 @@ mod tests {
             signature: [0; 64],
         };
         let many = ClientFrame::PublishKeys {
+            recv_id: [1; 16],
+            token: [3; 32],
             one_time: vec![key; MAX_KEYS_PER_PUBLISH + 1],
             fallback: None,
         };
@@ -795,8 +805,27 @@ mod tests {
     }
 
     #[test]
-    fn invite_roundtrip() {
-        let mut invite = Invite {
+    fn version_1_client_reads_the_refusal() {
+        // A version 1 client opens with `Hello { version: 1 }` and can decode
+        // only its own `ServerFrame`: `Error` must keep variant 7 and
+        // `UnsupportedVersion` variant 0, or it sees garbage instead of
+        // "please update".
+        assert_eq!(
+            ClientFrame::Hello { version: 1 }.encode(),
+            [0, 1],
+            "Hello is variant 0"
+        );
+        let refusal = ServerFrame::Error {
+            client_id: None,
+            code: ErrorCode::UnsupportedVersion,
+        };
+        assert_eq!(refusal.encode(), [7, 0, 0]);
+    }
+
+    #[test]
+    fn invite_roundtrip_and_old_versions_refused() {
+        let invite = Invite {
+            version: INVITE_VERSION,
             relay_url: "wss://relay.example.org/".into(),
             onion_url: Some(
                 "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuv.onion/".into(),
@@ -806,29 +835,68 @@ mod tests {
                 curve25519: [2; 32],
                 signature: [3; 64],
             },
-            code: None,
+            queue: [4; 16],
+            code: [9; 16],
         };
-        let v1 = invite.encode();
-        assert!(v1.starts_with("termchat:") && v1.len() < 350, "{v1}");
-        assert_eq!(Invite::decode(&format!("  {v1}\n")).unwrap(), invite);
+        let s = invite.encode();
+        assert!(s.starts_with("termchat:") && s.len() < 400, "{s}");
+        assert_eq!(Invite::decode(&format!("  {s}\n")).unwrap(), invite);
         assert_eq!(Invite::decode("termchat:!!!"), Err(Error::Malformed));
-        assert_eq!(Invite::decode(&v1[1..]), Err(Error::Malformed));
+        assert_eq!(Invite::decode(&s[1..]), Err(Error::Malformed));
 
-        invite.code = Some([9; 16]);
-        let v2 = invite.encode();
-        assert_eq!(Invite::decode(&v2).unwrap(), invite);
-        // Version 2 bytes must not parse as version 1 plus junk, nor the reverse.
-        let raw = |s: &str| URL_SAFE_NO_PAD.decode(&s[INVITE_PREFIX.len()..]).unwrap();
-        let swap = |mut b: Vec<u8>, v| {
-            b[0] = v;
-            format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(b))
+        let raw = URL_SAFE_NO_PAD.decode(&s[INVITE_PREFIX.len()..]).unwrap();
+        let with = |b: &[u8]| format!("{INVITE_PREFIX}{}", URL_SAFE_NO_PAD.encode(b));
+        for v in [1, 2, 4] {
+            let mut old = raw.clone();
+            old[0] = v;
+            assert_eq!(
+                Invite::decode(&with(&old)),
+                Err(Error::UnsupportedVersion),
+                "version {v}"
+            );
+        }
+        let mut trailing = raw.clone();
+        trailing.push(0);
+        assert_eq!(Invite::decode(&with(&trailing)), Err(Error::Malformed));
+        let long = Invite {
+            relay_url: "x".repeat(MAX_RELAY_URL + 1),
+            ..invite
         };
-        assert_eq!(Invite::decode(&swap(raw(&v2), 1)), Err(Error::Malformed));
-        assert_eq!(Invite::decode(&swap(raw(&v1), 2)), Err(Error::Malformed));
-        assert_eq!(
-            Invite::decode(&swap(raw(&v2), 3)),
-            Err(Error::UnsupportedVersion)
-        );
+        assert_eq!(Invite::decode(&long.encode()), Err(Error::TooLarge));
+    }
+
+    #[test]
+    fn queue_offer_roundtrip_and_url_limits() {
+        let offer = Inner {
+            body: Body::QueueOffer {
+                relay_url: "wss://relay.example.org/".into(),
+                onion_url: None,
+                send_id: [8; 16],
+            },
+            ..text(0)
+        };
+        let padded = offer.to_padded().unwrap();
+        assert_eq!(padded.len(), 512);
+        assert_eq!(Inner::from_padded(&padded).unwrap(), offer);
+        for (relay_url, onion_url) in [
+            ("x".repeat(MAX_RELAY_URL + 1), None),
+            ("x".into(), Some("y".repeat(MAX_RELAY_URL + 1))),
+        ] {
+            let bad = Inner {
+                body: Body::QueueOffer {
+                    relay_url,
+                    onion_url,
+                    send_id: [8; 16],
+                },
+                ..text(0)
+            };
+            assert_eq!(bad.to_padded(), Err(Error::TooLarge));
+            // The same check on decode, for a peer that skips `to_padded`.
+            let mut buf = postcard::to_allocvec(&bad).unwrap();
+            buf.push(0x80);
+            buf.resize(4096, 0);
+            assert_eq!(Inner::from_padded(&buf), Err(Error::TooLarge));
+        }
     }
 
     #[test]
@@ -850,7 +918,6 @@ mod tests {
     fn envelope_checks_version_size_and_trailing_bytes() {
         let env = Envelope {
             version: VERSION,
-            recipient: [3; 32],
             olm_type: 1,
             body: vec![9; 100],
         };
@@ -860,8 +927,8 @@ mod tests {
         bytes.push(0);
         assert_eq!(Envelope::decode(&bytes), Err(Error::Malformed));
 
-        // Overlong varint for version 1.
-        let mut overlong = vec![0x81, 0x00];
+        // Overlong varint for the version.
+        let mut overlong = vec![0x82, 0x00];
         overlong.extend_from_slice(&env.encode()[1..]);
         assert_eq!(Envelope::decode(&overlong), Err(Error::Malformed));
 
