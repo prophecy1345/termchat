@@ -82,8 +82,39 @@ impl Pal {
         ctx.set_fonts(fonts);
     }
 
+    /// A light background: the theme is a light one.
+    pub fn light(&self) -> bool {
+        let [r, g, b, _] = self.bg.to_array();
+        u32::from(r) + u32::from(g) + u32::from(b) > 3 * 128
+    }
+
     pub fn apply(&self, ctx: &egui::Context) {
-        let mut v = egui::Visuals::dark();
+        let light = self.light();
+        let mut v = match light {
+            true => egui::Visuals::light(),
+            false => egui::Visuals::dark(),
+        };
+        // egui's own widget greys suit only its own dark look: on a light
+        // theme buttons, fields and lists came out dark grey with dark text.
+        if light {
+            let mix = crate::synth::mix;
+            let w = &mut v.widgets;
+            // The theme's light surface, a frame in its line colour, a touch
+            // of accent when hovered or pressed: text keeps the contrast it
+            // has everywhere else in the theme.
+            for (state, fill) in [
+                (&mut w.inactive, self.surface),
+                (&mut w.hovered, mix(self.surface, self.accent, 0.12)),
+                (&mut w.active, mix(self.surface, self.accent, 0.22)),
+                (&mut w.open, mix(self.surface, self.accent, 0.12)),
+            ] {
+                state.bg_fill = fill;
+                state.weak_bg_fill = fill;
+                state.bg_stroke = Stroke::new(1.0, self.line);
+                state.fg_stroke.color = self.text;
+            }
+            w.hovered.bg_stroke = Stroke::new(1.0, self.accent);
+        }
         v.panel_fill = self.bg;
         v.window_fill = self.surface;
         v.extreme_bg_color = self.surface;
