@@ -1,6 +1,6 @@
 # ADR-014: incognito contacts, a separate identity per contact
 
-Status: **accepted** (maintainer, 2026-10-19). Русская версия: [014-incognito-contacts.ru.md](014-incognito-contacts.ru.md).
+Status: **accepted** (maintainer, 2026-10-19). Русская версия: [014-incognito-contacts.ru.md](014-incognito-contacts.ru.md). The parts about what the relay sees, and a profile's own relay connection, are replaced by [ADR-023](023-anonymous-queues.md).
 
 ## Context
 

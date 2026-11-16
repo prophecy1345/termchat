@@ -1,6 +1,6 @@
 # ADR-014: инкогнито-контакты, отдельная личность на каждый контакт
 
-Статус: **принято** (владелец, 2026-10-19). English version: [014-incognito-contacts.md](014-incognito-contacts.md).
+Статус: **принято** (владелец, 2026-10-19). English version: [014-incognito-contacts.md](014-incognito-contacts.md). Разделы о том, что видит relay, и отдельное подключение профиля заменены [ADR-023](023-anonymous-queues.ru.md).
 
 ## Контекст
 
