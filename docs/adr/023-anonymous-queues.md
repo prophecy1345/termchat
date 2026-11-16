@@ -168,3 +168,33 @@ After the change, this remains:
 3. **Version 1:** not supported for a single day. Existing contacts exchange invites again (section 8).
 4. **Return queue on another relay:** allowed. `QueueOffer` carries `relay_url`, and the client keeps connections to every relay that holds its contacts' queues. Then no single relay sees both sides of a pair.
 5. **Automatic ban after reports:** removed. Protection rests on invites, deleting the queue and limits (section 6).
+
+## Amendment of 2026-11-16 (maintainer): contact prekeys and incognito profiles
+
+Planning the implementation found two gaps.
+
+### 1. A new session with an existing contact
+
+Sometimes a new Olm session is needed with a contact you already have: for example, after restoring from a backup without sessions. Today the key for it comes from `ClaimKey { target }`. Under section 5, prekeys live only on the invite queue, and the contact may no longer hold a working address of it.
+
+The same fallback key cannot be published on every queue: the relay would link the queues by identical key bytes.
+
+Decision:
+
+- On each of its incoming contact queues the client publishes **2 one-time keys** (`PublishKeys { recv_id, recv_token, one_time, fallback: None }`). One-time keys are all different, so they cannot link queues.
+- The fallback key is published only on the invite queue.
+- The contact claims a key with `ClaimKey { send_id }`, using our queue's address, which it already knows.
+- The relay sends `KeyCount` to whoever is subscribed to the queue. The client tops the keys up to 2.
+- With no keys left, the relay answers `NoKeys`, and the contact tries later. This queue cannot fall back to the fallback key.
+- vodozemac 0.11 keeps up to 5000 secret one-time keys and erases the oldest when full. A contact queue key published long ago may be gone. Then a session on it cannot be created. A client that receives a pre-key message it cannot decrypt publishes new keys on that queue.
+
+### 2. Incognito profiles (ADR-014)
+
+With queues, profiles no longer hide anything from the relay: it does not know any keys, and every contact gets its own connection (section 7). But profiles still hide contacts from each other: a profile has its own key, nickname and fingerprint.
+
+Decision:
+
+- Profiles stay as protection **from contacts**.
+- A profile has no relay connection of its own. Its queues are served by the same per-contact connection as every other contact's.
+- A profile's `Unregister` is replaced by `DeleteQueue` on its queues.
+- The parts of ADR-014 about what the relay sees are replaced by this ADR. The part about contacts still holds.
