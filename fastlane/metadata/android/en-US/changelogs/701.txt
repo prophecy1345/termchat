@@ -1,0 +1,1 @@
+A contact who deleted you and adds your invite again now learns your name.

@@ -3,6 +3,12 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.7.1
+
+- A contact who deleted you, or moved to a new device, and adds your
+  invite again now learns your name. Before, they saw only the
+  fingerprint, and your first answer could go to a queue that was gone.
+
 ## 0.7.0
 
 The relay no longer knows who talks to whom (ADR-023). This release
