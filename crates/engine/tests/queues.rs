@@ -322,6 +322,8 @@ async fn an_acceptance_that_did_not_go_out_goes_after_unlock() {
         termchat_engine::Unlocked::Open(e) => e,
         termchat_engine::Unlocked::Wiped => panic!("wiped"),
     };
+    // Links come up spread over 0-30 s after an unlock; the test does not wait for that.
+    alice.connect_now().unwrap();
     pump(&mut alice, &mut bob, |_, b| got("accepted your request")(b)).await;
     let _ = std::fs::remove_dir_all(d);
 }
