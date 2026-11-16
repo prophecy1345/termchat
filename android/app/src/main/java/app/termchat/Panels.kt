@@ -319,9 +319,10 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         "Where Tor itself is blocked: obfs4, webtunnel or snowflake bridges.",
     ) { m.screen = Screen.Bridges }
     MenuRow(
-        "Requests without an invite code: ${if (a.codesOnly()) "dropped" else "accepted"}",
-        "Old invites carry no code. Drop such requests once your old contacts are added.",
-    ) { a.setCodesOnly(!a.codesOnly()); m.changed() }
+        "Connections: ${if (a.sharedLink()) "one for all contacts" else "one per contact"}",
+        if (a.sharedLink()) "Less battery, but the relay sees which queues are yours"
+        else "The relay cannot link your contacts' queues by connection; uses more battery",
+    ) { result = runCatching { a.setSharedLink(!a.sharedLink()) }.getOrElse { it.message ?: "$it" }; m.changed() }
     Line()
     Text("ABOUT", style = Tc.caps)
     MenuRow("What's new") { m.screen = Screen.News }

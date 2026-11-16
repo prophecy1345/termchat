@@ -20,6 +20,11 @@ breaks with every earlier one: read this before you update.
 - Reports still reach the relay operator, but the relay cannot ban
   anyone any more: it does not know who wrote.
 - A contact on another relay can be added.
+- Settings → security → connections: one connection for all contacts
+  uses less battery, but lets the relay see your queues together. Off by
+  default.
+- The setting for requests without an invite code is gone: invites
+  without a code no longer work, so such requests are always dropped.
 - The relay still sees when each queue is written to and read; timing can
   link queues. Without Tor, your IP address links your connections.
 - Relay operators: the upgrade erases the old database. `--host` is no

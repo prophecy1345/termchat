@@ -100,10 +100,22 @@ fn got(text: &'static str) -> impl Fn(&Engine) -> bool {
 
 /// Alice hands Bob an invite, Bob asks, Alice accepts.
 async fn meet(url: &str, name: &str) -> (Box<Engine>, Box<Engine>, PathBuf) {
+    meet_with(url, name, false).await
+}
+
+/// `shared`: one connection per identity for all contacts (ADR-023, section 7).
+async fn meet_with(url: &str, name: &str, shared: bool) -> (Box<Engine>, Box<Engine>, PathBuf) {
     let d = dir(name);
     let mut alice = engine(&d, "alice", url);
     let mut bob = engine(&d, "bob", url);
-    pump(&mut alice, &mut bob, |a, _| a.data.invite_queue.is_some()).await;
+    if shared {
+        alice.set_shared_link(true).unwrap();
+        bob.set_shared_link(true).unwrap();
+    }
+    // Her keys must be on the relay before Bob claims one.
+    pump(&mut alice, &mut bob, |a, _| a.data.fallback_published).await;
+    let settle = Instant::now() + Duration::from_millis(300);
+    pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
     let invite = alice.invite().unwrap();
     bob.add(&invite, false).unwrap();
     pump(&mut alice, &mut bob, |a, _| {
@@ -229,5 +241,33 @@ async fn an_incognito_invite_comes_once_its_queue_exists() {
     pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
     let c = &alice.data.contacts[0];
     assert_eq!(c.profile, Some(alice.data.profiles[0].key));
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_shared_connection_carries_every_queue() {
+    let url = start_relay().await;
+    let (mut alice, mut bob, d) = meet_with(&url, "shared", true).await;
+    assert!(alice.data.contacts[0].mine.is_some() && bob.data.contacts[0].mine.is_some());
+    bob.send(0, "over one link").unwrap();
+    pump(&mut alice, &mut bob, |a, _| got("over one link")(a)).await;
+    alice.send(0, "and back").unwrap();
+    pump(&mut alice, &mut bob, |_, b| got("and back")(b)).await;
+
+    // Blocking deletes the queue but keeps the shared link for the rest.
+    alice.block(0, true);
+    alice.block(0, false);
+    let old = bob.data.contacts[0].theirs.clone();
+    pump(&mut alice, &mut bob, |_, b| {
+        b.data.contacts[0].theirs != old
+    })
+    .await;
+    bob.send(0, "still here").unwrap();
+    pump(&mut alice, &mut bob, |a, _| got("still here")(a)).await;
+
+    // Back to a connection per contact: the same queues, new connections.
+    alice.set_shared_link(false).unwrap();
+    bob.send(0, "after the switch").unwrap();
+    pump(&mut alice, &mut bob, |a, _| got("after the switch")(a)).await;
     let _ = std::fs::remove_dir_all(d);
 }

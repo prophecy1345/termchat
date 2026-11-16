@@ -71,7 +71,8 @@ that (ADR-023).
     mixnet with cover traffic hides this (see "Not protected");
   - **links by connection or IP**: each contact has its own connection and,
     with Tor, its own circuit. Without Tor, the shared IP address shows which
-    queues are one person's;
+    queues are one person's, and so does the "one connection for all
+    contacts" setting, which is off by default;
   - **size** rounded up to a bucket; a document (ADR-017) goes as a run of full
     16 KB messages, so its size shows to about 16 KB;
   - the number of contacts, roughly, from the number of connections that

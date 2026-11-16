@@ -179,10 +179,10 @@ pub type RelayEvent = (Link, Event);
 struct Live {
     relay: Relay,
     connected: bool,
-    /// A `CreateQueue` is out; its answer is on the way.
-    creating: bool,
-    /// A `Subscribe` waits for its answer: an unknown queue then is ours, gone.
-    subscribing: Option<QueueId>,
+    /// Whose `CreateQueue` frames are out, in order: the relay answers in order.
+    creating: Vec<Ed25519Key>,
+    /// `Subscribe` frames waiting for their answer: an unknown queue then is ours, gone.
+    subscribing: Vec<QueueId>,
     forward: tokio::task::AbortHandle,
 }
 
@@ -346,8 +346,8 @@ fn start(
     Ok(Live {
         relay,
         connected: false,
-        creating: false,
-        subscribing: None,
+        creating: Vec::new(),
+        subscribing: Vec::new(),
         forward,
     })
 }
@@ -431,10 +431,6 @@ impl Engine {
             tor: s.tor,
             nickname: s.nickname.into(),
             news_seen: env!("CARGO_PKG_VERSION").into(),
-            invites: data::Invites {
-                codes_only: true,
-                ..Default::default()
-            },
             ..Data::default()
         };
         let mut engine = Self::open(Client::default(), key, data, path.to_owned())?;
@@ -616,9 +612,28 @@ impl Engine {
         !c.blocked && !c.left && !self.is_request(&c.key) && self.slot_for(&c.key).is_some()
     }
 
+    /// Whose link `who`'s queue uses: its own, or with `shared_link` its
+    /// identity's (ADR-023, section 7). Identities never share one (ADR-014).
+    fn link_who(&self, who: &Ed25519Key) -> Ed25519Key {
+        if !self.data.shared_link || self.slot_of(who).is_some() {
+            return *who;
+        }
+        self.slot_for(who).map_or(*who, |s| self.key_of(s))
+    }
+
+    /// Our identities and contacts whose queues use `link`.
+    fn owners(&self, link: &Link) -> Vec<Ed25519Key> {
+        let ids = (0..self.cores.len()).map(|s| self.key_of(s));
+        let contacts = self.data.contacts.iter().map(|c| c.key);
+        ids.chain(contacts)
+            .filter(|k| self.link_who(k) == link.who)
+            .collect()
+    }
+
     /// Starts every link that should run and stops the rest (ADR-023,
     /// section 7): one per identity for its invite queue, one per contact
-    /// on our relay, and one more for a contact whose queue is elsewhere.
+    /// on our relay (or the identity's, shared), and one more for a contact
+    /// whose queue is elsewhere.
     fn sync_links(&mut self) -> Result<(), String> {
         self.start_links(false)
     }
@@ -639,7 +654,7 @@ impl Engine {
             if !self.wants_queue(i) {
                 continue;
             }
-            let who = self.data.contacts[i].key;
+            let who = self.link_who(&self.data.contacts[i].key);
             want.insert(
                 Link {
                     who,
@@ -674,16 +689,18 @@ impl Engine {
         Ok(())
     }
 
+    /// The link `who`'s traffic to `relay` goes on.
     fn live(&self, who: &Ed25519Key, relay: &str) -> Option<&Live> {
         self.links.get(&Link {
-            who: *who,
+            who: self.link_who(who),
             relay: relay.to_owned(),
         })
     }
 
     fn live_mut(&mut self, who: &Ed25519Key, relay: &str) -> Option<&mut Live> {
+        let who = self.link_who(who);
         self.links.get_mut(&Link {
-            who: *who,
+            who,
             relay: relay.to_owned(),
         })
     }
@@ -701,9 +718,9 @@ impl Engine {
         let home = self.home();
         if let Some(l) = self.live_mut(&who, &home)
             && l.connected
-            && !l.creating
+            && !l.creating.contains(&who)
         {
-            l.creating = true;
+            l.creating.push(who);
             let _ = l.relay.send(ClientFrame::CreateQueue);
         }
     }
@@ -711,7 +728,7 @@ impl Engine {
     fn subscribe(&mut self, who: Ed25519Key, q: &Queue) {
         let home = self.home();
         if let Some(l) = self.live_mut(&who, &home) {
-            l.subscribing = Some(q.recv_id);
+            l.subscribing.push(q.recv_id);
             let _ = l.relay.send(ClientFrame::Subscribe {
                 recv_id: q.recv_id,
                 token: q.token,
@@ -941,13 +958,20 @@ impl Engine {
     /// Deletes queue `q` of `who` on the relay; the link stays until it
     /// says so, or for `RETIRE_TIMEOUT`.
     fn delete_queue(&mut self, who: &Ed25519Key, q: &Queue) {
-        let link = Link {
-            who: *who,
-            relay: q.relay_url.clone(),
-        };
         let frame = ClientFrame::DeleteQueue {
             recv_id: q.recv_id,
             token: q.token,
+        };
+        // A shared link stays: it carries other queues too.
+        if self.link_who(who) != *who {
+            if let Some(l) = self.live(who, &q.relay_url) {
+                let _ = l.relay.send(frame);
+            }
+            return;
+        }
+        let link = Link {
+            who: *who,
+            relay: q.relay_url.clone(),
         };
         if let Some(live) = self.links.remove(&link) {
             let _ = live.relay.send(frame);
@@ -979,11 +1003,6 @@ impl Engine {
         n += waiting.len();
         self.persist();
         n
-    }
-
-    pub fn set_codes_only(&mut self, on: bool) {
-        self.data.invites.codes_only = on;
-        self.persist();
     }
 
     fn invite_with(&self, slot: usize, code: InviteCode) -> Result<String, String> {
@@ -1209,40 +1228,41 @@ impl Engine {
             }
             Event::Connected => {
                 live.connected = true;
-                live.creating = false;
+                live.creating.clear();
                 if who == self.me() {
                     self.connected = true;
                 }
-                if home {
-                    match self.queue_of(&who).cloned() {
-                        Some(q) => self.subscribe(who, &q),
-                        None if self.slot_of(&who).is_some() => self.ensure_queue(who),
-                        None => {
-                            if self.index(&who).is_some_and(|i| self.wants_queue(i)) {
-                                self.ensure_queue(who);
+                for owner in self.owners(&link) {
+                    let contact = self.index(&owner);
+                    if home {
+                        match self.queue_of(&owner).cloned() {
+                            Some(q) => self.subscribe(owner, &q),
+                            None if contact.is_none_or(|i| self.wants_queue(i)) => {
+                                self.ensure_queue(owner);
                             }
+                            None => {}
                         }
                     }
-                }
-                // Sends go on the link to their relay, which may be this one.
-                if let Some(i) = self.index(&who)
-                    && self
-                        .out_addr(i)
-                        .is_some_and(|a| same_url(&a.relay_url, &link.relay))
-                {
-                    let c = &self.data.contacts[i];
-                    let owed = c.request_pending
-                        || c.offer_pending
-                        || c.accept_pending
-                        || c.messages.iter().any(|m| m.status == Status::Queued);
-                    if owed {
-                        self.deliver(i);
+                    // Sends go on the link to their relay, which may be this one.
+                    if let Some(i) = contact
+                        && self
+                            .out_addr(i)
+                            .is_some_and(|a| same_url(&a.relay_url, &link.relay))
+                    {
+                        let c = &self.data.contacts[i];
+                        let owed = c.request_pending
+                            || c.offer_pending
+                            || c.accept_pending
+                            || c.messages.iter().any(|m| m.status == Status::Queued);
+                        if owed {
+                            self.deliver(i);
+                        }
                     }
                 }
             }
             Event::Disconnected => {
                 live.connected = false;
-                live.subscribing = None;
+                live.subscribing.clear();
                 if who == self.me() {
                     self.connected = false;
                 }
@@ -1259,9 +1279,10 @@ impl Engine {
                 send_id,
                 token,
             } => {
-                if let Some(l) = self.links.get_mut(link) {
-                    l.creating = false;
-                }
+                let owner = match self.links.get_mut(link) {
+                    Some(l) if !l.creating.is_empty() => l.creating.remove(0),
+                    _ => who,
+                };
                 let q = Queue {
                     relay_url: link.relay.clone(),
                     onion_url: self.data.onion_url.clone(),
@@ -1269,13 +1290,11 @@ impl Engine {
                     send_id,
                     token,
                 };
-                self.queue_created(who, q);
+                self.queue_created(owner, q);
             }
             ServerFrame::Subscribed { recv_id } => {
-                if let Some(l) = self.links.get_mut(link)
-                    && l.subscribing == Some(recv_id)
-                {
-                    l.subscribing = None;
+                if let Some(l) = self.links.get_mut(link) {
+                    l.subscribing.retain(|q| *q != recv_id);
                 }
             }
             ServerFrame::KeyCount {
@@ -1295,10 +1314,14 @@ impl Engine {
                 }
             }
             ServerFrame::ClaimedKey { send_id, key } => {
-                let Some(i) = self.index(&who) else { return };
-                if self.out_addr(i).is_none_or(|a| a.send_id != send_id) {
+                let ours = |i: usize| {
+                    self.out_addr(i).is_some_and(|a| a.send_id == send_id)
+                        && self.link_who(&self.data.contacts[i].key) == who
+                };
+                let Some(i) = (0..self.data.contacts.len()).find(|&i| ours(i)) else {
                     return;
-                }
+                };
+                let who = self.data.contacts[i].key;
                 let slot = self.slot_for(&who);
                 if let Some(slot) = slot
                     && !self.has_session(&who)
@@ -1316,12 +1339,15 @@ impl Engine {
                 relay_id,
                 envelope,
             } => {
-                // Only from the queue this link reads; anything else is the relay's mistake.
-                if self.queue_of(&who).is_none_or(|q| q.recv_id != recv_id) {
+                // Only from a queue this link reads; anything else is the relay's mistake.
+                let Some(owner) = self.owner_of(&recv_id) else {
+                    return;
+                };
+                if self.link_who(&owner) != who {
                     return;
                 }
                 // Not saved means not acked: the relay keeps it for the next connection.
-                if self.receive(who, &envelope)
+                if self.receive(owner, &envelope)
                     && let Some(l) = self.links.get(link)
                 {
                     let _ = l.relay.send(ClientFrame::Ack { recv_id, relay_id });
@@ -1349,9 +1375,17 @@ impl Engine {
             } => {
                 // Our own queue is gone (the relay expired it or lost its
                 // database): make a new one and tell whoever uses it.
-                let lost = self.links.get_mut(link).and_then(|l| l.subscribing.take());
-                if code == ErrorCode::UnknownQueue && lost.is_some() {
-                    self.queue_lost(who);
+                // ponytail: the oldest pending subscribe is taken as the one
+                // refused; an unknown queue from a ClaimKey in between would
+                // make us renew a queue that was fine (harmless: a new address).
+                let lost = match self.links.get_mut(link) {
+                    Some(l) if code == ErrorCode::UnknownQueue && !l.subscribing.is_empty() => {
+                        Some(l.subscribing.remove(0))
+                    }
+                    _ => None,
+                };
+                if let Some(owner) = lost.and_then(|q| self.owner_of(&q)) {
+                    self.queue_lost(owner);
                 } else {
                     self.note(format!("relay: {}", why(code)));
                 }
@@ -2125,6 +2159,22 @@ impl Engine {
             }
             false => "Tor off: the relay and your provider now see your IP address.".into(),
         }
+    }
+
+    /// One connection per identity for all its contacts, or one per contact
+    /// (ADR-023, section 7). Queues stay; only the connections change.
+    pub fn set_shared_link(&mut self, on: bool) -> Result<String, String> {
+        self.data.shared_link = on;
+        if let Err(e) = self.relink() {
+            self.data.shared_link = !on;
+            self.relink()?;
+            return Err(e);
+        }
+        self.persist();
+        Ok(match on {
+            true => "One connection for all contacts: less battery, but the relay sees which queues are yours.".into(),
+            false => "A connection per contact: the relay cannot link your queues by connection.".into(),
+        })
     }
 
     /// Reconnects every link with the current settings.

@@ -372,12 +372,14 @@ impl Account {
     }
 
     /// Requests without an invite code are dropped.
-    pub fn codes_only(&self) -> bool {
-        self.lock().data.invites.codes_only
+    /// One connection for all contacts instead of one per contact (ADR-023).
+    pub fn shared_link(&self) -> bool {
+        self.lock().data.shared_link
     }
 
-    pub fn set_codes_only(&self, on: bool) {
-        self.lock().set_codes_only(on);
+    pub fn set_shared_link(&self, on: bool) -> Result<String> {
+        let _rt = runtime().enter();
+        Ok(self.lock().set_shared_link(on)?)
     }
 
     /// In a stable order: an index stays valid until a contact is deleted.

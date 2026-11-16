@@ -759,8 +759,8 @@ impl Main {
                     !self.engine.data.bridges.is_empty(),
                 ),
                 row(
-                    "accept requests without an invite code (old invites)",
-                    !self.engine.data.invites.codes_only,
+                    "one connection for all contacts (less battery; the relay sees which queues are yours)",
+                    self.engine.data.shared_link,
                 ),
                 row(
                     &format!(
@@ -821,9 +821,10 @@ impl Main {
                 });
             }
             (3, 5) => {
-                let on = self.engine.data.invites.codes_only;
-                self.engine.set_codes_only(!on);
-                return Some(Popup::Settings { tab, at });
+                let on = !self.engine.data.shared_link;
+                return Some(Popup::Notice(match self.engine.set_shared_link(on) {
+                    Ok(done) | Err(done) => done,
+                }));
             }
             (3, 6) => s.next_lock(),
             (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),

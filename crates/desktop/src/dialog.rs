@@ -436,20 +436,20 @@ impl Chat {
                     "A longer time gives whoever finds this computer unlocked more time to read.",
                 );
                 section(ui, p, "Contacts");
-                let mut codes_only = self.engine.data.invites.codes_only;
+                let mut shared = self.engine.data.shared_link;
                 if ui
-                    .checkbox(
-                        &mut codes_only,
-                        "Accept contact requests only from my invites",
-                    )
+                    .checkbox(&mut shared, "One connection for all contacts")
                     .changed()
                 {
-                    self.engine.set_codes_only(codes_only);
+                    self.status = match self.engine.set_shared_link(shared) {
+                        Ok(done) | Err(done) => done,
+                    };
                 }
                 hint(
                     ui,
                     p,
-                    "Requests without one of your invite codes are dropped (ADR-013).",
+                    "Uses less battery and network, but the relay then sees which queues are yours. \
+                     Off: a connection per contact (ADR-023).",
                 );
                 section(ui, p, "Account and security");
                 let tor = match self.engine.data.tor {

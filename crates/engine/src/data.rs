@@ -53,6 +53,10 @@ pub struct Data {
     pub onion_url: Option<String>,
     /// Connect only through Tor.
     pub tor: bool,
+    /// One connection per identity for all its contacts, instead of one per
+    /// contact (ADR-023, section 7): less battery, but the relay sees which
+    /// queues are one person's.
+    pub shared_link: bool,
     pub nickname: String,
     /// Where strangers write to the main identity (ADR-023).
     pub invite_queue: Option<Queue>,
@@ -109,9 +113,6 @@ pub struct Invites {
     /// Unused one-time codes, oldest first.
     pub once: Vec<InviteCode>,
     pub public: Option<InviteCode>,
-    /// Drop requests without a code. Off for accounts older than ADR-013,
-    /// whose code-less invites are already out.
-    pub codes_only: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -401,7 +402,10 @@ impl Invites {
     pub fn admit(&mut self, body: &Body) -> bool {
         let code = match body {
             Body::ContactRequestV2 { code, .. } => code,
-            _ => return !self.codes_only,
+            // Invites without a code (before ADR-013) are refused since
+            // ADR-023, so a request without one is never genuine; let in, it
+            // would get past a renewed public invite.
+            _ => return false,
         };
         // Every code is compared, so the time does not tell which one matched.
         let mut hit = None;
@@ -828,24 +832,18 @@ mod tests {
         let mut inv = Invites {
             once: vec![[1; 16], [2; 16]],
             public: Some([7; 16]),
-            codes_only: true,
         };
         assert!(inv.admit(&v2([2; 16])));
         assert!(!inv.admit(&v2([2; 16])), "a one-time code works once");
         assert_eq!(inv.once, vec![[1; 16]]);
         assert!(inv.admit(&v2([7; 16])) && inv.admit(&v2([7; 16])));
         assert!(!inv.admit(&v2([9; 16])));
-        assert!(!inv.admit(&old));
-        inv.codes_only = false;
-        assert!(inv.admit(&old));
+        assert!(!inv.admit(&old), "no code, no entry");
         inv.public = None;
         assert!(
             !inv.admit(&v2([7; 16])),
             "a renewed public code stops the old one"
         );
-        // Accounts from before ADR-013 have no field: old invites keep working.
-        let data: Data = serde_json::from_str("{}").unwrap();
-        assert!(!data.invites.codes_only);
     }
 
     #[test]

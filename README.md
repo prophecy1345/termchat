@@ -273,10 +273,8 @@ There is no search and no directory: you add people by exchanging **invites**.
    invite.
    - For a profile or a post, press **p** for your **public invite**: reusable
      until you press **n**, which makes a new one and stops the old one.
-   - Invites from older versions have no code. Requests from them are accepted
-     while settings → security → "accept requests without an invite code" is
-     on. Turn it off once your old contacts are added: only then can nobody else
-     use an old invite. New accounts start with it off.
+   - Invites from versions before 0.7.0 no longer work (ADR-023): ask for a
+     new one.
    - **i** makes an **incognito invite**: a new identity of yours, with its own
      keys and a name you choose, used only with whoever takes it. Contacts of
      different identities cannot link you, and over Tor the relay cannot
@@ -437,8 +435,12 @@ moves, **Enter** or a click changes the value.
   and text never go there. The window title shows only the number of unread
   messages, `termchat (3)`.
 - **interface:** mouse on or off.
-- **security:** backup, password, duress password, Tor, Tor bridges, invite
-  codes, wipe.
+- **security:** backup, password, duress password, Tor, Tor bridges,
+  connections, wipe.
+  - **One connection for all contacts** is off by default: each contact gets
+    a connection (and with Tor a circuit) of its own, so the relay cannot tell
+    which queues are yours. On, it uses less battery and network, and the
+    relay sees your queues together (ADR-023).
   - **Tor bridges** are for where Tor itself is blocked: unlisted entry relays
     behind a disguise (obfs4, webtunnel, snowflake).
   - Get bridge lines at bridges.torproject.org or from @GetBridgesBot in
