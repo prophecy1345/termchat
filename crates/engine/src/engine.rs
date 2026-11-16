@@ -142,7 +142,9 @@ pub struct Engine {
     /// (ADR-023, section 7), and per other relay a contact's queue is on.
     links: BTreeMap<Link, Live>,
     /// Links asked to delete their queue, until the relay confirms.
-    retiring: Vec<(Link, Live, Instant)>,
+    /// With the `DeleteQueue` sent on it, to send again if a new link for
+    /// the same contact and relay starts before this one is done.
+    retiring: Vec<(Link, Live, Instant, ClientFrame)>,
     /// Every link's relay events, tagged with the link.
     pub events: Receiver<RelayEvent>,
     events_tx: Sender<RelayEvent>,
@@ -162,6 +164,8 @@ pub struct Engine {
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
+    /// The relay had no key to give: claim again at this time.
+    reclaim: Option<Instant>,
 }
 
 /// One connection: whose it is (one of our identities, for its invite
@@ -192,6 +196,8 @@ impl Drop for Live {
     }
 }
 
+/// After `NoKeys`, when to claim again.
+const RECLAIM_AFTER: Duration = Duration::from_secs(15);
 /// How long a queue being deleted may take (ADR-014, ADR-023).
 const RETIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Incognito identities whose invite nobody used yet.
@@ -504,6 +510,7 @@ impl Engine {
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
+            reclaim: None,
         });
         engine.start_links(true)?;
         Ok(engine)
@@ -684,6 +691,13 @@ impl Engine {
                 false => Duration::ZERO,
             };
             let live = start(&link, onion.as_deref(), data, path, tx, delay)?;
+            // Events carry only the link, so an old link still deleting a
+            // queue would take the new one's for its own. The new one sends
+            // the deletion instead (sending it twice is harmless).
+            if let Some(r) = self.retiring.iter().position(|(l, ..)| *l == link) {
+                let (.., frame) = self.retiring.remove(r);
+                let _ = live.relay.send(frame);
+            }
             self.links.insert(link, live);
         }
         Ok(())
@@ -884,6 +898,15 @@ impl Engine {
                     fallback: keys.fallback,
                 },
             );
+            // An incognito invite asked for earlier: handed out once its
+            // keys are on their way, so whoever takes it finds one.
+            if slot > 0
+                && !published
+                && let Some(code) = self.data.profiles[slot - 1].code
+                && let Ok(invite) = self.invite_with(slot, code)
+            {
+                self.happened.push(Happened::Invite(invite));
+            }
         }
     }
 
@@ -977,9 +1000,9 @@ impl Engine {
             relay: q.relay_url.clone(),
         };
         if let Some(live) = self.links.remove(&link) {
-            let _ = live.relay.send(frame);
+            let _ = live.relay.send(frame.clone());
             self.retiring
-                .push((link, live, Instant::now() + RETIRE_TIMEOUT));
+                .push((link, live, Instant::now() + RETIRE_TIMEOUT, frame));
         }
     }
 
@@ -1385,7 +1408,10 @@ impl Engine {
                     }
                     _ => None,
                 };
-                if let Some(owner) = lost.and_then(|q| self.owner_of(&q)) {
+                if code == ErrorCode::NoKeys {
+                    // Their keys may be on their way (a fresh invite): try again.
+                    self.reclaim = Some(Instant::now() + RECLAIM_AFTER);
+                } else if let Some(owner) = lost.and_then(|q| self.owner_of(&q)) {
                     self.queue_lost(owner);
                 } else {
                     self.note(format!("relay: {}", why(code)));
@@ -1418,13 +1444,6 @@ impl Engine {
             *self.invite_queue_mut(slot) = Some(q.clone());
             self.persist();
             self.subscribe(who, &q);
-            // An incognito invite asked for while its queue did not exist yet.
-            if slot > 0
-                && let Some(code) = self.data.profiles[slot - 1].code
-                && let Ok(invite) = self.invite_with(slot, code)
-            {
-                self.happened.push(Happened::Invite(invite));
-            }
             return;
         }
         let Some(i) = self.index(&who) else { return };
@@ -1795,12 +1814,22 @@ impl Engine {
     /// Timers: disappearing messages, the rotated-out fallback key, a wipe
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
+        if self.reclaim.is_some_and(|at| Instant::now() >= at) {
+            self.reclaim = None;
+            for i in 0..self.data.contacts.len() {
+                let c = &self.data.contacts[i];
+                let owed = c.request_pending || c.offer_pending || c.accept_pending;
+                if owed && !self.has_session(&c.key) {
+                    self.claim(c.key);
+                }
+            }
+        }
         self.expire();
         self.rotate_aged_fallbacks();
         self.send_chunks();
         self.leave_timeout();
         let t = Instant::now();
-        self.retiring.retain(|(_, _, until)| *until > t);
+        self.retiring.retain(|(_, _, until, _)| *until > t);
     }
 
     /// Drops messages whose disappearing timer ran out, and the rotated-out
