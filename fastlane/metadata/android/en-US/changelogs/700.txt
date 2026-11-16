@@ -1,0 +1,1 @@
+The relay no longer knows who talks to whom: anonymous queues, a connection per contact. Every contact must exchange invites once more; chats and history stay. Blocking deletes the contact's queue.
