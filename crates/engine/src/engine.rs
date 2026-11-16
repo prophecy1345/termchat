@@ -2197,6 +2197,17 @@ impl Engine {
         })
     }
 
+    /// Starts every link now instead of spread over 0-30 s (ADR-014): for a
+    /// one-shot command (ADR-024), which is gone before a spread link comes.
+    pub fn connect_now(&mut self) -> Result<(), String> {
+        self.relink()
+    }
+
+    /// Every link is connected, not only the main identity's.
+    pub fn all_connected(&self) -> bool {
+        self.links.values().all(|l| l.connected)
+    }
+
     /// Reconnects every link with the current settings.
     fn relink(&mut self) -> Result<(), String> {
         self.links.clear();

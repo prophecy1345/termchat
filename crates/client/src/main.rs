@@ -19,6 +19,14 @@ async fn main() -> std::io::Result<()> {
         return Ok(());
     }
     termchat::no_core_dumps();
+    // Scriptable mode (ADR-024): a command runs without the TUI and exits.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|a| termchat::cli::COMMANDS.contains(&a.as_str()))
+    {
+        std::process::exit(termchat::cli::run(&args).await);
+    }
     let path = data::home().join("state");
     // A folder without locks (some network drives) must not stop termchat.
     let _lock = match data::lock(&path) {

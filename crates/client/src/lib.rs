@@ -1,6 +1,7 @@
 //! Terminal client (TUI): a shell over `termchat-engine` (ADR-011).
 
 pub mod app;
+pub mod cli;
 pub mod form;
 pub mod input;
 pub mod notify;
