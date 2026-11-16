@@ -1,1 +1,3 @@
-No changes in the Android app; this release fixes light themes in the desktop app.
+New in 0.8: your servers can write to you. With the termchat command on a server or laptop, a cron job, a CI run or a long command sends "backup failed" or "build done" straight to this phone, end-to-end encrypted, with no bot account and no third party reading it. It shows up as an ordinary contact.
+
+Fixed: accepting a contact request now answers at once, a fresh invite no longer gets stuck, and a contact added again no longer hangs.
