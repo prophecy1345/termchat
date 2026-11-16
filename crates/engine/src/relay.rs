@@ -1,4 +1,4 @@
-//! Relay transport: authenticated WebSocket with reconnect.
+//! Relay transport: WebSocket with reconnect. No login: frames name queues (ADR-023).
 //!
 //! Knows nothing about encryption: frames in, frames out. Unacknowledged
 //! `Send` frames are resent after every reconnect (protocol.md, section 13),
@@ -11,9 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
-use termchat_proto::{
-    ClientFrame, Ed25519Key, ErrorCode, Identity, ServerFrame, Signature, VERSION, VERSION_HEADER,
-};
+use termchat_proto::{ClientFrame, ErrorCode, QueueId, ServerFrame, VERSION, VERSION_HEADER};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Notify, mpsc};
 use tokio_tungstenite::tungstenite::Message;
@@ -33,12 +31,9 @@ const STALE: Duration = Duration::from_secs(35);
 /// ADR-012, the sleeping link: a checked link silent this long is dialled again.
 const PROBE: Duration = Duration::from_secs(5);
 
-/// Signs the relay's challenge: `(relay_host, nonce) -> signature`.
-pub type Signer = Box<dyn Fn(&str, &[u8; 32]) -> Signature + Send + Sync>;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// Authenticated. Publish keys and claim what you need again.
+    /// `Hello` is out. Subscribe, publish keys and claim what you need again.
     Connected,
     Disconnected,
     Frame(ServerFrame),
@@ -102,22 +97,15 @@ pub struct Relay {
 
 impl Relay {
     /// Starts connecting in the background. `url` is `wss://host/` (or `ws://` for tests).
-    pub fn connect(
-        url: &str,
-        identity: Identity,
-        sign: Signer,
-        dial: Dial,
-    ) -> Result<(Self, mpsc::Receiver<Event>), Error> {
-        Self::connect_after(url, identity, sign, dial, Duration::ZERO, false)
+    pub fn connect(url: &str, dial: Dial) -> Result<(Self, mpsc::Receiver<Event>), Error> {
+        Self::connect_after(url, dial, Duration::ZERO, false)
     }
 
     /// Like `connect`, but waits `delay` first, and with `spread` also a
-    /// random 0-30 s before every reconnect, so several identities of one
-    /// device do not come and go on the relay together (ADR-014).
+    /// random 0-30 s before every reconnect, so the links of one device do
+    /// not come and go on the relay together (ADR-014, ADR-023).
     pub fn connect_after(
         url: &str,
-        identity: Identity,
-        sign: Signer,
         dial: Dial,
         delay: Duration,
         spread: bool,
@@ -125,7 +113,7 @@ impl Relay {
         let uri = url.parse::<Uri>().map_err(|_| Error::BadUrl)?;
         let host = uri.host().map(str::to_owned).ok_or(Error::BadUrl)?;
         // Plain ws:// only where TLS adds nothing: this machine, or an onion
-        // service. The signed `Auth` must not cross a network in the clear.
+        // service. Queue tokens must not cross a network in the clear.
         // An onion host only through Tor: directly it would go through plain
         // DNS, and whoever answers that stands in for the relay (ADR-004).
         let bare = host.trim_start_matches('[').trim_end_matches(']');
@@ -166,8 +154,6 @@ impl Relay {
             dial,
             #[cfg(feature = "tor")]
             tor: None,
-            identity,
-            sign,
             events: events_tx,
             pending: BTreeMap::new(),
             in_flight: BTreeMap::new(),
@@ -221,16 +207,14 @@ struct Link {
     /// Bootstrapped once, reused across reconnects.
     #[cfg(feature = "tor")]
     tor: Option<std::sync::Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>,
-    identity: Identity,
-    sign: Signer,
     events: mpsc::Sender<Event>,
     /// Unanswered `Send` frames by `client_id`.
     pending: BTreeMap<u64, ClientFrame>,
-    /// ADR-020: per recipient, the one `Send` on the wire, so the relay takes
-    /// them in order even when it refuses one for now.
-    in_flight: BTreeMap<Ed25519Key, u64>,
-    /// Recipients with a refused `Send` that was not yet accepted.
-    retry: BTreeMap<Ed25519Key, Retry>,
+    /// ADR-020: per queue written to, the one `Send` on the wire, so the
+    /// relay takes them in order even when it refuses one for now.
+    in_flight: BTreeMap<QueueId, u64>,
+    /// Queues with a refused `Send` that was not yet accepted.
+    retry: BTreeMap<QueueId, Retry>,
     /// From the last upgrade response, until `talk` reports it.
     relay_version: Option<String>,
     /// Before the first connection.
@@ -265,13 +249,13 @@ enum Answer {
     /// Refused for now; the engine is not told.
     Retry,
     /// Accepted or refused for good; this recipient's queue moves on.
-    Done(Ed25519Key),
+    Done(QueueId),
 }
 
 enum End {
     /// The app dropped every `Relay` handle.
     Stop,
-    /// Connection lost; `true` if it had authenticated.
+    /// Connection lost; `true` if it had got as far as `Hello`.
     Lost(bool),
 }
 
@@ -301,8 +285,7 @@ impl Link {
                     }
                 }
             }
-            // Stop waiting as soon as the app is gone (e.g. locked): the signer
-            // holds the keys and must not outlive it.
+            // Stop waiting as soon as the app is gone (e.g. locked).
             // A wake-up cuts the backoff short, never the spread: identities
             // must not come back together (ADR-014).
             tokio::select! {
@@ -319,7 +302,7 @@ impl Link {
     }
 
     /// Connecting can take long (TCP timeouts, Tor bootstrap). The app may lock
-    /// meanwhile, and the signer must not keep the keys alive: give up on the
+    /// meanwhile, and the link must not outlive it: give up on the
     /// connection attempt as soon as the event receiver is gone. Once connected,
     /// `talk` drains queued frames (acks) before it stops.
     async fn session(&mut self, out: &mut mpsc::UnboundedReceiver<ClientFrame>) -> End {
@@ -400,7 +383,7 @@ impl Link {
         // Waits end with the connection: the reconnect was its own wait.
         self.in_flight.clear();
         self.retry.clear();
-        let all: BTreeSet<Ed25519Key> = self.pending.values().filter_map(recipient).collect();
+        let all: BTreeSet<QueueId> = self.pending.values().filter_map(queue).collect();
         for to in all {
             if self.pump(&mut ws, to).await.is_none() {
                 return End::Lost(true);
@@ -435,8 +418,8 @@ impl Link {
                 frame = out.recv() => {
                     let Some(frame) = frame else { return End::Stop };
                     let sent = match &frame {
-                        ClientFrame::Send { client_id, envelope } => {
-                            let to = envelope.recipient;
+                        ClientFrame::Send { client_id, send_id, .. } => {
+                            let to = *send_id;
                             self.pending.insert(*client_id, frame);
                             self.pump(&mut ws, to).await
                         }
@@ -490,7 +473,7 @@ impl Link {
             } => *client_id,
             _ => return Answer::Other,
         };
-        let Some(to) = self.pending.get(&id).and_then(recipient) else {
+        let Some(to) = self.pending.get(&id).and_then(queue) else {
             return Answer::Other;
         };
         if self.in_flight.get(&to) == Some(&id) {
@@ -521,13 +504,13 @@ impl Link {
     async fn pump<S: AsyncRead + AsyncWrite + Unpin>(
         &mut self,
         ws: &mut WebSocketStream<S>,
-        to: Ed25519Key,
+        to: QueueId,
     ) -> Option<()> {
         let waiting = self.retry.get(&to).is_some_and(|r| r.due.is_some());
         if waiting || self.in_flight.contains_key(&to) {
             return Some(());
         }
-        let next = self.pending.iter().find(|(_, f)| recipient(f) == Some(to));
+        let next = self.pending.iter().find(|(_, f)| queue(f) == Some(to));
         let Some((id, frame)) = next else {
             return Some(());
         };
@@ -535,27 +518,13 @@ impl Link {
         write(ws, frame).await
     }
 
+    /// Nothing to wait for: a relay that refuses the version says so in a
+    /// frame, which the engine shows.
     async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         ws: &mut WebSocketStream<S>,
     ) -> Option<()> {
-        write(ws, &ClientFrame::Hello { version: VERSION }).await?;
-        let ServerFrame::Challenge { nonce } = read(ws, &mut SystemTime::now()).await? else {
-            return None;
-        };
-        let signature = (self.sign)(&self.host, &nonce);
-        write(
-            ws,
-            &ClientFrame::Auth {
-                identity: self.identity.clone(),
-                signature,
-            },
-        )
-        .await?;
-        match read(ws, &mut SystemTime::now()).await? {
-            ServerFrame::AuthOk => Some(()),
-            _ => None,
-        }
+        write(ws, &ClientFrame::Hello { version: VERSION }).await
     }
 }
 
@@ -683,9 +652,9 @@ async fn shared_tor(dir: &std::path::Path, bridges: &Bridges) -> Option<Tor> {
     Some(client)
 }
 
-fn recipient(frame: &ClientFrame) -> Option<Ed25519Key> {
+fn queue(frame: &ClientFrame) -> Option<QueueId> {
     match frame {
-        ClientFrame::Send { envelope, .. } => Some(envelope.recipient),
+        ClientFrame::Send { send_id, .. } => Some(*send_id),
         _ => None,
     }
 }

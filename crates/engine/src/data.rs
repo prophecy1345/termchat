@@ -9,8 +9,37 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
-use termchat_proto::{Body, Ed25519Key, InviteCode};
+use termchat_proto::{Body, Ed25519Key, InviteCode, QueueId, QueueToken};
 use zeroize::{Zeroize, Zeroizing};
+
+/// One of our queues on a relay (ADR-023). The token opens it, so no `Debug`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queue {
+    pub relay_url: String,
+    pub onion_url: Option<String>,
+    pub recv_id: QueueId,
+    /// What we hand out for writing to it.
+    pub send_id: QueueId,
+    pub token: QueueToken,
+}
+
+impl Queue {
+    pub fn addr(&self) -> Addr {
+        Addr {
+            relay_url: self.relay_url.clone(),
+            onion_url: self.onion_url.clone(),
+            send_id: self.send_id,
+        }
+    }
+}
+
+/// Where to write to someone (ADR-023).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Addr {
+    pub relay_url: String,
+    pub onion_url: Option<String>,
+    pub send_id: QueueId,
+}
 
 /// Everything the TUI keeps besides the crypto state. No personal data:
 /// only our own nickname and what we chose to call our contacts (rule 14).
@@ -25,7 +54,8 @@ pub struct Data {
     /// Connect only through Tor.
     pub tor: bool,
     pub nickname: String,
-    pub next_client_id: u64,
+    /// Where strangers write to the main identity (ADR-023).
+    pub invite_queue: Option<Queue>,
     pub fallback_published: bool,
     /// When a fallback key was rotated out; forgotten a day after the relay TTL.
     pub old_fallback_since: Option<u64>,
@@ -37,7 +67,8 @@ pub struct Data {
     pub rejected: Vec<Ed25519Key>,
     /// The version whose "what's new" was opened; the status bar nags until then.
     pub news_seen: String,
-    /// Where the relay wakes this account (UnifiedPush, ADR-012); told on every connect.
+    /// Where the relay wakes us for the main invite queue (UnifiedPush,
+    /// ADR-012); told on every connect. Every queue has its own (ADR-023).
     pub push: Option<String>,
     /// Codes of our invites that still let a stranger in (ADR-013).
     pub invites: Invites,
@@ -63,12 +94,11 @@ pub struct Profile {
     pub state: String,
     /// Its own UnifiedPush endpoint: a shared one would link the identities.
     pub push: Option<String>,
+    /// Where its stranger writes (ADR-023).
+    pub invite_queue: Option<Queue>,
     pub fallback_published: bool,
     pub old_fallback_since: Option<u64>,
     pub fallback_since: Option<u64>,
-    /// Its own `Send` numbering, from a random start: one counter for every
-    /// identity would show the relay which keys belong together.
-    pub next_client_id: u64,
     /// The code of its invite until someone uses it; then the profile is theirs.
     pub code: Option<InviteCode>,
 }
@@ -119,6 +149,28 @@ pub struct Contact {
     /// Messages from them known to be missing, as last shown in the chat.
     #[serde(default)]
     pub missed: u64,
+    /// Our queue for them (ADR-023). `None`: not made yet, or deleted on block.
+    #[serde(default)]
+    pub mine: Option<Queue>,
+    /// Their queue for us, from their `QueueOffer`.
+    #[serde(default)]
+    pub theirs: Option<Addr>,
+    /// Their invite queue, from their invite, until `theirs` is known.
+    #[serde(default)]
+    pub their_invite: Option<Addr>,
+    /// `mine` is made and its `QueueOffer` not sent yet.
+    #[serde(default)]
+    pub offer_pending: bool,
+    /// We accepted their request; `ContactAccept` goes after our `QueueOffer`.
+    #[serde(default)]
+    pub accept_pending: bool,
+    /// Where the relay wakes us for `mine` (ADR-012): every queue its own.
+    #[serde(default)]
+    pub push: Option<String>,
+    /// This link's `Send` numbering, from a random start: one counter for
+    /// every link would show the relay which belong together.
+    #[serde(default)]
+    pub next_client_id: u64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

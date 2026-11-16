@@ -569,6 +569,14 @@ impl Client {
         }
     }
 
+    /// Drops a contact's sessions, keeping the contact and its name: the
+    /// next message starts a new one (ADR-023, contacts asked to add again).
+    pub fn forget_sessions(&mut self, contact: &Ed25519Key) {
+        if let Some(c) = self.contacts.get_mut(contact) {
+            c.sessions.clear();
+        }
+    }
+
     /// Forgets a contact and its sessions.
     pub fn remove_contact(&mut self, contact: &Ed25519Key) {
         self.contacts.remove(contact);

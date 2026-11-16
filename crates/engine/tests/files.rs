@@ -14,7 +14,6 @@ async fn start_relay() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
     let config = Config {
-        hosts: vec!["127.0.0.1".into()],
         trust_proxy: false,
         db: None,
         reports: None,
@@ -84,10 +83,10 @@ async fn documents_travel_both_ways_but_not_before_acceptance() {
     let mut bob = engine(&dir, "bob", &url);
 
     // Alice's one-time keys must be on the relay before Bob claims one.
-    pump(&mut alice, &mut bob, |a, b| a.connected && b.connected).await;
+    pump(&mut alice, &mut bob, |a, _| a.data.invite_queue.is_some()).await;
     let settle = Instant::now() + Duration::from_secs(1);
     pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
-    let invite = alice.invite();
+    let invite = alice.invite().unwrap();
     bob.add(&invite, false).unwrap();
     // Sent while the request is still open: alice drops it unread.
     bob.send_file(0, "early.txt", b"too soon".to_vec()).unwrap();

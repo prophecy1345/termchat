@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use termchat_core::proto::{
-    self, Body, ClientFrame, Ed25519Key, ErrorCode, Invite, InviteCode, ServerFrame, check_nickname,
+    self, Body, ClientFrame, Ed25519Key, ErrorCode, INVITE_VERSION, Invite, InviteCode, QueueId,
+    ServerFrame, check_nickname,
 };
 use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
@@ -16,14 +17,19 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_tungstenite::tungstenite::http::Uri;
 use zeroize::Zeroize;
 
-use crate::data::{self, Contact, Data, FileMsg, Msg, Status};
+use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 use subtle::ConstantTimeEq;
 
 /// How long a wipe waits for the relay to take the goodbyes (ADR-009).
 const LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
 const NOT_REMOVED: &str =
-    "The relay did not confirm removing your key; it forgets idle keys after 90 days.";
+    "The relay did not confirm deleting your queues; it forgets unused ones after 90 days.";
+/// ADR-023: a contact from before anonymous queues, with no way to reach them.
+pub const NEEDS_INVITE: &str =
+    "this contact needs a new invite: ask them for one, or send them yours";
+/// One-time keys kept on each contact queue (ADR-023, amendment).
+const CONTACT_KEYS: u32 = 2;
 /// ADR-007: what a not-yet-accepted request may leave behind.
 const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
@@ -41,10 +47,6 @@ pub const DURESS_DISTANCE: usize = 4;
 pub const DEFAULT_RELAY: &str = "wss://relay.termchat.app/";
 pub const DEFAULT_ONION: &str =
     "ws://rgisnh6oixs4usvi544poxwzxstbxls74x4mtzlwl4a55uuncrpolpad.onion/";
-
-/// The first relay version that knows `SetPush` (ADR-012); older ones close
-/// the connection on it.
-const PUSH_SINCE: (u32, u32, u32) = (0, 1, 13);
 
 /// Disappearing timer steps, in the order a button cycles them.
 pub const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
@@ -110,6 +112,8 @@ pub enum Happened {
     Wiped(String),
     /// A wipe could not tell the relay: the reason, then ask "wipe anyway?".
     WipeAnyway(String),
+    /// An invite asked for earlier is ready: its queue exists now (ADR-023).
+    Invite(String),
 }
 
 /// Everything the first-run form asks.
@@ -133,18 +137,19 @@ pub struct Engine {
     key: FileKey,
     pub data: Data,
     /// Slot 0 is the main identity, slot `n` is `data.profiles[n - 1]` (ADR-014).
-    lives: Vec<Live>,
-    /// Incognito identities asked to unregister, until the relay confirms.
-    retiring: Vec<(Ed25519Key, Live, Instant)>,
-    /// Every identity's relay events, tagged with its key.
+    cores: Vec<Arc<Mutex<Client>>>,
+    /// One connection per identity (its invite queue) and per contact
+    /// (ADR-023, section 7), and per other relay a contact's queue is on.
+    links: BTreeMap<Link, Live>,
+    /// Links asked to delete their queue, until the relay confirms.
+    retiring: Vec<(Link, Live, Instant)>,
+    /// Every link's relay events, tagged with the link.
     pub events: Receiver<RelayEvent>,
     events_tx: Sender<RelayEvent>,
-    /// The main identity is connected.
+    /// The main identity's invite link is connected.
     pub connected: bool,
     /// A newer version the relay runs (ADR-010).
     pub update: Option<String>,
-    /// The relay knows `SetPush` (ADR-012).
-    push_ok: bool,
     /// The chat on screen: its messages do not count as unread.
     pub open: Option<Ed25519Key>,
     pub happened: Vec<Happened>,
@@ -159,14 +164,25 @@ pub struct Engine {
     chunks: BTreeMap<u64, Ed25519Key>,
 }
 
-/// A relay event and the key of our identity it is for (ADR-014).
-pub type RelayEvent = (Ed25519Key, Event);
+/// One connection: whose it is (one of our identities, for its invite
+/// queue, or a contact) and the relay it goes to (ADR-023).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Link {
+    pub who: Ed25519Key,
+    pub relay: String,
+}
 
-/// One identity's relay link. Dropping it closes the link.
+/// A relay event and the link it came on.
+pub type RelayEvent = (Link, Event);
+
+/// One link's connection. Dropping it closes the connection.
 struct Live {
-    core: Arc<Mutex<Client>>,
     relay: Relay,
     connected: bool,
+    /// A `CreateQueue` is out; its answer is on the way.
+    creating: bool,
+    /// A `Subscribe` waits for its answer: an unknown queue then is ours, gone.
+    subscribing: Option<QueueId>,
     forward: tokio::task::AbortHandle,
 }
 
@@ -176,20 +192,20 @@ impl Drop for Live {
     }
 }
 
-/// How long an unregistering incognito identity may take (ADR-014).
+/// How long a queue being deleted may take (ADR-014, ADR-023).
 const RETIRE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Incognito identities whose invite nobody used yet.
 const MAX_WAITING_PROFILES: usize = 5;
 const MISSING_SUFFIX: &str = " message(s) missing so far";
 const MISSING_PROFILE: &str = "this contact's incognito identity is missing";
 
-/// Goodbyes sent and not yet accepted, then `Unregister` (ADR-009).
+/// Goodbyes sent and not yet accepted, then every queue deleted (ADR-009).
 struct Leaving {
     waiting: Vec<u64>,
     until: Instant,
-    unregistering: bool,
-    /// Identities the relay has not yet confirmed forgetting (ADR-014).
-    registered: Vec<Ed25519Key>,
+    deleting: bool,
+    /// Queues the relay has not yet confirmed deleting.
+    queues: Vec<QueueId>,
 }
 
 /// Plain `ws://` would show the relay traffic (and so who we talk to) to the
@@ -204,6 +220,10 @@ pub fn relay_url_ok(url: &str) -> bool {
         && (url.starts_with("wss://") || matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1"))
 }
 
+fn onion_url_ok(url: &str) -> bool {
+    url.starts_with("ws://") && ws_host(url).is_some_and(|h| h.ends_with(".onion"))
+}
+
 /// The host the transport will actually connect to. Parsed the same way as in
 /// `Relay::connect`, so userinfo, a query or a fragment cannot smuggle a
 /// different host past the checks above.
@@ -214,6 +234,15 @@ fn ws_host(url: &str) -> Option<String> {
     }
     let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
     Some(host.to_owned())
+}
+
+/// A relay address from a peer (invite or `QueueOffer`), fit to connect to.
+fn addr_ok(relay_url: &str, onion_url: Option<&str>) -> bool {
+    relay_url_ok(relay_url) && onion_url.is_none_or(onion_url_ok)
+}
+
+fn same_url(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/') == b.trim_end_matches('/')
 }
 
 /// Text from a peer or the network, safe to show on one line: no control
@@ -256,7 +285,8 @@ pub fn safe_name(name: &str) -> String {
 
 fn why(code: ErrorCode) -> String {
     match code {
-        ErrorCode::UnknownRecipient => "contact is no longer on the relay".into(),
+        ErrorCode::UnknownQueue => "their queue is gone: ask them for a new invite".into(),
+        ErrorCode::UnsupportedVersion => "the relay runs another protocol version".into(),
         code => format!("{code:?}"),
     }
 }
@@ -269,54 +299,42 @@ pub fn restore(state: &Path, backup: &Path) -> Result<(), String> {
     data::remember_backup(state, backup, &bytes).map_err(|e| e.to_string())
 }
 
-/// Starts one identity's relay link: through Tor only if Tor is on (ADR-004).
-/// Its events go to `tx` tagged with its key, after `delay` (ADR-014).
+/// Starts one link: through Tor only if Tor is on (ADR-004), then to the
+/// relay's onion address. Its events go to `tx` tagged with the link, after
+/// `delay`; every reconnect waits a random 0-30 s more (ADR-014).
 fn start(
-    core: Arc<Mutex<Client>>,
+    link: &Link,
+    onion: Option<&str>,
     data: &Data,
     path: &Path,
     tx: &Sender<RelayEvent>,
     delay: Duration,
-    incognito: bool,
 ) -> Result<Live, String> {
-    let identity = core
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .identity();
-    let me = identity.ed25519;
-    let signer = Arc::clone(&core);
-    let sign = Box::new(move |host: &str, nonce: &[u8; 32]| {
-        signer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .auth_signature(host, nonce)
-    });
-    let (url, dial) = match (&data.onion_url, data.tor) {
+    let (url, dial) = match (onion, data.tor) {
         (Some(onion), true) => {
             let bridges = Bridges {
                 lines: data.bridges.clone(),
                 program: pt_program(data),
             };
             let dir = data::tor_dir_for(path, data.tor_generation);
-            (onion.as_str(), Dial::Tor(dir, bridges))
+            (onion, Dial::Tor(dir, bridges))
         }
         (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
-        (_, false) => (data.relay_url.as_str(), Dial::Direct),
+        (_, false) => (link.relay.as_str(), Dial::Direct),
     };
-    let (relay, mut rx) = Relay::connect_after(url, identity, sign, dial, delay, incognito)
-        .map_err(|e| match e {
-            Error::NoTor => "this build has no Tor support".to_string(),
-            _ => format!("bad relay URL: {url}"),
-        })?;
-    // Stops with the engine (its receiver) or with this `Live` (abort); either
-    // way the link's own receiver goes, and the link lets go of the keys.
+    let (relay, mut rx) = Relay::connect_after(url, dial, delay, true).map_err(|e| match e {
+        Error::NoTor => "this build has no Tor support".to_string(),
+        _ => format!("bad relay URL: {url}"),
+    })?;
+    // Stops with the engine (its receiver) or with this `Live` (abort).
     let tx = tx.clone();
+    let me = link.clone();
     let forward = tokio::spawn(async move {
         loop {
             tokio::select! {
                 ev = rx.recv() => {
                     let Some(ev) = ev else { return };
-                    if tx.send((me, ev)).await.is_err() {
+                    if tx.send((me.clone(), ev)).await.is_err() {
                         return;
                     }
                 }
@@ -326,9 +344,10 @@ fn start(
     })
     .abort_handle();
     Ok(Live {
-        core,
         relay,
         connected: false,
+        creating: false,
+        subscribing: None,
         forward,
     })
 }
@@ -391,9 +410,7 @@ impl Engine {
                 "relay URL must start with wss:// (ws:// only for localhost or .onion)".into(),
             );
         }
-        if s.onion_url.is_some_and(|o| {
-            !(o.starts_with("ws://") && ws_host(o).is_some_and(|h| h.ends_with(".onion")))
-        }) {
+        if s.onion_url.is_some_and(|o| !onion_url_ok(o)) {
             return Err("onion URL looks like ws://xxxx.onion/".into());
         }
         if s.tor && s.onion_url.is_none() {
@@ -461,22 +478,11 @@ impl Engine {
     ) -> Result<Box<Self>, String> {
         let core = Arc::new(Mutex::new(core));
         let (events_tx, events) = mpsc::channel(256);
-        let mut lives = vec![start(
-            Arc::clone(&core),
-            &data,
-            &path,
-            &events_tx,
-            Duration::ZERO,
-            false,
-        )?];
-        let mut cores = Vec::new();
+        let mut cores = vec![Arc::clone(&core)];
         for p in &mut data.profiles {
-            cores.push(Client::import(&p.state).map_err(|e| e.to_string())?);
+            let c = Client::import(&p.state).map_err(|e| e.to_string())?;
             p.state.zeroize();
-        }
-        for c in cores {
-            let c = Arc::new(Mutex::new(c));
-            lives.push(start(c, &data, &path, &events_tx, spread(), true)?);
+            cores.push(Arc::new(Mutex::new(c)));
         }
         // Folders of earlier bridges, and of versions before ADR-015.
         data::prune_tor_dirs(&path, data.tor_generation);
@@ -484,17 +490,17 @@ impl Engine {
             .map(Happened::Notice)
             .into_iter()
             .collect();
-        Ok(Box::new(Self {
+        let mut engine = Box::new(Self {
             core,
             key,
             data,
-            lives,
+            cores,
+            links: BTreeMap::new(),
             retiring: Vec::new(),
             events,
             events_tx,
             connected: false,
             update: None,
-            push_ok: false,
             open: None,
             happened,
             path,
@@ -502,7 +508,9 @@ impl Engine {
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
-        }))
+        });
+        engine.start_links(true)?;
+        Ok(engine)
     }
 
     /// The main identity's state.
@@ -511,8 +519,7 @@ impl Engine {
     }
 
     fn core_at(&self, slot: usize) -> MutexGuard<'_, Client> {
-        self.lives[slot]
-            .core
+        self.cores[slot]
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -552,9 +559,23 @@ impl Engine {
         Some(n + 1)
     }
 
+    fn key_of(&self, slot: usize) -> Ed25519Key {
+        self.core_at(slot).identity().ed25519
+    }
+
     pub fn is_request(&self, contact: &Ed25519Key) -> bool {
         self.slot_for(contact)
             .is_some_and(|s| self.core_at(s).is_request(contact) == Some(true))
+    }
+
+    /// ADR-023: a contact from before anonymous queues, with no address
+    /// either way. Only a new invite brings them back.
+    pub fn needs_invite(&self, c: &Contact) -> bool {
+        c.mine.is_none()
+            && c.theirs.is_none()
+            && c.their_invite.is_none()
+            && !c.left
+            && !self.is_request(&c.key)
     }
 
     fn nickname_at(&self, slot: usize) -> String {
@@ -564,43 +585,182 @@ impl Engine {
         }
     }
 
+    /// Our home relay: where our own queues are.
+    fn home(&self) -> String {
+        self.data.relay_url.clone()
+    }
+
+    fn invite_queue(&self, slot: usize) -> Option<&Queue> {
+        match slot {
+            0 => self.data.invite_queue.as_ref(),
+            n => self.data.profiles[n - 1].invite_queue.as_ref(),
+        }
+    }
+
+    fn invite_queue_mut(&mut self, slot: usize) -> &mut Option<Queue> {
+        match slot {
+            0 => &mut self.data.invite_queue,
+            n => &mut self.data.profiles[n - 1].invite_queue,
+        }
+    }
+
+    /// Where to write to contact `i`: their queue, or until we know it, their invite queue.
+    fn out_addr(&self, i: usize) -> Option<&Addr> {
+        let c = &self.data.contacts[i];
+        c.theirs.as_ref().or(c.their_invite.as_ref())
+    }
+
+    /// Contact `i` reads a queue of ours: accepted, and not blocked or gone.
+    fn wants_queue(&self, i: usize) -> bool {
+        let c = &self.data.contacts[i];
+        !c.blocked && !c.left && !self.is_request(&c.key) && self.slot_for(&c.key).is_some()
+    }
+
+    /// Starts every link that should run and stops the rest (ADR-023,
+    /// section 7): one per identity for its invite queue, one per contact
+    /// on our relay, and one more for a contact whose queue is elsewhere.
+    fn sync_links(&mut self) -> Result<(), String> {
+        self.start_links(false)
+    }
+
+    /// `spread`: at unlock, links come up over 0-30 s rather than at once
+    /// (ADR-014); a link the user just asked for comes at once.
+    fn start_links(&mut self, spread_out: bool) -> Result<(), String> {
+        let home = self.home();
+        let mut want: BTreeMap<Link, Option<String>> = BTreeMap::new();
+        for slot in 0..self.cores.len() {
+            let link = Link {
+                who: self.key_of(slot),
+                relay: home.clone(),
+            };
+            want.insert(link, self.data.onion_url.clone());
+        }
+        for i in 0..self.data.contacts.len() {
+            if !self.wants_queue(i) {
+                continue;
+            }
+            let who = self.data.contacts[i].key;
+            want.insert(
+                Link {
+                    who,
+                    relay: home.clone(),
+                },
+                self.data.onion_url.clone(),
+            );
+            if let Some(a) = self.out_addr(i)
+                && !same_url(&a.relay_url, &home)
+            {
+                let link = Link {
+                    who,
+                    relay: a.relay_url.clone(),
+                };
+                want.insert(link, a.onion_url.clone());
+            }
+        }
+        self.links.retain(|l, _| want.contains_key(l));
+        for (link, onion) in want {
+            if self.links.contains_key(&link) {
+                continue;
+            }
+            let (data, path, tx) = (&self.data, &self.path, &self.events_tx);
+            // The main identity at once; the others spread out (ADR-014).
+            let delay = match spread_out && link.who != self.me() {
+                true => spread(),
+                false => Duration::ZERO,
+            };
+            let live = start(&link, onion.as_deref(), data, path, tx, delay)?;
+            self.links.insert(link, live);
+        }
+        Ok(())
+    }
+
+    fn live(&self, who: &Ed25519Key, relay: &str) -> Option<&Live> {
+        self.links.get(&Link {
+            who: *who,
+            relay: relay.to_owned(),
+        })
+    }
+
+    fn live_mut(&mut self, who: &Ed25519Key, relay: &str) -> Option<&mut Live> {
+        self.links.get_mut(&Link {
+            who: *who,
+            relay: relay.to_owned(),
+        })
+    }
+
+    /// Sends on the link of `who` to our relay.
+    fn send_home(&self, who: &Ed25519Key, frame: ClientFrame) {
+        if let Some(l) = self.live(who, &self.home()) {
+            let _ = l.relay.send(frame);
+        }
+    }
+
+    /// Asks for a queue for `who` (an identity or a contact) if it has none
+    /// and none is on the way; the link's `Connected` asks otherwise.
+    fn ensure_queue(&mut self, who: Ed25519Key) {
+        let home = self.home();
+        if let Some(l) = self.live_mut(&who, &home)
+            && l.connected
+            && !l.creating
+        {
+            l.creating = true;
+            let _ = l.relay.send(ClientFrame::CreateQueue);
+        }
+    }
+
+    fn subscribe(&mut self, who: Ed25519Key, q: &Queue) {
+        let home = self.home();
+        if let Some(l) = self.live_mut(&who, &home) {
+            l.subscribing = Some(q.recv_id);
+            let _ = l.relay.send(ClientFrame::Subscribe {
+                recv_id: q.recv_id,
+                token: q.token,
+            });
+        }
+        // The relay may have lost it, or this is a restored backup.
+        if self.push_mut(&who).is_some_and(|p| p.is_some()) {
+            self.tell_push(&who);
+        }
+    }
+
     /// A one-time invite: a fresh code that works for one request (ADR-013).
-    pub fn invite(&mut self) -> String {
+    pub fn invite(&mut self) -> Result<String, String> {
         let code = new_code();
+        let invite = self.invite_with(0, code)?;
         let once = &mut self.data.invites.once;
         once.push(code);
         if once.len() > MAX_ONE_TIME_CODES {
             once.remove(0);
         }
         self.persist();
-        self.invite_with(0, code)
+        Ok(invite)
     }
 
     /// The reusable invite; `renew` replaces it and stops the old one.
-    pub fn public_invite(&mut self, renew: bool) -> String {
+    pub fn public_invite(&mut self, renew: bool) -> Result<String, String> {
         let code = match self.data.invites.public {
             Some(code) if !renew => code,
-            _ => {
-                let code = new_code();
-                self.data.invites.public = Some(code);
-                self.persist();
-                code
-            }
+            _ => new_code(),
         };
-        self.invite_with(0, code)
+        let invite = self.invite_with(0, code)?;
+        if self.data.invites.public != Some(code) {
+            self.data.invites.public = Some(code);
+            self.persist();
+        }
+        Ok(invite)
     }
 
     /// An invite of a new identity of its own, for one contact (ADR-014).
-    /// An empty `nickname` picks two random words.
-    pub fn incognito_invite(&mut self, nickname: &str) -> Result<String, String> {
+    /// An empty `nickname` picks two random words. It comes as
+    /// `Happened::Invite` once the identity has its invite queue (ADR-023).
+    pub fn incognito_invite(&mut self, nickname: &str) -> Result<(), String> {
         let waiting = self.waiting();
         if waiting.len() >= MAX_WAITING_PROFILES {
             self.retire(&waiting[0]);
         }
-        let code = new_code();
-        let slot = self.new_profile(nickname, Some(code))?;
+        self.new_profile(nickname, Some(new_code()))?;
         self.persist();
-        Ok(self.invite_with(slot, code))
+        Ok(())
     }
 
     /// Incognito identities whose invite nobody used yet, oldest first.
@@ -609,12 +769,35 @@ impl Engine {
         p.filter(|p| p.code.is_some()).map(|p| p.key).collect()
     }
 
-    /// Identity `slot`'s UnifiedPush endpoint (ADR-012, ADR-014).
-    fn push_mut(&mut self, slot: usize) -> &mut Option<String> {
-        match slot {
-            0 => &mut self.data.push,
-            n => &mut self.data.profiles[n - 1].push,
+    /// The UnifiedPush endpoint of `who`'s queue: an identity's invite queue
+    /// or a contact's queue, each its own (ADR-012, ADR-023).
+    fn push_mut(&mut self, who: &Ed25519Key) -> Option<&mut Option<String>> {
+        if let Some(slot) = self.slot_of(who) {
+            return Some(match slot {
+                0 => &mut self.data.push,
+                n => &mut self.data.profiles[n - 1].push,
+            });
         }
+        let i = self.index(who)?;
+        Some(&mut self.data.contacts[i].push)
+    }
+
+    /// The queue `who` reads: an identity's invite queue or our queue for a contact.
+    fn queue_of(&self, who: &Ed25519Key) -> Option<&Queue> {
+        match self.slot_of(who) {
+            Some(slot) => self.invite_queue(slot),
+            None => self.data.contacts[self.index(who)?].mine.as_ref(),
+        }
+    }
+
+    /// Whose queue `recv_id` is.
+    fn owner_of(&self, recv_id: &QueueId) -> Option<Ed25519Key> {
+        let is = |q: Option<&Queue>| q.is_some_and(|q| q.recv_id == *recv_id);
+        if let Some(slot) = (0..self.cores.len()).find(|&s| is(self.invite_queue(s))) {
+            return Some(self.key_of(slot));
+        }
+        let c = self.data.contacts.iter().find(|c| is(c.mine.as_ref()))?;
+        Some(c.key)
     }
 
     /// Identity `slot`'s fallback key state (ADR-002, ADR-019): published at
@@ -637,9 +820,13 @@ impl Engine {
         }
     }
 
-    /// Tops up identity `slot`'s one-time keys and replaces its fallback key
-    /// when due, given what the relay says it has (ADR-002, ADR-019).
+    /// Tops up identity `slot`'s one-time keys on its invite queue and
+    /// replaces its fallback key when due, given what the relay says it has
+    /// (ADR-002, ADR-019).
     fn publish_keys(&mut self, slot: usize, one_time_left: usize, fallback_used: bool) {
+        let Some(q) = self.invite_queue(slot).cloned() else {
+            return;
+        };
         let (published, since, made) = {
             let (p, s, m) = self.fallback_mut(slot);
             (*p, *s, *m)
@@ -667,74 +854,119 @@ impl Engine {
                 }
             }
             self.persist();
-            let _ = self.lives[slot].relay.send(ClientFrame::PublishKeys {
-                one_time: keys.one_time,
-                fallback: keys.fallback,
-            });
+            let who = self.key_of(slot);
+            self.send_home(
+                &who,
+                ClientFrame::PublishKeys {
+                    recv_id: q.recv_id,
+                    token: q.token,
+                    one_time: keys.one_time,
+                    fallback: keys.fallback,
+                },
+            );
         }
+    }
+
+    /// Keeps `CONTACT_KEYS` one-time keys on our queue for contact `i`, so
+    /// they can start a new session (ADR-023, amendment).
+    fn top_up_contact_keys(&mut self, i: usize, left: u32) {
+        let c = &self.data.contacts[i];
+        let (Some(q), Some(slot)) = (c.mine.clone(), self.slot_for(&c.key)) else {
+            return;
+        };
+        if left >= CONTACT_KEYS {
+            return;
+        }
+        let one_time = self
+            .core_at(slot)
+            .one_time_keys((CONTACT_KEYS - left) as usize);
+        self.persist();
+        let who = self.data.contacts[i].key;
+        self.send_home(
+            &who,
+            ClientFrame::PublishKeys {
+                recv_id: q.recv_id,
+                token: q.token,
+                one_time,
+                fallback: None,
+            },
+        );
+    }
+
+    /// Whether `who`'s link to our relay is up.
+    fn link_up(&self, who: &Ed25519Key) -> bool {
+        self.live(who, &self.home()).is_some_and(|l| l.connected)
     }
 
     /// ADR-019: the age check must not wait for a `KeyCount`, which the relay
     /// chooses to send. Only while connected, so the new key reaches the relay.
     fn rotate_aged_fallbacks(&mut self) {
-        for slot in 0..self.lives.len() {
+        for slot in 0..self.cores.len() {
             let (published, since, made) = {
                 let (p, s, m) = self.fallback_mut(slot);
                 (*p, *s, *m)
             };
             let aged = made.is_none_or(|at| now() >= at + FALLBACK_MAX_AGE);
-            if published && since.is_none() && aged && self.lives[slot].connected {
+            if published && since.is_none() && aged && self.link_up(&self.key_of(slot)) {
                 // "Plenty of one-time keys left": this is about the fallback key only.
                 self.publish_keys(slot, usize::MAX, false);
             }
         }
     }
 
-    /// A new incognito identity, connected; its slot.
+    /// A new incognito identity, connecting; its slot.
     fn new_profile(&mut self, nickname: &str, code: Option<InviteCode>) -> Result<usize, String> {
         let nickname = match nickname.trim() {
             "" => password::words(2).to_string(),
             n => n.to_string(),
         };
         check_nickname(&nickname).map_err(|_| "nickname: 1-64 bytes, no control characters")?;
-        let core = Arc::new(Mutex::new(Client::default()));
-        // At once: the user is about to hand out its invite, or to use it.
-        let live = start(
-            core,
-            &self.data,
-            &self.path,
-            &self.events_tx,
-            Duration::ZERO,
-            true,
-        )?;
-        let key = live
-            .core
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .identity()
-            .ed25519;
+        let core = Client::default();
+        let key = core.identity().ed25519;
         self.data.profiles.push(data::Profile {
             key,
             nickname,
             code,
-            // Below 2^62: room to count up, and no clash with another identity's.
-            next_client_id: getrandom::u64().unwrap_or(0) >> 2,
             ..Default::default()
         });
-        self.lives.push(live);
-        Ok(self.lives.len() - 1)
+        self.cores.push(Arc::new(Mutex::new(core)));
+        if let Err(e) = self.sync_links() {
+            self.data.profiles.pop();
+            self.cores.pop();
+            return Err(e);
+        }
+        Ok(self.cores.len() - 1)
     }
 
-    /// Asks the relay to forget incognito identity `key` and erases it here.
+    /// Deletes queue `q` of `who` on the relay; the link stays until it
+    /// says so, or for `RETIRE_TIMEOUT`.
+    fn delete_queue(&mut self, who: &Ed25519Key, q: &Queue) {
+        let link = Link {
+            who: *who,
+            relay: q.relay_url.clone(),
+        };
+        let frame = ClientFrame::DeleteQueue {
+            recv_id: q.recv_id,
+            token: q.token,
+        };
+        if let Some(live) = self.links.remove(&link) {
+            let _ = live.relay.send(frame);
+            self.retiring
+                .push((link, live, Instant::now() + RETIRE_TIMEOUT));
+        }
+    }
+
+    /// Deletes incognito identity `key`'s invite queue and erases it here.
     fn retire(&mut self, key: &Ed25519Key) {
         let Some(slot) = self.slot_of(key).filter(|&s| s > 0) else {
             return;
         };
-        let live = self.lives.remove(slot);
+        if let Some(q) = self.invite_queue(slot).cloned() {
+            self.delete_queue(key, &q);
+        }
+        self.cores.remove(slot);
         self.data.profiles.remove(slot - 1);
-        let _ = live.relay.send(ClientFrame::Unregister);
-        self.retiring
-            .push((*key, live, Instant::now() + RETIRE_TIMEOUT));
+        let _ = self.sync_links();
     }
 
     /// Every one-time invite handed out so far stops working, incognito ones too.
@@ -754,14 +986,19 @@ impl Engine {
         self.persist();
     }
 
-    fn invite_with(&self, slot: usize, code: InviteCode) -> String {
-        Invite {
-            relay_url: self.data.relay_url.clone(),
-            onion_url: self.data.onion_url.clone(),
+    fn invite_with(&self, slot: usize, code: InviteCode) -> Result<String, String> {
+        let q = self
+            .invite_queue(slot)
+            .ok_or("not connected to the relay yet; try again in a moment")?;
+        Ok(Invite {
+            version: INVITE_VERSION,
+            relay_url: q.relay_url.clone(),
+            onion_url: q.onion_url.clone(),
             identity: self.core_at(slot).identity(),
-            code: Some(code),
+            queue: q.send_id,
+            code,
         }
-        .encode()
+        .encode())
     }
 
     pub fn index(&self, key: &Ed25519Key) -> Option<usize> {
@@ -786,15 +1023,10 @@ impl Engine {
             return false;
         }
         let saved = self
-            .lives
+            .cores
             .iter()
             .skip(1)
-            .map(|l| {
-                l.core
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .export()
-            })
+            .map(|c| c.lock().unwrap_or_else(PoisonError::into_inner).export())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
             .and_then(|states| self.data.to_json(&states).map_err(|e| e.to_string()))
@@ -821,34 +1053,39 @@ impl Engine {
     /// An unsaved ratchet must never go on the wire: a restart would replay it.
     fn transmit(&mut self, key: &Ed25519Key, body: Body) -> Result<u64, String> {
         let slot = self.slot_for(key).ok_or(MISSING_PROFILE)?;
+        let i = self.index(key).ok_or(MISSING_PROFILE)?;
+        let to = self.out_addr(i).cloned().ok_or(NEEDS_INVITE)?;
         let envelope = self
             .core_at(slot)
             .encrypt(key, body)
             .map_err(|e| e.to_string())?;
-        let next = match slot {
-            0 => &mut self.data.next_client_id,
-            n => &mut self.data.profiles[n - 1].next_client_id,
-        };
+        let next = &mut self.data.contacts[i].next_client_id;
         let client_id = *next;
         *next += 1;
         if !self.persist() {
             return Err(self.take_note());
         }
-        self.lives[slot]
+        self.live(key, &to.relay_url)
+            .ok_or("relay link closed")?
             .relay
             .send(ClientFrame::Send {
                 client_id,
+                send_id: to.send_id,
                 envelope,
             })
             .map_err(|_| "relay link closed")?;
         Ok(client_id)
     }
 
+    /// Asks their relay for a key to start a session with contact `key`.
     fn claim(&mut self, key: Ed25519Key) {
-        if let Some(slot) = self.slot_for(&key) {
-            let _ = self.lives[slot]
-                .relay
-                .send(ClientFrame::ClaimKey { target: key });
+        let Some(to) = self.index(&key).and_then(|i| self.out_addr(i)).cloned() else {
+            return;
+        };
+        if let Some(l) = self.live(&key, &to.relay_url) {
+            let _ = l.relay.send(ClientFrame::ClaimKey {
+                send_id: to.send_id,
+            });
         }
     }
 
@@ -857,12 +1094,16 @@ impl Engine {
             .is_some_and(|s| self.core_at(s).has_session(key))
     }
 
-    /// Sends our contact request (if still owed) and every queued message.
+    /// Sends what we owe contact `i`, in this order (protocol.md, section 9):
+    /// our request, our queue's address, our acceptance, then queued messages.
     fn flush(&mut self, i: usize) {
         let key = self.data.contacts[i].key;
         let Some(slot) = self.slot_for(&key) else {
             return self.note(MISSING_PROFILE);
         };
+        if self.out_addr(i).is_none() || !self.has_session(&key) {
+            return;
+        }
         if self.data.contacts[i].request_pending {
             let (identity, nickname) = (self.core_at(slot).identity(), self.nickname_at(slot));
             let note = String::new();
@@ -881,6 +1122,37 @@ impl Engine {
             };
             match self.transmit(&key, body) {
                 Ok(_) => self.data.contacts[i].request_pending = false,
+                Err(e) => return self.note(e),
+            }
+        }
+        if self.data.contacts[i].offer_pending
+            && let Some(addr) = self.data.contacts[i].mine.as_ref().map(Queue::addr)
+        {
+            let body = Body::QueueOffer {
+                relay_url: addr.relay_url,
+                onion_url: addr.onion_url,
+                send_id: addr.send_id,
+            };
+            match self.transmit(&key, body) {
+                Ok(_) => self.data.contacts[i].offer_pending = false,
+                Err(e) => return self.note(e),
+            }
+        }
+        // They must know where to answer before they learn they may.
+        let c = &self.data.contacts[i];
+        if c.mine.is_none() || c.offer_pending {
+            self.persist();
+            return;
+        }
+        if c.accept_pending {
+            let body = Body::ContactAccept {
+                nickname: self.nickname_at(slot),
+            };
+            match self.transmit(&key, body) {
+                Ok(_) => {
+                    self.data.contacts[i].accept_pending = false;
+                    self.system(i, "you accepted the request");
+                }
                 Err(e) => return self.note(e),
             }
         }
@@ -904,85 +1176,134 @@ impl Engine {
         self.send_chunks();
     }
 
-    /// One relay event of our identity `who`.
-    pub fn on_relay(&mut self, (who, ev): RelayEvent) {
-        if let Some(r) = self.retiring.iter().position(|(k, ..)| *k == who) {
+    /// Something to send to contact `i`: flush with a session, claim a key without.
+    fn deliver(&mut self, i: usize) {
+        let key = self.data.contacts[i].key;
+        match self.has_session(&key) {
+            true => self.flush(i),
+            false => self.claim(key),
+        }
+    }
+
+    /// One relay event on `link`.
+    pub fn on_relay(&mut self, (link, ev): RelayEvent) {
+        if let Some(r) = self.retiring.iter().position(|(l, ..)| *l == link) {
             // Gone from the relay, or at least from here.
             if matches!(
                 ev,
-                Event::Frame(ServerFrame::Unregistered) | Event::Disconnected
+                Event::Frame(ServerFrame::QueueDeleted { .. }) | Event::Disconnected
             ) {
                 self.retiring.remove(r);
             }
             return;
         }
-        let Some(slot) = self.slot_of(&who) else {
+        let Some(live) = self.links.get_mut(&link) else {
             return;
         };
+        let who = link.who;
+        let home = same_url(&link.relay, &self.data.relay_url);
         match ev {
             Event::RelayVersion(v) => {
                 let ours = parse_version(env!("CARGO_PKG_VERSION"));
-                self.push_ok = parse_version(&v) >= Some(PUSH_SINCE);
                 self.update = (parse_version(&v) > ours).then_some(v);
             }
             Event::Connected => {
-                self.lives[slot].connected = true;
-                if slot == 0 {
+                live.connected = true;
+                live.creating = false;
+                if who == self.me() {
                     self.connected = true;
                 }
-                // The relay may have lost it, or this is a restored backup.
-                let has_push = self.push_mut(slot).is_some();
-                if has_push {
-                    self.tell_push(slot);
-                }
-                let waiting: Vec<_> = self
-                    .data
-                    .contacts
-                    .iter()
-                    .filter(|c| {
-                        c.request_pending || c.messages.iter().any(|m| m.status == Status::Queued)
-                    })
-                    .map(|c| c.key)
-                    .filter(|k| self.slot_for(k) == Some(slot))
-                    .collect();
-                for key in waiting {
-                    match self.has_session(&key) {
-                        true => {
-                            if let Some(i) = self.index(&key) {
-                                self.flush(i);
+                if home {
+                    match self.queue_of(&who).cloned() {
+                        Some(q) => self.subscribe(who, &q),
+                        None if self.slot_of(&who).is_some() => self.ensure_queue(who),
+                        None => {
+                            if self.index(&who).is_some_and(|i| self.wants_queue(i)) {
+                                self.ensure_queue(who);
                             }
                         }
-                        false => self.claim(key),
+                    }
+                }
+                // Sends go on the link to their relay, which may be this one.
+                if let Some(i) = self.index(&who)
+                    && self
+                        .out_addr(i)
+                        .is_some_and(|a| same_url(&a.relay_url, &link.relay))
+                {
+                    let c = &self.data.contacts[i];
+                    let owed = c.request_pending
+                        || c.offer_pending
+                        || c.accept_pending
+                        || c.messages.iter().any(|m| m.status == Status::Queued);
+                    if owed {
+                        self.deliver(i);
                     }
                 }
             }
             Event::Disconnected => {
-                self.lives[slot].connected = false;
-                if slot == 0 {
+                live.connected = false;
+                live.subscribing = None;
+                if who == self.me() {
                     self.connected = false;
-                    // An older relay closes the connection on `Unregister`.
-                    if self.leaving.as_ref().is_some_and(|l| l.unregistering) {
-                        self.finish_wipe(NOT_REMOVED);
-                    }
                 }
             }
-            Event::Frame(frame) => self.on_frame(slot, frame),
+            Event::Frame(frame) => self.on_frame(&link, frame),
         }
     }
 
-    fn on_frame(&mut self, slot: usize, frame: ServerFrame) {
+    fn on_frame(&mut self, link: &Link, frame: ServerFrame) {
+        let who = link.who;
         match frame {
+            ServerFrame::QueueCreated {
+                recv_id,
+                send_id,
+                token,
+            } => {
+                if let Some(l) = self.links.get_mut(link) {
+                    l.creating = false;
+                }
+                let q = Queue {
+                    relay_url: link.relay.clone(),
+                    onion_url: self.data.onion_url.clone(),
+                    recv_id,
+                    send_id,
+                    token,
+                };
+                self.queue_created(who, q);
+            }
+            ServerFrame::Subscribed { recv_id } => {
+                if let Some(l) = self.links.get_mut(link)
+                    && l.subscribing == Some(recv_id)
+                {
+                    l.subscribing = None;
+                }
+            }
             ServerFrame::KeyCount {
+                recv_id,
                 one_time_left,
                 fallback_used,
-            } => self.publish_keys(slot, one_time_left as usize, fallback_used),
-            ServerFrame::ClaimedKey { target, key } => {
-                let Some(i) = self.index(&target) else { return };
-                if self.slot_for(&target) != Some(slot) {
+            } => {
+                let Some(owner) = self.owner_of(&recv_id) else {
+                    return;
+                };
+                match (self.slot_of(&owner), self.index(&owner)) {
+                    (Some(slot), _) => {
+                        self.publish_keys(slot, one_time_left as usize, fallback_used);
+                    }
+                    (None, Some(i)) => self.top_up_contact_keys(i, one_time_left),
+                    _ => {}
+                }
+            }
+            ServerFrame::ClaimedKey { send_id, key } => {
+                let Some(i) = self.index(&who) else { return };
+                if self.out_addr(i).is_none_or(|a| a.send_id != send_id) {
                     return;
                 }
-                if !self.has_session(&target) {
-                    let started = self.core_at(slot).start_session(&target, &key);
+                let slot = self.slot_for(&who);
+                if let Some(slot) = slot
+                    && !self.has_session(&who)
+                {
+                    let started = self.core_at(slot).start_session(&who, &key);
                     if let Err(e) = started {
                         return self.note(format!("cannot start session: {e}"));
                     }
@@ -991,13 +1312,19 @@ impl Engine {
                 self.flush(i);
             }
             ServerFrame::Deliver {
+                recv_id,
                 relay_id,
-                sender,
                 envelope,
             } => {
+                // Only from the queue this link reads; anything else is the relay's mistake.
+                if self.queue_of(&who).is_none_or(|q| q.recv_id != recv_id) {
+                    return;
+                }
                 // Not saved means not acked: the relay keeps it for the next connection.
-                if self.receive(slot, sender, &envelope) {
-                    let _ = self.lives[slot].relay.send(ClientFrame::Ack { relay_id });
+                if self.receive(who, &envelope)
+                    && let Some(l) = self.links.get(link)
+                {
+                    let _ = l.relay.send(ClientFrame::Ack { recv_id, relay_id });
                 }
             }
             ServerFrame::Accepted { client_id } => {
@@ -1019,32 +1346,94 @@ impl Engine {
             ServerFrame::Error {
                 client_id: None,
                 code,
-            } => self.note(format!("relay: {}", why(code))),
-            ServerFrame::Unregistered => {
-                // The wipe ends once the relay forgot every identity.
-                let me = self.core_at(slot).identity().ed25519;
+            } => {
+                // Our own queue is gone (the relay expired it or lost its
+                // database): make a new one and tell whoever uses it.
+                let lost = self.links.get_mut(link).and_then(|l| l.subscribing.take());
+                if code == ErrorCode::UnknownQueue && lost.is_some() {
+                    self.queue_lost(who);
+                } else {
+                    self.note(format!("relay: {}", why(code)));
+                }
+            }
+            ServerFrame::QueueDeleted { recv_id } => {
                 let Some(l) = &mut self.leaving else { return };
-                l.registered.retain(|k| *k != me);
-                if l.registered.is_empty() {
+                l.queues.retain(|q| *q != recv_id);
+                if l.queues.is_empty() {
                     self.finish_wipe("");
                 }
             }
             ServerFrame::Reported => self.note("reported to the relay operator, and blocked"),
-            ServerFrame::Challenge { .. } | ServerFrame::AuthOk | ServerFrame::PushSet => {}
+            ServerFrame::PushSet => {}
         }
     }
 
-    /// ADR-009: goodbyes to every contact we talk to, then `Unregister` for
-    /// every identity, then the wipe; `false` if the relay cannot be told (a
+    /// A queue the relay made for `who`.
+    fn queue_created(&mut self, who: Ed25519Key, q: Queue) {
+        if let Some(slot) = self.slot_of(&who) {
+            if self.invite_queue(slot).is_some() {
+                return self.send_home(
+                    &who,
+                    ClientFrame::DeleteQueue {
+                        recv_id: q.recv_id,
+                        token: q.token,
+                    },
+                );
+            }
+            *self.invite_queue_mut(slot) = Some(q.clone());
+            self.persist();
+            self.subscribe(who, &q);
+            // An incognito invite asked for while its queue did not exist yet.
+            if slot > 0
+                && let Some(code) = self.data.profiles[slot - 1].code
+                && let Ok(invite) = self.invite_with(slot, code)
+            {
+                self.happened.push(Happened::Invite(invite));
+            }
+            return;
+        }
+        let Some(i) = self.index(&who) else { return };
+        if self.data.contacts[i].mine.is_some() || !self.wants_queue(i) {
+            return self.send_home(
+                &who,
+                ClientFrame::DeleteQueue {
+                    recv_id: q.recv_id,
+                    token: q.token,
+                },
+            );
+        }
+        let c = &mut self.data.contacts[i];
+        c.mine = Some(q.clone());
+        c.offer_pending = true;
+        self.persist();
+        self.subscribe(who, &q);
+        self.deliver(i);
+    }
+
+    /// The relay no longer knows `who`'s queue. An invite queue takes the
+    /// invites handed out with it along; a contact gets the new address.
+    fn queue_lost(&mut self, who: Ed25519Key) {
+        if let Some(slot) = self.slot_of(&who) {
+            *self.invite_queue_mut(slot) = None;
+            self.note("the relay lost your invite queue; invites given out before stop working");
+        } else if let Some(i) = self.index(&who) {
+            self.data.contacts[i].mine = None;
+        }
+        self.persist();
+        self.ensure_queue(who);
+    }
+
+    /// ADR-009: goodbyes to every contact we talk to, then every queue
+    /// deleted, then the wipe; `false` if the relay cannot be told (a
     /// `WipeAnyway` follows). `moved` (section 6) only erases this device, silently.
     pub fn leave(&mut self, moved: bool) -> bool {
         if moved {
             self.finish_wipe("");
             return true;
         }
-        if !self.lives.iter().all(|l| l.connected) {
+        if !self.links.values().all(|l| l.connected) {
             self.happened.push(Happened::WipeAnyway(
-                "Not every identity is connected to the relay yet; wait a minute, or wipe anyway."
+                "Not every connection to the relay is up yet; wait a minute, or wipe anyway."
                     .into(),
             ));
             return false;
@@ -1063,45 +1452,56 @@ impl Engine {
                 waiting.push(id);
             }
         }
-        let registered = self
-            .lives
-            .iter()
-            .map(|l| {
-                l.core
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .identity()
-                    .ed25519
-            })
-            .collect();
+        let invites = (0..self.cores.len()).filter_map(|s| self.invite_queue(s));
+        let contacts = self.data.contacts.iter().filter_map(|c| c.mine.as_ref());
+        let queues = invites.chain(contacts).map(|q| q.recv_id).collect();
         self.leaving = Some(Leaving {
             waiting,
             until: Instant::now() + LEAVE_TIMEOUT,
-            unregistering: false,
-            registered,
+            deleting: false,
+            queues,
         });
         self.goodbye_done(None);
         true
     }
 
-    /// The relay answered `client_id`; once every goodbye is in, ask it to forget us.
+    /// The relay answered `client_id`; once every goodbye is in, delete every queue.
     fn goodbye_done(&mut self, client_id: Option<u64>) {
         let Some(l) = &mut self.leaving else { return };
         l.waiting.retain(|w| Some(*w) != client_id);
-        if l.waiting.is_empty() && !l.unregistering {
-            l.unregistering = true;
-            // The main one last: its answer finishes the wipe.
-            for live in self.lives.iter().rev() {
-                let _ = live.relay.send(ClientFrame::Unregister);
-            }
+        if !l.waiting.is_empty() || l.deleting {
+            return;
+        }
+        l.deleting = true;
+        if l.queues.is_empty() {
+            return self.finish_wipe("");
+        }
+        let owners: Vec<(Ed25519Key, Queue)> = (0..self.cores.len())
+            .filter_map(|s| Some((self.key_of(s), self.invite_queue(s)?.clone())))
+            .chain(
+                self.data
+                    .contacts
+                    .iter()
+                    .filter_map(|c| Some((c.key, c.mine.clone()?))),
+            )
+            .collect();
+        for (who, q) in owners {
+            self.send_home(
+                &who,
+                ClientFrame::DeleteQueue {
+                    recv_id: q.recv_id,
+                    token: q.token,
+                },
+            );
         }
     }
+
     fn leave_timeout(&mut self) {
         let Some(l) = &self.leaving else { return };
         if Instant::now() < l.until {
             return;
         }
-        match l.unregistering {
+        match l.deleting {
             true => self.finish_wipe(NOT_REMOVED),
             false => {
                 self.leaving = None;
@@ -1157,36 +1557,55 @@ impl Engine {
         ok
     }
 
-    /// Decrypts and stores one delivery to our identity `slot`. `true` once it
-    /// is safe to ack: the message is on disk, or there was nothing worth keeping.
-    fn receive(&mut self, slot: usize, sender: Ed25519Key, envelope: &proto::Envelope) -> bool {
-        // Blocked or rejected: not even decrypted. The caller still acks so the relay forgets it.
-        if self.data.rejected.contains(&sender)
-            || self
-                .index(&sender)
+    /// Decrypts and stores one delivery from the queue of `who`: one of our
+    /// identities (its invite queue) or a contact (our queue for them).
+    /// `true` once it is safe to ack: the message is on disk, or there was
+    /// nothing worth keeping.
+    fn receive(&mut self, who: Ed25519Key, envelope: &proto::Envelope) -> bool {
+        let invite_slot = self.slot_of(&who);
+        let (slot, from) = match invite_slot {
+            Some(slot) => (slot, None),
+            None => match self.slot_for(&who) {
+                Some(slot) => (slot, Some(who)),
+                None => return true,
+            },
+        };
+        // Blocked: not even decrypted (its queue is normally gone already).
+        if from.is_some_and(|k| {
+            self.index(&k)
                 .is_some_and(|i| self.data.contacts[i].blocked)
-        {
+        }) {
             return true;
         }
-        // A contact of another of our identities writing here: they must stay apart.
-        if self.index(&sender).is_some() && self.slot_for(&sender) != Some(slot) {
-            return true;
-        }
-        let had_session = self.core_at(slot).has_session(&sender);
-        let result = self.core_at(slot).decrypt(&sender, envelope);
+        let had_session = from.is_some_and(|k| self.core_at(slot).has_session(&k));
+        let result = self.core_at(slot).decrypt(from.as_ref(), envelope);
         let got = match result {
             Ok(got) => got,
             Err(CoreError::Duplicate) => return true,
-            // The status bar, not the chat: the sender is the relay's word,
-            // and a relay must not be able to plant doubts in any chat.
+            // The status bar, not the chat: a relay must not be able to plant
+            // doubts in any chat.
             Err(e) => {
-                if self.index(&sender).is_some() {
+                if from.is_some() {
                     self.note(format!("a message could not be decrypted ({e})"));
                 }
                 return true;
             }
         };
-        let i = match self.index(&sender) {
+        let sender = got.sender;
+        let known = self.index(&sender);
+        // Turned down, blocked, or a contact of another of our identities
+        // writing to this one's invite queue: they must stay apart.
+        let refused = self.data.rejected.contains(&sender)
+            || known.is_some_and(|i| self.data.contacts[i].blocked)
+            || (known.is_some() && self.slot_for(&sender) != Some(slot));
+        if refused {
+            if known.is_none() || self.slot_for(&sender) != Some(slot) {
+                self.core_at(slot).remove_contact(&sender);
+            }
+            self.persist();
+            return true;
+        }
+        let i = match known {
             Some(i) => i,
             // Silently: they cannot tell a refusal from a request not yet seen.
             None if !self.admit(slot, &got.body) => {
@@ -1199,6 +1618,7 @@ impl Engine {
                     key: sender,
                     added_at: now(),
                     profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
+                    next_client_id: getrandom::u64().unwrap_or(0) >> 2,
                     ..Default::default()
                 });
                 self.data.contacts.len() - 1
@@ -1252,14 +1672,41 @@ impl Engine {
                 let request = self.core_at(slot).is_request(&sender);
                 if request == Some(true) {
                     self.happened.push(alert(true));
+                    self.system(i, "contact request: accept it, or delete to reject");
+                } else {
+                    // A contact we have, asking again: from a new device, or
+                    // after the move to queues (ADR-023). They get our queue.
+                    let c = &mut self.data.contacts[i];
+                    c.request_pending = false;
+                    c.offer_pending = c.mine.is_some();
+                    self.system(i, "connected");
+                    let _ = self.sync_links();
+                    self.ensure_queue(sender);
+                    self.deliver(i);
                 }
-                let text: String = match request {
-                    Some(true) => "contact request: accept it, or delete to reject".into(),
-                    _ => "connected".into(),
-                };
-                self.system(i, text);
             }
             Body::ContactAccept { .. } => self.system(i, "accepted your request"),
+            Body::QueueOffer {
+                relay_url,
+                onion_url,
+                send_id,
+            } => {
+                if !addr_ok(&relay_url, onion_url.as_deref()) {
+                    self.note("a contact sent an address that cannot be used");
+                    return self.persist();
+                }
+                self.data.contacts[i].theirs = Some(Addr {
+                    relay_url,
+                    onion_url,
+                    send_id,
+                });
+                self.data.contacts[i].their_invite = None;
+                if !got.request {
+                    let _ = self.sync_links();
+                    self.deliver(i);
+                }
+                return self.persist();
+            }
             // ADR-017: no files before the request is accepted.
             Body::File { .. } if got.request => return self.persist(),
             body @ Body::File { .. } => {
@@ -1283,15 +1730,23 @@ impl Engine {
 
     /// The app came on screen: every link checks itself now (ADR-012).
     pub fn reconnect(&self) {
-        self.lives.iter().for_each(|l| l.relay.reconnect());
+        self.links.values().for_each(|l| l.relay.reconnect());
     }
 
-    /// A push for `who`: the relay heard nothing from that identity's link,
-    /// which checks itself (ADR-012). The other identities stay as they are (ADR-014).
+    /// A push for `who`'s queue: the relay heard nothing from that link,
+    /// which checks itself (ADR-012). The others stay as they are (ADR-014).
     pub fn woken(&self, who: &Ed25519Key) {
-        if let Some(slot) = self.slot_of(who) {
-            self.lives[slot].relay.check();
+        if let Some(l) = self.live(who, &self.home()) {
+            l.relay.check();
         }
+    }
+
+    /// Who has a queue, and so a UnifiedPush instance of its own: our
+    /// identities (invite queues) and contacts (ADR-012, ADR-023).
+    pub fn push_owners(&self) -> Vec<Ed25519Key> {
+        let ids = (0..self.cores.len()).map(|s| self.key_of(s));
+        let contacts = self.data.contacts.iter().filter(|c| c.mine.is_some());
+        ids.chain(contacts.map(|c| c.key)).collect()
     }
 
     /// Timers: disappearing messages, the rotated-out fallback key, a wipe
@@ -1334,7 +1789,8 @@ impl Engine {
         }
     }
 
-    /// Accepts contact `i`'s request: their held texts appear, they are told.
+    /// Accepts contact `i`'s request: their held texts appear. They are told
+    /// once our queue for them exists, after its address (ADR-023).
     pub fn accept(&mut self, i: usize) {
         let key = self.data.contacts[i].key;
         let Some(slot) = self.slot_for(&key) else {
@@ -1343,10 +1799,8 @@ impl Engine {
         if !self.core_at(slot).accept(&key) {
             return;
         }
-        let body = Body::ContactAccept {
-            nickname: self.nickname_at(slot),
-        };
         let c = &mut self.data.contacts[i];
+        c.accept_pending = true;
         let hidden = std::mem::take(&mut c.hidden);
         let held = std::mem::take(&mut c.held_back);
         c.messages.extend(hidden);
@@ -1356,10 +1810,11 @@ impl Engine {
                 format!("{held} more message(s) from before you accepted were not kept"),
             );
         }
-        match self.transmit(&key, body) {
-            Ok(_) => self.system(i, "you accepted the request"),
-            Err(e) => self.note(e),
+        self.persist();
+        if let Err(e) = self.sync_links() {
+            return self.note(e);
         }
+        self.ensure_queue(key);
     }
 
     /// Changes one contact's settings and saves.
@@ -1394,24 +1849,52 @@ impl Engine {
         Some(text).filter(|t| !t.is_empty())
     }
 
-    /// Sends `text` (shown to the user first) to the relay operator and blocks contact `i`.
+    /// Sends `text` (shown to the user first) to the relay operator and blocks
+    /// contact `i`. The relay learns only the text, not who wrote it (ADR-023).
     pub fn report(&mut self, i: usize, text: String) {
-        let Some(sender) = self.data.contacts.get(i).map(|c| c.key) else {
+        let Some(c) = self.data.contacts.get(i) else {
             return;
         };
-        // From the identity they wrote to: the relay knows them only there.
-        if let Some(slot) = self.slot_for(&sender) {
-            let _ = self.lives[slot]
-                .relay
-                .send(ClientFrame::Report { sender, text });
+        if let Some(q) = c.mine.clone() {
+            self.send_home(
+                &c.key,
+                ClientFrame::Report {
+                    recv_id: q.recv_id,
+                    token: q.token,
+                    text,
+                },
+            );
         }
-        self.data.contacts[i].blocked = true;
-        self.persist();
+        self.block(i, true);
     }
 
-    /// Removes contact `i`. Turning down a request is remembered, so it cannot
-    /// simply ask again. An incognito contact takes its identity with it: a
-    /// goodbye, then the relay forgets that key (ADR-014).
+    /// Blocks or unblocks contact `i`. Blocking deletes our queue for them,
+    /// so they cannot put a byte in it; unblocking makes a new one and tells
+    /// them its address (ADR-023).
+    pub fn block(&mut self, i: usize, on: bool) {
+        let Some(c) = self.data.contacts.get_mut(i) else {
+            return;
+        };
+        c.blocked = on;
+        let key = c.key;
+        if on {
+            c.offer_pending = false;
+            if let Some(q) = c.mine.take() {
+                self.delete_queue(&key, &q);
+            }
+        }
+        self.persist();
+        if let Err(e) = self.sync_links() {
+            self.note(e);
+        }
+        if !on {
+            self.ensure_queue(key);
+        }
+    }
+
+    /// Removes contact `i` and deletes our queue for them. Turning down a
+    /// request is remembered, so it cannot simply ask again. An incognito
+    /// contact takes its identity with it: a goodbye first (ADR-014).
     pub fn delete(&mut self, i: usize) {
         let Some(c) = self.data.contacts.get(i) else {
             return;
@@ -1422,6 +1905,9 @@ impl Engine {
             let _ = self.transmit(&key, Body::Goodbye);
         }
         let was_request = self.is_request(&key);
+        if let Some(q) = self.data.contacts[i].mine.clone() {
+            self.delete_queue(&key, &q);
+        }
         self.data.contacts.remove(i);
         if let Some(slot) = slot {
             self.core_at(slot).remove_contact(&key);
@@ -1437,6 +1923,7 @@ impl Engine {
             None => {}
         }
         self.persist();
+        let _ = self.sync_links();
     }
 
     /// Contact `i`, if we may write to them.
@@ -1448,6 +1935,9 @@ impl Engine {
         if c.left {
             return Err("this contact left".into());
         }
+        if self.needs_invite(c) {
+            return Err(NEEDS_INVITE.into());
+        }
         Ok(c)
     }
 
@@ -1456,8 +1946,7 @@ impl Engine {
         if text.len() > proto::MAX_TEXT_BYTES {
             return Err("message too long".into());
         }
-        let c = self.writable(i)?;
-        let (key, expires_in) = (c.key, c.expires_in);
+        let expires_in = self.writable(i)?.expires_in;
         let at = now();
         self.data.contacts[i].messages.push(Msg {
             mine: true,
@@ -1467,13 +1956,8 @@ impl Engine {
             status: Status::Queued,
             file: None,
         });
-        match self.has_session(&key) {
-            true => self.flush(i),
-            false => {
-                self.persist();
-                self.claim(key);
-            }
-        }
+        self.persist();
+        self.deliver(i);
         Ok(())
     }
 
@@ -1512,12 +1996,10 @@ impl Engine {
                 data: Some(bytes),
             }),
         });
+        self.persist();
         match self.has_session(&key) {
             true => self.send_chunks(),
-            false => {
-                self.persist();
-                self.claim(key);
-            }
+            false => self.claim(key),
         }
         Ok(())
     }
@@ -1645,23 +2127,11 @@ impl Engine {
         }
     }
 
-    /// Reconnects every identity with the current settings.
+    /// Reconnects every link with the current settings.
     fn relink(&mut self) -> Result<(), String> {
-        let cores: Vec<_> = self.lives.iter().map(|l| Arc::clone(&l.core)).collect();
-        self.lives = self.start_all(&cores)?;
+        self.links.clear();
         self.connected = false;
-        Ok(())
-    }
-
-    /// A link per identity, in slot order.
-    fn start_all(&self, cores: &[Arc<Mutex<Client>>]) -> Result<Vec<Live>, String> {
-        let mut lives = Vec::new();
-        for (slot, core) in cores.iter().enumerate() {
-            let delay = if slot == 0 { Duration::ZERO } else { spread() };
-            let (data, path, tx) = (&self.data, &self.path, &self.events_tx);
-            lives.push(start(Arc::clone(core), data, path, tx, delay, slot > 0)?);
-        }
-        Ok(lives)
+        self.sync_links()
     }
 
     /// Replaces the bridge lines, one per line; empty turns bridges off
@@ -1694,21 +2164,16 @@ impl Engine {
             // Arti keeps the bridge lines in its folder in the clear. Stop
             // every link and move to a new folder; the old one is erased
             // below, once its client lets go.
-            let cores: Vec<_> = self.lives.iter().map(|l| Arc::clone(&l.core)).collect();
-            self.lives.clear();
+            self.links.clear();
             crate::forget_tor();
             self.data.tor_generation += 1;
             let old = std::mem::replace(&mut self.data.bridges, lines);
-            match self.start_all(&cores) {
-                Ok(lives) => self.lives = lives,
+            if let Err(e) = self.relink() {
                 // Back to the old bridges, which worked: never off Tor.
-                Err(e) => {
-                    self.data.bridges = old;
-                    self.lives = self.start_all(&cores)?;
-                    return Err(e);
-                }
+                self.data.bridges = old;
+                self.relink()?;
+                return Err(e);
             }
-            self.connected = false;
         }
         self.persist();
         data::prune_tor_dirs(&self.path, self.data.tor_generation);
@@ -1747,7 +2212,7 @@ impl Engine {
             c.hidden.clear();
             c.held_back = 0;
         });
-        let states = (1..self.lives.len())
+        let states = (1..self.cores.len())
             .map(|s| self.core_at(s).without_sessions().export())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -1812,17 +2277,20 @@ impl Engine {
     }
 
     /// Adds a contact from an invite string and starts the handshake; its
-    /// index. `incognito` talks to them from a new identity of its own (ADR-014).
+    /// index. `incognito` talks to them from a new identity of its own
+    /// (ADR-014). Their relay may be another one (ADR-023, decision 4).
     pub fn add(&mut self, invite: &str, incognito: bool) -> Result<usize, String> {
-        let invite = Invite::decode(invite).map_err(|e| format!("invalid invite: {e}"))?;
-        let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
-        let onion_matches =
-            matches!((&invite.onion_url, &self.data.onion_url), (Some(a), Some(b)) if same(a, b));
-        if !same(&invite.relay_url, &self.data.relay_url) && !onion_matches {
-            return Err(format!(
-                "they use another relay ({}); only one relay is supported for now",
-                clean(&invite.relay_url)
-            ));
+        let invite = Invite::decode(invite).map_err(|e| match e {
+            proto::Error::UnsupportedVersion => {
+                "this invite is from an older version; ask them for a new one".to_string()
+            }
+            e => format!("invalid invite: {e}"),
+        })?;
+        if !addr_ok(&invite.relay_url, invite.onion_url.as_deref()) {
+            return Err("invalid invite: its relay address cannot be used".into());
+        }
+        if self.data.tor && invite.onion_url.is_none() {
+            return Err("their relay has no onion address, and Tor is on".into());
         }
         let key = invite.identity.ed25519;
         if self.slot_of(&key).is_some() {
@@ -1831,6 +2299,12 @@ impl Engine {
         let existing = self.index(&key);
         if incognito && existing.is_some() {
             return Err("already a contact: incognito works only for someone new".into());
+        }
+        if let Some(i) = existing
+            && self.data.contacts[i].theirs.is_some()
+            && self.has_session(&key)
+        {
+            return Err("already a contact".into());
         }
         let slot = match (incognito, existing) {
             (true, _) => self.new_profile("", None)?,
@@ -1847,6 +2321,10 @@ impl Engine {
             }
             return Err(format!("invalid invite: {e}"));
         }
+        // A contact asking again (a lost request, or the move to queues,
+        // ADR-023): old sessions cannot write to an invite queue, which reads
+        // only pre-key messages. Their name and history stay.
+        self.core_at(slot).forget_sessions(&key);
         // Adding their invite is how a rejection is taken back.
         self.data.rejected.retain(|k| *k != key);
         let i = match existing {
@@ -1854,29 +2332,28 @@ impl Engine {
             None => {
                 self.data.contacts.push(Contact {
                     key,
-                    request_pending: true,
                     added_at: now(),
                     profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
+                    next_client_id: getrandom::u64().unwrap_or(0) >> 2,
                     ..Default::default()
                 });
                 self.data.contacts.len() - 1
             }
         };
-        // A new code from someone who never answered: our request may have
-        // been dropped with its one-time key spent, so start over (ADR-013).
-        let c = &self.data.contacts[i];
-        if invite.code.is_some() && c.invite_code != invite.code && !c.request_pending {
-            let mut core = self.core_at(slot);
-            if core.nickname(&key).is_none() {
-                core.remove_contact(&key);
-                core.add_contact(&invite.identity)
-                    .map_err(|e| format!("invalid invite: {e}"))?;
-                drop(core);
-                self.data.contacts[i].request_pending = true;
-            }
-        }
-        self.data.contacts[i].invite_code = invite.code;
+        let c = &mut self.data.contacts[i];
+        c.request_pending = true;
+        c.invite_code = Some(invite.code);
+        c.theirs = None;
+        c.their_invite = Some(Addr {
+            relay_url: invite.relay_url,
+            onion_url: invite.onion_url,
+            send_id: invite.queue,
+        });
+        // They learn our queue right after the request.
+        c.offer_pending = c.mine.is_some();
         self.persist();
+        self.sync_links()?;
+        self.ensure_queue(key);
         self.claim(key);
         Ok(i)
     }
@@ -1909,24 +2386,33 @@ impl Engine {
         }
     }
 
-    /// Where the relay should wake identity `who` (ours); `None` stops it
-    /// (ADR-012). Each identity has its own endpoint (ADR-014).
+    /// Where the relay should wake us for `who`'s queue (one of our
+    /// identities, or a contact); `None` stops it. Every queue has its own
+    /// endpoint, or the relay could link them by it (ADR-012, ADR-023).
     pub fn set_push(&mut self, who: &Ed25519Key, endpoint: Option<String>) {
-        let Some(slot) = self.slot_of(who) else {
+        let Some(push) = self.push_mut(who) else {
             return;
         };
-        *self.push_mut(slot) = endpoint;
+        *push = endpoint;
         self.persist();
-        self.tell_push(slot);
+        self.tell_push(who);
     }
 
-    fn tell_push(&mut self, slot: usize) {
-        let endpoint = self.push_mut(slot).clone();
-        if self.lives[slot].connected && self.push_ok {
-            let _ = self.lives[slot]
-                .relay
-                .send(ClientFrame::SetPush { endpoint });
-        }
+    fn tell_push(&mut self, who: &Ed25519Key) {
+        let (Some(q), Some(endpoint)) = (
+            self.queue_of(who).cloned(),
+            self.push_mut(who).map(|p| p.clone()),
+        ) else {
+            return;
+        };
+        self.send_home(
+            who,
+            ClientFrame::SetPush {
+                recv_id: q.recv_id,
+                token: q.token,
+                endpoint,
+            },
+        );
     }
 
     /// This version's notes were not opened yet, or a newer one is out.
@@ -2028,13 +2514,25 @@ mod tests {
         };
         let mut e = Engine::setup(&dir.join("state"), &setup).unwrap();
         let me = e.me();
+        e.data.invite_queue = Some(Queue {
+            relay_url: setup.relay_url.into(),
+            onion_url: None,
+            recv_id: [1; 16],
+            send_id: [2; 16],
+            token: [3; 32],
+        });
+        let link = Link {
+            who: me,
+            relay: setup.relay_url.into(),
+        };
         // The relay never admits the fallback key was used.
         let count = |e: &mut Engine| {
             let frame = ServerFrame::KeyCount {
+                recv_id: [1; 16],
                 one_time_left: 50,
                 fallback_used: false,
             };
-            e.on_relay((me, Event::Frame(frame)));
+            e.on_relay((link.clone(), Event::Frame(frame)));
         };
         count(&mut e);
         let made = e.data.fallback_since;
@@ -2062,7 +2560,7 @@ mod tests {
         e.data.old_fallback_since = None;
         e.tick();
         assert_eq!(e.data.fallback_since, old);
-        e.lives[0].connected = true;
+        e.links.get_mut(&link).unwrap().connected = true;
         e.tick();
         assert!(e.data.fallback_since >= made && e.data.old_fallback_since.is_some());
         let _ = std::fs::remove_dir_all(&dir);
