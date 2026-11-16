@@ -270,6 +270,10 @@ impl Account {
 
     /// Runs `f` on contact `index`, if it exists.
     fn with<T>(&self, index: u32, f: impl FnOnce(&mut Engine, usize) -> T) -> Result<T> {
+        // Accepting, deleting, blocking or writing can start a relay link,
+        // which needs the runtime: without it the spawn panics, the app sees
+        // a quiet error, and the link waits for the next unlock (ADR-023).
+        let _rt = runtime().enter();
         let mut e = self.lock();
         let i = usize::try_from(index).unwrap_or(usize::MAX);
         if i >= e.data.contacts.len() {
@@ -504,7 +508,6 @@ impl Account {
 
     pub fn set_blocked(&self, index: u32, on: bool) -> Result<()> {
         // Blocking deletes our queue for them (ADR-023).
-        let _rt = runtime().enter();
         self.with(index, |e, i| e.block(i, on))
     }
 
@@ -655,5 +658,37 @@ mod tests {
         drop(a);
         assert!(!state_exists(dir.clone()));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Kotlin calls in from threads outside the runtime. An action that
+    /// starts a relay link (accepting, unblocking) must not panic there:
+    /// the panic was swallowed and the contact got no link until the next
+    /// unlock (found on a Pixel with 0.8.0).
+    #[test]
+    fn contact_actions_start_links_from_any_thread() {
+        let dir = std::env::temp_dir().join(format!("termchat-ffi-rt-{}", std::process::id()));
+        let dir = dir.display().to_string();
+        let a = setup(
+            dir.clone(),
+            "ws://localhost:1/".into(),
+            None,
+            false,
+            "ffi".into(),
+            "correct horse battery staple 42".into(),
+            Arc::new(Quiet),
+        )
+        .unwrap();
+        a.lock().data.contacts.push(termchat_engine::data::Contact {
+            key: [7; 32],
+            ..Default::default()
+        });
+        let run = std::thread::spawn(move || {
+            a.set_blocked(0, true).unwrap();
+            a.set_blocked(0, false).unwrap();
+            assert!(!a.contacts()[0].blocked);
+            a.leave(true);
+        });
+        assert!(run.join().is_ok(), "no panic outside the runtime");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

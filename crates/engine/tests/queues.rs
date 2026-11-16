@@ -295,3 +295,33 @@ async fn a_contact_who_lost_us_learns_our_name_again() {
     pump(&mut alice, &mut bob, |a, _| got("hi again")(a)).await;
     let _ = std::fs::remove_dir_all(d);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_acceptance_that_did_not_go_out_goes_after_unlock() {
+    // Android 0.8.0: accepting saved the state, then the link could not
+    // start. The app is locked and unlocked: the engine opens from the file.
+    let url = start_relay().await;
+    let d = dir("unsent");
+    let mut alice = engine(&d, "alice", &url);
+    let mut bob = engine(&d, "bob", &url);
+    pump(&mut alice, &mut bob, |a, _| a.data.fallback_published).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let invite = alice.invite().unwrap();
+    bob.add(&invite, false).unwrap();
+    pump(&mut alice, &mut bob, |a, _| {
+        !a.data.contacts.is_empty() && a.data.contacts[0].theirs.is_some()
+    })
+    .await;
+    // Accepted and saved, but nothing sent: as if the link never started.
+    let key = alice.data.contacts[0].key;
+    alice.core().accept(&key);
+    alice.data.contacts[0].accept_pending = true;
+    assert!(alice.persist());
+    drop(alice);
+    let mut alice = match Engine::unlock(&d.join("alice"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(e) => e,
+        termchat_engine::Unlocked::Wiped => panic!("wiped"),
+    };
+    pump(&mut alice, &mut bob, |_, b| got("accepted your request")(b)).await;
+    let _ = std::fs::remove_dir_all(d);
+}
