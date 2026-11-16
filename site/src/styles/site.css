@@ -451,6 +451,18 @@ h2::before {
 }
 
 /* Cards */
+.feature-group + .feature-group {
+  margin-top: 2rem;
+}
+
+.group-title {
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtext);
+  margin-bottom: 0.75rem;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));

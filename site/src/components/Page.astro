@@ -110,11 +110,16 @@ const ld = {
 
       <section id="features">
         <h2>{t.featuresTitle}</h2>
-        <div class="cards">
-          {t.features.map(([title, text]) => (
-            <article class="card"><h3>{title}</h3><p>{text}</p></article>
-          ))}
-        </div>
+        {t.features.map(([group, items]) => (
+          <div class="feature-group">
+            <h3 class="group-title">{group}</h3>
+            <div class="cards">
+              {items.map(([title, text]) => (
+                <article class="card"><h3>{title}</h3><p>{text}</p></article>
+              ))}
+            </div>
+          </div>
+        ))}
       </section>
 
       <section id="desktop">
