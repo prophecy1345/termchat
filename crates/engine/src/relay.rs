@@ -148,6 +148,7 @@ impl Relay {
         let pushed = Arc::new(AtomicBool::new(false));
         let link = Link {
             url: url.to_owned(),
+            #[cfg(feature = "tor")]
             host,
             #[cfg(feature = "tor")]
             port,
@@ -200,6 +201,7 @@ pub enum Error {
 
 struct Link {
     url: String,
+    #[cfg(feature = "tor")]
     host: String,
     #[cfg(feature = "tor")]
     port: u16,

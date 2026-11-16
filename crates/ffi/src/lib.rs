@@ -57,6 +57,8 @@ pub enum Event {
     Wiped { note: String },
     /// A wipe could not tell the relay: show `why`, then ask "wipe anyway?".
     WipeAnyway { why: String },
+    /// An incognito invite asked for earlier is ready (ADR-023).
+    Invite { text: String },
 }
 
 #[uniffi::export(with_foreign)]
@@ -66,7 +68,8 @@ pub trait Listener: Send + Sync {
     fn on_change(&self);
 }
 
-/// UnifiedPush instance of the main identity: the connector's default (ADR-014).
+/// UnifiedPush instance of the main identity's invite queue: the connector's
+/// default (ADR-014). Every other queue has its own instance (ADR-023).
 const MAIN_INSTANCE: &str = "default";
 
 fn hex(key: &[u8; 32]) -> String {
@@ -89,6 +92,8 @@ pub struct ContactView {
     pub last_at: u64,
     /// The name they know us by, if we talk to them from an incognito identity (ADR-014).
     pub incognito: Option<String>,
+    /// From before anonymous queues: only a new invite brings them back (ADR-023).
+    pub needs_invite: bool,
 }
 
 #[derive(uniffi::Record)]
@@ -284,6 +289,7 @@ fn event(e: &Engine, h: Happened) -> Event {
         Happened::Notice(text) => Event::Notice { text },
         Happened::Wiped(note) => Event::Wiped { note },
         Happened::WipeAnyway(why) => Event::WipeAnyway { why },
+        Happened::Invite(text) => Event::Invite { text },
     }
 }
 
@@ -301,6 +307,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         expires_in: c.expires_in,
         no_history: c.no_history,
         last_at: c.last_at(),
+        needs_invite: e.needs_invite(c),
     }
 }
 
@@ -349,13 +356,14 @@ impl Account {
     }
 
     /// One-time: a new code on every call (ADR-013).
-    pub fn invite(&self) -> String {
-        self.lock().invite()
+    /// `Err` until the invite queue exists, right after the first connect.
+    pub fn invite(&self) -> Result<String> {
+        Ok(self.lock().invite()?)
     }
 
     /// Reusable; `renew` replaces it and stops the old one.
-    pub fn public_invite(&self, renew: bool) -> String {
-        self.lock().public_invite(renew)
+    pub fn public_invite(&self, renew: bool) -> Result<String> {
+        Ok(self.lock().public_invite(renew)?)
     }
 
     /// How many unused one-time invites stopped working.
@@ -463,8 +471,9 @@ impl Account {
     }
 
     /// An invite from a new identity used only with whoever takes it; an
-    /// empty nickname picks two random words.
-    pub fn incognito_invite(&self, nickname: String) -> Result<String> {
+    /// empty nickname picks two random words. It comes as `Event::Invite`
+    /// once the identity has its invite queue (ADR-023).
+    pub fn incognito_invite(&self, nickname: String) -> Result<()> {
         let _rt = runtime().enter();
         Ok(self.lock().incognito_invite(&nickname)?)
     }
@@ -492,7 +501,9 @@ impl Account {
     }
 
     pub fn set_blocked(&self, index: u32, on: bool) -> Result<()> {
-        self.with(index, |e, i| e.edit(i, |c| c.blocked = on))
+        // Blocking deletes our queue for them (ADR-023).
+        let _rt = runtime().enter();
+        self.with(index, |e, i| e.block(i, on))
     }
 
     pub fn set_verified(&self, index: u32, on: bool) -> Result<()> {
@@ -553,12 +564,15 @@ impl Account {
         Ok(self.lock().set_bridges(&text)?)
     }
 
-    /// Every identity's UnifiedPush instance name: the main one first, then
-    /// one per incognito identity, which needs an endpoint of its own (ADR-014).
+    /// Every queue's UnifiedPush instance name: the main invite queue first,
+    /// then each incognito identity's and each contact's. One shared
+    /// endpoint would let the relay link the queues (ADR-014, ADR-023).
+    /// Grows with contacts: ask again after `on_change`.
     pub fn push_instances(&self) -> Vec<String> {
         let e = self.lock();
+        let me = e.me();
         let mut all = vec![MAIN_INSTANCE.to_string()];
-        all.extend(e.data.profiles.iter().map(|p| hex(&p.key)));
+        all.extend(e.push_owners().iter().filter(|k| **k != me).map(hex));
         all
     }
 
@@ -570,7 +584,7 @@ impl Account {
         }
     }
 
-    /// A push for `instance`: that identity's link dials again (ADR-012).
+    /// A push for `instance`: that queue's link checks itself (ADR-012).
     pub fn woken(&self, instance: String) {
         let e = self.lock();
         if let Some(who) = identity_of(&e, &instance) {
@@ -587,16 +601,11 @@ impl Account {
     }
 }
 
-/// The identity behind a UnifiedPush instance name (ADR-014).
+/// Whose queue a UnifiedPush instance name is: an identity's or a contact's.
 fn identity_of(e: &Engine, instance: &str) -> Option<Ed25519Key> {
     match instance {
         MAIN_INSTANCE => Some(e.me()),
-        _ => e
-            .data
-            .profiles
-            .iter()
-            .find(|p| hex(&p.key) == instance)
-            .map(|p| p.key),
+        _ => e.push_owners().into_iter().find(|k| hex(k) == instance),
     }
 }
 
@@ -627,10 +636,10 @@ mod tests {
             Arc::new(Quiet),
         )
         .unwrap();
-        assert!(a.invite().starts_with("termchat:"));
+        // No relay here, so no invite queue yet, so no invite.
+        assert!(a.invite().is_err());
         assert!(a.contacts().is_empty() && a.add("nonsense".into(), false).is_err());
-        let ghost = a.incognito_invite("ghost".into()).unwrap();
-        assert_ne!(a.invite_fingerprint(ghost).unwrap(), a.fingerprint());
+        a.incognito_invite("ghost".into()).unwrap();
         assert_eq!(a.push_instances().len(), 2);
         let me = a.fingerprint();
         drop(a);

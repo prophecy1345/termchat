@@ -167,6 +167,12 @@ impl Chat {
                 Happened::Notice(n) => self.dialog = Some(Dialog::Notice(n)),
                 Happened::Wiped(n) => return Some(n),
                 Happened::WipeAnyway(why) => self.dialog = Some(Dialog::WipeAnyway(why)),
+                Happened::Invite(text) => {
+                    self.dialog = Some(Dialog::Invite {
+                        text,
+                        kind: crate::dialog::Share::Incognito,
+                    })
+                }
             }
         }
         None
@@ -269,10 +275,15 @@ impl Chat {
                     .on_hover_text("Your invite, to send to a friend")
                     .clicked()
                 {
-                    self.dialog = Some(Dialog::Invite {
-                        text: self.engine.invite(),
-                        kind: crate::dialog::Share::Once,
-                    });
+                    match self.engine.invite() {
+                        Ok(text) => {
+                            self.dialog = Some(Dialog::Invite {
+                                text,
+                                kind: crate::dialog::Share::Once,
+                            })
+                        }
+                        Err(e) => self.status = e,
+                    }
                 }
                 if ui.button("Settings").clicked() {
                     self.dialog = Some(Dialog::Settings);
@@ -306,7 +317,10 @@ impl Chat {
                     ui.vertical(|ui| {
                         let colour = if c.blocked || c.left { p.dim } else { p.text };
                         ui.label(RichText::new(&name).monospace().color(colour));
-                        let (state, ok) = list_state(c, self.engine.is_request(&c.key));
+                        let (state, ok) = match self.engine.needs_invite(c) {
+                            true => ("NEEDS A NEW INVITE", false),
+                            false => list_state(c, self.engine.is_request(&c.key)),
+                        };
                         ui.label(caps(state, if ok { p.accent } else { p.warn }));
                     });
                     if c.unread > 0 {
@@ -372,7 +386,10 @@ impl Chat {
                     avatar(ui, p, &name, 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&name).strong().size(16.0));
-                        let (state, ok) = chat_state(c);
+                        let (state, ok) = match self.engine.needs_invite(c) {
+                            true => ("NEEDS A NEW INVITE: ASK THEM FOR ONE, OR SEND YOURS", false),
+                            false => chat_state(c),
+                        };
                         ui.label(caps(state, if ok { p.accent } else { p.warn }));
                         if let Some(prof) = self.engine.profile_of(c) {
                             let as_ = termchat_engine::clean(&prof.nickname).to_uppercase();
@@ -400,7 +417,10 @@ impl Chat {
         }
         match next {
             Some(Menu::Open(d)) => self.dialog = Some(d),
-            Some(Menu::Block) => self.engine.edit(i, |c| c.blocked = !c.blocked),
+            Some(Menu::Block) => {
+                let on = !self.engine.data.contacts[i].blocked;
+                self.engine.block(i, on);
+            }
             Some(Menu::NoHistory) => self.engine.edit(i, |c| c.no_history = !c.no_history),
             Some(Menu::Report) => {
                 if let Some(text) = self.engine.report_text(i) {
@@ -814,6 +834,12 @@ mod tests {
             key: [1; 32],
             petname: Some("Alice Smith".into()),
             unread: 2,
+            // A contact with a queue: one without would need a new invite (ADR-023).
+            theirs: Some(termchat_engine::data::Addr {
+                relay_url: "ws://127.0.0.1:9/".into(),
+                onion_url: None,
+                send_id: [3; 16],
+            }),
             messages: vec![
                 msg(false, "hi there", Status::Received),
                 msg(true, "hello", Status::Sent),
@@ -873,7 +899,16 @@ mod tests {
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
 
-        let invite = chat.engine.invite();
+        // No relay here, so no invite queue: an invite made by hand to draw.
+        let invite = termchat_core::proto::Invite {
+            version: termchat_core::proto::INVITE_VERSION,
+            relay_url: "wss://relay.example.org/".into(),
+            onion_url: None,
+            identity: chat.engine.core().identity(),
+            queue: [1; 16],
+            code: [2; 16],
+        }
+        .encode();
         let dialogs = [
             (Dialog::Verify, "Safety number"),
             (Dialog::Rename(String::new()), "Rename"),

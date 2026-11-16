@@ -135,7 +135,7 @@ fun Chat(m: Model, index: UInt) {
                 Drop(if (c.expiresIn != null) Tc.lime else Tc.dim)
                 if (c.expiresIn != null) Text(span(c.expiresIn), style = Tc.small.copy(color = Tc.lime))
             }
-            val closed = c.left || c.blocked
+            val closed = c.left || c.blocked || c.needsInvite
             Box(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !closed && !c.request) { attach.launch(arrayOf("*/*")) },
@@ -143,7 +143,13 @@ fun Chat(m: Model, index: UInt) {
             ) { Text("📎", style = Tc.name) }
             Field(
                 text, { text = it },
-                when { c.left -> "This contact left"; c.blocked -> "Blocked"; else -> "Encrypted message" },
+                when {
+                    c.left -> "This contact left"
+                    c.blocked -> "Blocked"
+                    // ADR-023: from before anonymous queues.
+                    c.needsInvite -> "Ask them for a new invite, or send yours"
+                    else -> "Encrypted message"
+                },
                 Modifier.weight(1f), singleLine = false,
             )
             Flat("Send", enabled = text.isNotBlank() && !closed, color = Tc.lime) {
@@ -168,6 +174,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
             val (state, ok) = when {
                 c.left -> "LEFT" to false
                 c.blocked -> "BLOCKED" to false
+                c.needsInvite -> "NEEDS A NEW INVITE" to false
                 c.verified -> "ENCRYPTED · VERIFIED" to true
                 else -> "ENCRYPTED · NOT VERIFIED" to false
             }

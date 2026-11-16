@@ -72,7 +72,9 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
     // One-time by default; the public one is reusable until renewed (ADR-013);
     // an incognito one comes from a new identity of its own (ADR-014).
     var kind by remember { mutableStateOf("once") }
-    var invite by remember { mutableStateOf(a.invite()) }
+    // `Err` until the invite queue exists, just after the first connect (ADR-023).
+    val get = { f: () -> String -> runCatching(f).getOrElse { m.note = it.message ?: "$it"; "" } }
+    var invite by remember { mutableStateOf(get { a.invite() }) }
     var nick by remember { mutableStateOf("") }
     val context = LocalContext.current
     Text(
@@ -83,6 +85,13 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
         },
         style = Tc.small,
     )
+    LaunchedEffect(m.readyInvite) {
+        m.readyInvite?.let { invite = it; kind = "incognito"; m.readyInvite = null }
+    }
+    if (invite.isEmpty()) {
+        Text("Connecting to the relay; try again in a moment.", style = Tc.small)
+        return@Panel
+    }
     Image(
         qr(invite).asImageBitmap(), "invite QR code",
         filterQuality = FilterQuality.None,
@@ -99,13 +108,13 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         when (kind) {
             "public" -> {
-                Flat("One-time", color = Tc.dim) { kind = "once"; invite = a.invite() }
-                Flat("Renew", color = Tc.dim) { invite = a.publicInvite(true); m.note = "new public invite: the old one no longer works" }
+                Flat("One-time", color = Tc.dim) { kind = "once"; invite = get { a.invite() } }
+                Flat("Renew", color = Tc.dim) { invite = get { a.publicInvite(true) }; m.note = "new public invite: the old one no longer works" }
             }
-            "incognito" -> Flat("One-time", color = Tc.dim) { kind = "once"; invite = a.invite() }
+            "incognito" -> Flat("One-time", color = Tc.dim) { kind = "once"; invite = get { a.invite() } }
             else -> {
-                Flat("Public", color = Tc.dim) { kind = "public"; invite = a.publicInvite(false) }
-                Flat("Revoke unused", color = Tc.dim) { m.note = "${a.revokeInvites()} unused one-time invite(s) revoked"; invite = a.invite() }
+                Flat("Public", color = Tc.dim) { kind = "public"; invite = get { a.publicInvite(false) } }
+                Flat("Revoke unused", color = Tc.dim) { m.note = "${a.revokeInvites()} unused one-time invite(s) revoked"; invite = get { a.invite() } }
             }
         }
     }
@@ -119,8 +128,9 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
         )
         Field(nick, { nick = it }, "Name they will see (empty: random)", Modifier.fillMaxWidth())
         Flat("Incognito invite") {
+            // The invite comes as Event.Invite once its queue exists (ADR-023).
             runCatching { a.incognitoInvite(nick) }
-                .onSuccess { invite = it; kind = "incognito"; m.syncPush() }
+                .onSuccess { m.note = "making a new identity; its invite appears in a moment" }
                 .onFailure { m.note = it.message ?: "$it" }
         }
     }

@@ -259,9 +259,13 @@ impl Chat {
                     }
                     Share::Incognito => {}
                 }
-                if let Some((t, k)) = next {
-                    *text = t;
-                    *kind = k;
+                match next {
+                    Some((Ok(t), k)) => {
+                        *text = t;
+                        *kind = k;
+                    }
+                    Some((Err(e), _)) => self.status = e,
+                    None => {}
                 }
                 ui.add_space(14.0);
                 keep &= !ui
@@ -280,12 +284,11 @@ impl Chat {
                 error_line(ui, p, error);
                 let (go, stay) = buttons(ui, p, "Create");
                 if go {
+                    // The invite opens once its queue exists (ADR-023).
                     match self.engine.incognito_invite(nickname.trim()) {
-                        Ok(text) => {
-                            self.dialog = Some(Dialog::Invite {
-                                text,
-                                kind: Share::Incognito,
-                            });
+                        Ok(()) => {
+                            self.status =
+                                "making a new identity; its invite opens in a moment".into();
                             return false;
                         }
                         Err(e) => *error = e,
@@ -370,8 +373,8 @@ impl Chat {
                 ui.heading("Report to the relay operator");
                 ui.label(
                     RichText::new(
-                        "The relay operator will READ the text below. Reports from 3 different \
-                         people this key wrote to ban it on this relay. The contact gets blocked.",
+                        "The relay operator will READ the text below. The relay does not know who \
+                         wrote it, so it cannot ban anyone. The contact gets blocked.",
                     )
                     .color(p.warn),
                 );

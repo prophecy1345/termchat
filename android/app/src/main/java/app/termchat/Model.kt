@@ -76,8 +76,13 @@ class Model(private val context: Context) : Listener {
     /** The UnifiedPush endpoint the relay should wake (ADR-012); kept for the next unlock. */
     var push by mutableStateOf(prefs.getString("push", null))
         private set
+    /** An incognito invite that became ready (ADR-023); the invite panel takes it. */
+    var readyInvite by mutableStateOf<String?>(null)
+    /** UnifiedPush instances registered in this process: every queue has one, and contacts add more. */
+    private val registered = mutableSetOf<String>()
 
-    /** `instance` is one identity's: "default" is the main one, else an incognito one (ADR-014). */
+    /** `instance` is one queue's: "default" is the main invite queue, else an
+     *  incognito identity's or a contact's (ADR-014, ADR-023). */
     fun pushEndpoint(instance: String, url: String?) {
         if (instance == INSTANCE_DEFAULT) {
             push = url
@@ -92,13 +97,15 @@ class Model(private val context: Context) : Listener {
             UnifiedPush.unregister(context, instance)
             pushEndpoint(instance, null)
         }
+        registered.clear()
     }
 
-    /** With wake-ups on, every identity gets its own endpoint; a shared one would link them. */
+    /** With wake-ups on, every queue gets its own endpoint; a shared one would
+     *  let the relay link them (ADR-023). New contacts bring new queues. */
     fun syncPush() {
         val a = account ?: return
         if (push == null) return
-        for (instance in a.pushInstances()) UnifiedPush.register(context, instance)
+        for (instance in a.pushInstances()) if (registered.add(instance)) UnifiedPush.register(context, instance)
     }
 
     /** A wake-up from the push server: a message waits on the relay, which holds
@@ -148,10 +155,11 @@ class Model(private val context: Context) : Listener {
             is Event.WipeAnyway -> { leaving = false; wipeAnyway = event.why }
             is Event.Wiped -> wiped(event.note)
             is Event.Alert -> alert(event.index)
+            is Event.Invite -> { readyInvite = event.text; syncPush() }
         }
     }.let {}
 
-    override fun onChange() = main.post { version++ }.let {}
+    override fun onChange() = main.post { version++; syncPush() }.let {}
 
     /** Runs [work] off the main thread (Argon2 takes about a second), then [done] on it. */
     fun <T> slow(work: () -> T, done: (Result<T>) -> Unit) {

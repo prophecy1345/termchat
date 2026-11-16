@@ -547,6 +547,19 @@ impl Main {
         main
     }
 
+    fn public_invite(&mut self, renew: bool) -> Option<Popup> {
+        match self.engine.public_invite(renew) {
+            Ok(text) => Some(Popup::Invite {
+                text,
+                kind: Share::Public,
+            }),
+            Err(e) => {
+                self.status = e;
+                None
+            }
+        }
+    }
+
     /// Takes in what the engine reported since the last call.
     fn absorb(&mut self) {
         for h in std::mem::take(&mut self.engine.happened) {
@@ -556,6 +569,12 @@ impl Main {
                 Happened::Notice(n) => self.popup = Some(Popup::Notice(n)),
                 Happened::Wiped(n) => self.wiped = Some(n),
                 Happened::WipeAnyway(why) => self.popup = Some(Popup::WipeAnyway(why)),
+                Happened::Invite(text) => {
+                    self.popup = Some(Popup::Invite {
+                        text,
+                        kind: Share::Incognito,
+                    })
+                }
             }
         }
     }
@@ -606,12 +625,15 @@ impl Main {
             (false, KeyCode::Down) => self.select(self.selected + 1),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
             (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu(0)),
-            (true, KeyCode::Char('o')) => {
-                self.popup = Some(Popup::Invite {
-                    text: self.engine.invite(),
-                    kind: Share::Once,
-                });
-            }
+            (true, KeyCode::Char('o')) => match self.engine.invite() {
+                Ok(text) => {
+                    self.popup = Some(Popup::Invite {
+                        text,
+                        kind: Share::Once,
+                    })
+                }
+                Err(e) => self.status = e,
+            },
             (true, KeyCode::Char('f')) if key.is_some() => self.popup = Some(Popup::Verify),
             (true, KeyCode::Char('s')) if key.is_some() => {
                 self.popup = Some(Popup::Search(Input::default()))
@@ -634,10 +656,11 @@ impl Main {
                 }
             }
             (true, KeyCode::Char('b')) => {
-                self.engine.edit(i, |c| c.blocked = !c.blocked);
+                let on = self.current().is_some_and(|c| !c.blocked);
+                self.engine.block(i, on);
                 if let Some(c) = self.current() {
                     self.status = match c.blocked {
-                        true => "blocked: their messages are dropped unread",
+                        true => "blocked: their queue is deleted, nothing of theirs arrives",
                         false => "unblocked",
                     }
                     .into();
@@ -950,19 +973,13 @@ impl Main {
                     self.status = "invite copied (if your terminal supports OSC 52)".into();
                     None
                 }
-                KeyCode::Char('p') if kind == Share::Once => Some(Popup::Invite {
-                    text: self.engine.public_invite(false),
-                    kind: Share::Public,
-                }),
+                KeyCode::Char('p') if kind == Share::Once => self.public_invite(false),
                 KeyCode::Char('i') if kind == Share::Once => {
                     Some(Popup::Incognito(Input::default()))
                 }
                 KeyCode::Char('n') if kind == Share::Public => {
                     self.status = "new public invite: the old one no longer works".into();
-                    Some(Popup::Invite {
-                        text: self.engine.public_invite(true),
-                        kind: Share::Public,
-                    })
+                    self.public_invite(true)
                 }
                 KeyCode::Char('r') if kind == Share::Once => {
                     let n = self.engine.revoke_invites();
@@ -1002,16 +1019,14 @@ impl Main {
                 false => Some(Popup::Search(s)),
             },
             Popup::Incognito(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
-                true => match self.engine.incognito_invite(&s) {
-                    Ok(text) => Some(Popup::Invite {
-                        text,
-                        kind: Share::Incognito,
-                    }),
-                    Err(e) => {
-                        self.status = e;
-                        None
-                    }
-                },
+                true => {
+                    // The invite pops up once its queue exists (ADR-023).
+                    self.status = match self.engine.incognito_invite(&s) {
+                        Ok(()) => "making a new identity; its invite appears in a moment".into(),
+                        Err(e) => e,
+                    };
+                    None
+                }
                 false => Some(Popup::Incognito(s)),
             },
             Popup::Verify => {

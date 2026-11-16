@@ -67,6 +67,7 @@ fun Chats(m: Model) {
                             c.request -> "CONTACT REQUEST"
                             c.left -> "LEFT"
                             c.blocked -> "BLOCKED"
+                            c.needsInvite -> "NEEDS A NEW INVITE"
                             !c.verified -> "NOT VERIFIED"
                             else -> "ENCRYPTED"
                         }

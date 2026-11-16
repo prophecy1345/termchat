@@ -57,6 +57,7 @@ Mouse        click a contact, right-click for its actions;
              drag the list edge to resize; Shift+drag selects text
 
   ● unread   ? request   ! not verified   × blocked   - left
+  ↻ needs a new invite (from before anonymous queues)
   … sending   ✓ on relay   ✗ failed
 
 Need help now? You are not alone.
@@ -456,6 +457,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 _ if c.blocked => ("×", t.red),
                 _ if c.left => ("-", t.overlay0),
                 _ if request => ("?", t.yellow),
+                _ if m.engine.needs_invite(c) => ("↻", t.peach),
                 _ if c.unread > 0 => ("●", t.accent),
                 _ if !c.verified => ("!", t.peach),
                 _ => (" ", t.overlay0),
@@ -1264,7 +1266,7 @@ fn popup_pane(
         }
         Popup::Report(text) => {
             let mut lines = plain(
-                "The relay operator will READ the text below. Reports from 3 different\npeople this key wrote to ban it on this relay. The contact gets blocked.\n",
+                "The relay operator will READ the text below. The relay does not know who\nwrote it, so it cannot ban anyone. The contact gets blocked.\n",
             );
             lines.extend(
                 clean(text)
