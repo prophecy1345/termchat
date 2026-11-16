@@ -27,9 +27,9 @@ const en = {
     ]],
     ["On the relay server", [
       "Messages travel through a relay: relay.termchat.app by default, or one you run yourself. Messages are end-to-end encrypted; the relay cannot read them.",
-      "The relay keeps: public keys, the time each key registered and was last seen; public prekeys; undelivered encrypted messages with their sender key, recipient key and time (deleted as soon as they are delivered, and after 14 days at the latest); the push address, if you turn on UnifiedPush; banned keys; and reports, with only what the reporter chose to disclose.",
-      "The relay sees who writes to whom and when, but only as random keys, not names. It sees the IP address of a live connection; the relay software does not write IP addresses to disk. Turn on Tor to hide your IP address from the relay.",
-      "Unused accounts are removed from the relay after 90 days.",
+      "The relay keeps queues, not accounts: two random IDs per queue and a hash of its owner's secret, when it was made and last used, its public prekeys, the push address if you turn on UnifiedPush, and undelivered encrypted messages with their time (deleted as soon as they are delivered, and after 14 days at the latest). It keeps no keys of people, no senders and no names; reports hold only the text the reporter chose to disclose.",
+      "The relay does not know who writes to whom: each contact writes to a queue of its own, and nothing on the wire names a person. It does see when each queue is written to and read, which can link queues by timing, and the IP address of a live connection; the relay software does not write IP addresses to disk. Turn on Tor to hide your IP address from the relay.",
+      "Unused queues are removed from the relay after 90 days.",
     ]],
     ["Deleting your account", [
       "On Android: menu → Settings → Security → Wipe everything from this phone, then type WIPE. In the terminal: settings → security → wipe, then type WIPE.",
@@ -69,9 +69,9 @@ const ru: typeof en = {
     ]],
     ["На relay-сервере", [
       "Сообщения идут через relay: по умолчанию relay.termchat.app или ваш собственный. Сообщения зашифрованы сквозным шифрованием, relay их прочитать не может.",
-      "Relay хранит: публичные ключи, время регистрации и последнего подключения; публичные prekeys; недоставленные зашифрованные сообщения с ключами отправителя и получателя и временем (удаляются сразу после доставки и не позже чем через 14 дней); адрес push, если вы включили UnifiedPush; заблокированные ключи; жалобы, только с тем, что раскрыл жалующийся.",
-      "Relay видит, кто кому и когда пишет, но только как случайные ключи, без имён. Он видит IP-адрес активного подключения; программа relay не пишет IP-адреса на диск. Включите Tor, чтобы скрыть IP-адрес от relay.",
-      "Неиспользуемые аккаунты удаляются с relay через 90 дней.",
+      "Relay хранит очереди, а не аккаунты: два случайных ID и хеш секрета владельца у каждой очереди, когда она создана и когда ею пользовались, её публичные prekeys, адрес push, если вы включили UnifiedPush, и недоставленные зашифрованные сообщения с временем (удаляются сразу после доставки и не позже чем через 14 дней). Ни ключей людей, ни отправителей, ни имён он не хранит; в жалобах только текст, который раскрыл жалующийся.",
+      "Relay не знает, кто кому пишет: каждый контакт пишет в свою очередь, и ничто в трафике не называет человека. Он видит, когда в очередь пишут и когда её читают, а по времени очереди можно связать, и IP-адрес активного подключения; программа relay не пишет IP-адреса на диск. Включите Tor, чтобы скрыть IP-адрес от relay.",
+      "Неиспользуемые очереди удаляются с relay через 90 дней.",
     ]],
     ["Удаление аккаунта", [
       "На Android: меню → Settings → Security → Wipe everything from this phone, затем введите WIPE. В терминале: settings → security → wipe, затем введите WIPE.",

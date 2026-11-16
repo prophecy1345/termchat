@@ -86,7 +86,7 @@ const en = {
   partly: {
     title: "Partly",
     items: [
-      "Metadata: the relay sees which key writes to which and when, and the size rounded up to 512 / 4096 / 16384 bytes; a document goes as a run of 16 KB messages, so its size can be estimated. Incognito contacts over Tor give it pairs of keys it cannot link to you.",
+      "Metadata: the relay knows anonymous queues, not who writes to whom; it sees when each queue is written and read, and the size rounded up to 512 / 4096 / 16384 bytes. Each contact gets a connection of its own; over Tor, a circuit of its own.",
       "Someone at your unlocked computer: auto-lock, disappearing messages, chats without history.",
       "Being forced to give a password: the duress password does not help if the disk was copied first.",
       "A lost device: only with a backup of your identity.",
@@ -217,7 +217,7 @@ const ru: typeof en = {
   partly: {
     title: "Частично",
     items: [
-      "Метаданные: relay видит, какой ключ кому пишет и когда, и размер, округлённый до 512 / 4096 / 16384 байт; документ идёт серией сообщений по 16 КБ, поэтому его размер можно оценить. Инкогнито-контакты через Tor дают ему пары ключей, которые он не может связать с вами.",
+      "Метаданные: relay знает анонимные очереди, а не то, кто кому пишет; он видит, когда в очередь пишут и когда её читают, и размер, округлённый до 512 / 4096 / 16384 байт. У каждого контакта своё соединение, через Tor — своя цепочка.",
       "Человек у вашего разблокированного компьютера: автоблокировка, исчезающие сообщения, чаты без истории.",
       "Принуждение выдать пароль: пароль под принуждением не поможет, если диск скопировали заранее.",
       "Потеря устройства: только при наличии резервной копии.",
