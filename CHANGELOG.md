@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.8.0
+
+Scripts and servers can now write to you (ADR-024).
+
+- `termchat init`, `invite`, `add`, `contacts`, `send`, `send-file` and
+  `recv` run without the screen, so a cron job, a CI run or the end of a
+  long command can send you an end-to-end encrypted message, or read your
+  answer. See "Scripts and servers" in the README.
+- Give each server an identity of its own: its password sits on that
+  server. It cannot accept requests; you make the link from your app.
+
 ## 0.7.1
 
 - A contact who deleted you, or moved to a new device, and adds your

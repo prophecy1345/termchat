@@ -1,0 +1,1 @@
+Scripts and servers can send you end-to-end encrypted messages with the new termchat commands. The Android app is unchanged.

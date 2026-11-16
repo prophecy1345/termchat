@@ -355,6 +355,49 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 | ? или F1 | справка |
 | Esc | закрыть окно |
 
+## Скрипты и серверы
+
+`termchat` работает и без своего экрана: скрипт, задача cron или сервер может прислать вам сообщение со сквозным шифрованием или прочитать ваш ответ (ADR-024). Например, «бэкап не прошёл» на телефон — без Telegram-бота и без третьей стороны, которая это читает.
+
+Заведите серверу отдельную личность, никогда не основную: тот, кто получит root на этом сервере, прочитает всё, что эта личность отправляет и получает.
+
+```sh
+# На сервере, один раз. Файл пароля должен быть вашим и с правами 600.
+export TERMCHAT_HOME=/var/lib/backup-bot
+install -m 600 /dev/null "$TERMCHAT_HOME.pw" && head -c 30 /dev/urandom | base64 > "$TERMCHAT_HOME.pw"
+termchat init --nickname backup-box --password-file "$TERMCHAT_HOME.pw"
+# Ваше приглашение из приложения (Ctrl+O или Invite на телефоне):
+termchat add 'termchat:...' --password-file "$TERMCHAT_HOME.pw"
+# Примите запрос в приложении. Дальше:
+termchat send alice "бэкап не прошёл на $(hostname)" --password-file "$TERMCHAT_HOME.pw"
+```
+
+Ещё примеры:
+
+```sh
+# Конец долгой команды, на ноутбуке (опять отдельная личность):
+make release; termchat send alice "сборка релиза: код $?" --password-file ~/.termchat-bot.pw
+
+# Текст из пайпа:
+df -h / | termchat send alice --password-file "$TERMCHAT_HOME.pw"
+
+# Ждать ответа до 10 минут, строками JSON:
+termchat recv --from alice --wait 600 --json --password-file "$TERMCHAT_HOME.pw"
+```
+
+С systemd держите пароль вне файла службы: `LoadCredential=pw:/etc/termchat/backup.pw` и `--password-file "$CREDENTIALS_DIRECTORY/pw"`.
+
+| Команда | Что делает |
+|---|---|
+| `init --nickname NAME [--relay URL] [--onion URL] [--tor]` | создаёт личность |
+| `invite` / `add INVITE` | печатает приглашение / просит контакт; он принимает в приложении |
+| `contacts` | имя, отпечаток и состояние, по строке на контакт |
+| `send CONTACT [TEXT]` | TEXT или stdin; ждёт, пока сообщение окажется на relay |
+| `send-file CONTACT PATH` | документ до 1 МиБ |
+| `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | новые сообщения, каждое один раз; файлы только в `--save-dir` |
+
+`CONTACT` — имя, которое показывает приложение, или начало отпечатка; если подходит больше одного контакта, ничего не отправляется. Пароль берётся из `--password-file`, `--password-stdin` или с клавиатуры, никогда из переменных окружения. Коды возврата: 0 готово, 1 пароль или состояние, 2 аргументы, 3 контакт не найден или найдено несколько, 4 relay не принял вовремя (сообщение уйдёт со следующей командой), 5 этому контакту писать нельзя. Отправки «всем» нет, и серверная личность не может принимать запросы: связь заводите вы из приложения.
+
 ## Публичный relay
 
 | | |

@@ -479,6 +479,60 @@ removes the file too.
 
 <!-- manual:end -->
 
+## Scripts and servers
+
+`termchat` also runs without its screen, so a script, cron job or server can
+send you an end-to-end encrypted message, or read your answer (ADR-024). Think
+"the backup failed" on your phone, without a Telegram bot or a third party
+reading it.
+
+Give the server an identity of its own, never your main one: whoever gets
+root on that server can read everything that identity says and hears.
+
+```sh
+# On the server, once. The password file must be yours and chmod 600.
+export TERMCHAT_HOME=/var/lib/backup-bot
+install -m 600 /dev/null "$TERMCHAT_HOME.pw" && head -c 30 /dev/urandom | base64 > "$TERMCHAT_HOME.pw"
+termchat init --nickname backup-box --password-file "$TERMCHAT_HOME.pw"
+# Your invite from the app (Ctrl+O, or Invite on the phone):
+termchat add 'termchat:...' --password-file "$TERMCHAT_HOME.pw"
+# Accept the request in your app. Then:
+termchat send alice "backup failed on $(hostname)" --password-file "$TERMCHAT_HOME.pw"
+```
+
+More examples:
+
+```sh
+# The end of a long command, on your laptop (its own identity again):
+make release; termchat send alice "release build: exit $?" --password-file ~/.termchat-bot.pw
+
+# Text from a pipe:
+df -h / | termchat send alice --password-file "$TERMCHAT_HOME.pw"
+
+# Wait up to 10 minutes for an answer, as JSON lines:
+termchat recv --from alice --wait 600 --json --password-file "$TERMCHAT_HOME.pw"
+```
+
+With systemd, keep the password out of the unit: `LoadCredential=pw:/etc/termchat/backup.pw`
+and `--password-file "$CREDENTIALS_DIRECTORY/pw"`.
+
+| Command | What it does |
+|---|---|
+| `init --nickname NAME [--relay URL] [--onion URL] [--tor]` | makes the identity |
+| `invite` / `add INVITE` | prints an invite / asks a contact; they accept in their app |
+| `contacts` | name, fingerprint and state, one per line |
+| `send CONTACT [TEXT]` | TEXT, or stdin; waits until the relay has it |
+| `send-file CONTACT PATH` | a document of up to 1 MiB |
+| `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | new messages, each once; files only into `--save-dir` |
+
+`CONTACT` is the name the app shows or the start of the fingerprint; if more
+than one contact matches, nothing is sent. The password comes from
+`--password-file`, `--password-stdin` or the keyboard, never from the
+environment. Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact
+not found or ambiguous, 4 the relay did not take it in time (it goes with the
+next command), 5 cannot write to that contact. There is no "send to all", and
+a server identity cannot accept requests: you make the link from your app.
+
 ## Public relay
 
 | | |
