@@ -1,0 +1,1 @@
+Accepting a contact request now answers them at once; before, the answer went out only after the app was locked and unlocked.

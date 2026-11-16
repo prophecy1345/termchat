@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.8.1
+
+- Android: accepting a contact request now answers them at once. Since
+  0.7.0 the answer went out only after the app was locked and unlocked.
+- A contact who takes a fresh invite right away no longer gets stuck when
+  the relay has no key for them yet: the app asks again 15 s later.
+- A contact deleted and added again no longer hangs.
+
 ## 0.8.0
 
 Scripts and servers can now write to you (ADR-024).
