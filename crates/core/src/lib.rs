@@ -31,7 +31,6 @@ const MAX_SEEN_PER_SENDER: usize = 200;
 const MAX_SEEN: usize = 10_000;
 const ID_CONTEXT: &[u8] = b"termchat-id-v1";
 const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
-const AUTH_CONTEXT: &[u8] = b"termchat-auth-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -77,6 +76,9 @@ pub struct Prekeys {
 /// A successfully decrypted message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Received {
+    /// Who wrote it: the contact of the queue, or, from the invite queue, the
+    /// key Olm and the contact request vouch for.
+    pub sender: Ed25519Key,
     pub body: Body,
     /// Messages known to be missing in this session (dropped or not yet arrived).
     pub missed: u64,
@@ -139,13 +141,6 @@ impl Client {
         }
     }
 
-    /// Answer to the relay's `Challenge` (protocol.md, section 3).
-    pub fn auth_signature(&self, relay_host: &str, nonce: &[u8; 32]) -> Signature {
-        self.account
-            .sign(auth_message(relay_host, nonce))
-            .to_bytes()
-    }
-
     fn ed25519(&self) -> Ed25519Key {
         *self.account.ed25519_key().as_bytes()
     }
@@ -161,24 +156,42 @@ impl Client {
             self.account.generate_fallback_key();
             self.fallback_no += 1;
         }
-        let sign = |k: Curve25519PublicKey| {
-            let key = k.to_bytes();
-            SignedKey {
-                key,
-                signature: self.account.sign([OTK_CONTEXT, &key].concat()).to_bytes(),
-            }
-        };
         let prekeys = Prekeys {
-            one_time: self
+            one_time: self.unpublished(),
+            fallback: self
                 .account
-                .one_time_keys()
+                .fallback_key()
                 .into_values()
-                .map(sign)
-                .collect(),
-            fallback: self.account.fallback_key().into_values().next().map(sign),
+                .next()
+                .map(|k| self.signed(k)),
         };
         self.account.mark_keys_as_published();
         prekeys
+    }
+
+    /// `n` new one-time keys for one contact's queue (ADR-023, amendment):
+    /// never shared with another queue, so they cannot link queues.
+    pub fn one_time_keys(&mut self, n: usize) -> Vec<SignedKey> {
+        self.account.generate_one_time_keys(n);
+        let keys = self.unpublished();
+        self.account.mark_keys_as_published();
+        keys
+    }
+
+    fn unpublished(&self) -> Vec<SignedKey> {
+        self.account
+            .one_time_keys()
+            .into_values()
+            .map(|k| self.signed(k))
+            .collect()
+    }
+
+    fn signed(&self, k: Curve25519PublicKey) -> SignedKey {
+        let key = k.to_bytes();
+        SignedKey {
+            key,
+            signature: self.account.sign([OTK_CONTEXT, &key].concat()).to_bytes(),
+        }
     }
 
     /// Adds a contact from an invite. Also accepts a pending contact request.
@@ -255,23 +268,43 @@ impl Client {
         s.sent = seq;
         Ok(Envelope {
             version: proto::VERSION,
-            recipient: *to,
             olm_type: u8::try_from(olm_type).map_err(|_| Error::Olm)?,
             body,
         })
     }
 
-    /// `sender` is what the relay says; it is checked against the session and the plaintext.
-    pub fn decrypt(&mut self, sender: &Ed25519Key, env: &Envelope) -> Result<Received, Error> {
+    /// `from`: the contact whose queue the envelope came in (ADR-023). The
+    /// relay picks the queue, so this is checked against the session and the
+    /// plaintext like any claim of the relay.
+    ///
+    /// `None`: the invite queue, where anyone may write. Only pre-key messages
+    /// are read there: everyone writes to it before their first answer. The
+    /// sender is the contact with the Curve25519 key Olm vouches for, or a
+    /// stranger whose contact request binds its key to that one.
+    pub fn decrypt(
+        &mut self,
+        from: Option<&Ed25519Key>,
+        env: &Envelope,
+    ) -> Result<Received, Error> {
         let me = self.ed25519();
-        if env.recipient != me {
-            return Err(Error::WrongRecipient);
-        }
         let msg = OlmMessage::from_parts(env.olm_type.into(), &env.body)
             .map_err(|_| proto::Error::Malformed)?;
+        let known = match (from, &msg) {
+            (Some(k), _) => Some(*k),
+            (None, OlmMessage::PreKey(pre)) => {
+                let curve = pre.identity_key().to_bytes();
+                self.contacts
+                    .iter()
+                    .find(|(_, c)| c.curve25519 == curve)
+                    .map(|(k, _)| *k)
+            }
+            (None, OlmMessage::Normal(_)) => return Err(Error::UnknownSender),
+        };
 
         // Existing session, newest first.
-        if let Some(c) = self.contacts.get_mut(sender) {
+        if let Some(sender) = known
+            && let Some(c) = self.contacts.get_mut(&sender)
+        {
             for i in (0..c.sessions.len()).rev() {
                 let s = &mut c.sessions[i];
                 let own_prekey = match &msg {
@@ -287,7 +320,7 @@ impl Client {
                     }
                     continue;
                 };
-                let inner = open_inner(&plain, sender, &me)?;
+                let inner = open_inner(&plain, &sender, &me)?;
                 s.received.accept(inner.seq)?;
                 let missed = s.received.missed();
                 remember_nickname(c, &inner.body);
@@ -295,6 +328,7 @@ impl Client {
                 let s = c.sessions.remove(i);
                 c.sessions.push(s);
                 return Ok(Received {
+                    sender,
                     body: inner.body,
                     missed,
                     new_session: false,
@@ -305,13 +339,16 @@ impl Client {
 
         // New inbound session.
         let OlmMessage::PreKey(pre) = &msg else {
-            return Err(match self.contacts.contains_key(sender) {
-                true => Error::DecryptFailed,
-                false => Error::UnknownSender,
-            });
+            return Err(
+                match known.is_some_and(|k| self.contacts.contains_key(&k)) {
+                    true => Error::DecryptFailed,
+                    false => Error::UnknownSender,
+                },
+            );
         };
         let their_curve = pre.identity_key();
-        if let Some(c) = self.contacts.get(sender)
+        if let Some(k) = known
+            && let Some(c) = self.contacts.get(&k)
             && c.curve25519 != their_curve.to_bytes()
         {
             return Err(Error::SenderMismatch);
@@ -329,26 +366,38 @@ impl Client {
         // At once, whatever the checks below say: refused once, refused again.
         // Counted under the key Olm vouches for, not the one the relay names.
         self.remember(id, their_curve.to_bytes());
-        let inner = open_inner(&created.plaintext, sender, &me)?;
+        let sender = match known {
+            Some(k) => k,
+            None => {
+                // From the invite queue, by someone with no contact under this
+                // Curve25519 key: it may not name a contact we have.
+                let named = Inner::from_padded(&created.plaintext)?.sender;
+                if self.contacts.contains_key(&named) {
+                    return Err(Error::SenderMismatch);
+                }
+                named
+            }
+        };
+        let inner = open_inner(&created.plaintext, &sender, &me)?;
 
-        if !self.contacts.contains_key(sender) {
+        if !self.contacts.contains_key(&sender) {
             // A stranger may only send a contact request whose identity binds
-            // the relay-reported key to the Curve25519 key of this session.
+            // its key to the Curve25519 key of this session.
             let (Body::ContactRequest { identity, .. } | Body::ContactRequestV2 { identity, .. }) =
                 &inner.body
             else {
                 return Err(Error::UnknownSender);
             };
-            if identity.ed25519 != *sender || identity.curve25519 != their_curve.to_bytes() {
+            if identity.ed25519 != sender || identity.curve25519 != their_curve.to_bytes() {
                 return Err(Error::SenderMismatch);
             }
             verify_identity(identity)?;
-            // Registering keys is cheap; every request is a stored session.
+            // Making keys is cheap; every request is a stored session.
             if self.contacts.values().filter(|c| c.is_request).count() >= MAX_REQUESTS {
                 return Err(Error::TooManyRequests);
             }
             self.contacts.insert(
-                *sender,
+                sender,
                 Contact {
                     curve25519: identity.curve25519,
                     is_request: true,
@@ -366,12 +415,13 @@ impl Client {
         s.received.accept(inner.seq)?;
         let missed = s.received.missed();
         let mut request = false;
-        if let Some(c) = self.contacts.get_mut(sender) {
+        if let Some(c) = self.contacts.get_mut(&sender) {
             remember_nickname(c, &inner.body);
             push_session(c, s);
             request = c.is_request;
         }
         Ok(Received {
+            sender,
             body: inner.body,
             missed,
             new_session: true,
@@ -677,22 +727,6 @@ fn open_inner(plain: &[u8], sender: &Ed25519Key, me: &Ed25519Key) -> Result<Inne
         return Err(Error::SenderMismatch);
     }
     Ok(inner)
-}
-
-/// Relay side of the challenge-response: identity binding and nonce signature.
-pub fn verify_auth(
-    identity: &Identity,
-    relay_host: &str,
-    nonce: &[u8; 32],
-    sig: &Signature,
-) -> Result<(), Error> {
-    verify_identity(identity)?;
-    verify_message(&identity.ed25519, &auth_message(relay_host, nonce), sig)
-}
-
-/// `nonce` has a fixed length at the end, so the concatenation is unambiguous.
-fn auth_message(relay_host: &str, nonce: &[u8; 32]) -> Vec<u8> {
-    [AUTH_CONTEXT, relay_host.as_bytes(), nonce].concat()
 }
 
 fn verify_identity(id: &Identity) -> Result<(), Error> {

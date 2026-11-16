@@ -39,17 +39,20 @@ fn offline_session_and_reply() {
     let (a, b) = (ed(&alice), ed(&bob));
 
     let env = alice.encrypt(&b, text("hi bob")).unwrap();
-    let got = bob.decrypt(&a, &env).unwrap();
+    let got = bob.decrypt(Some(&a), &env).unwrap();
     assert!(got.new_session);
     assert_eq!(got.missed, 0);
     assert_eq!(got.body, text("hi bob"));
 
     let reply = bob.encrypt(&a, text("hi alice")).unwrap();
-    assert_eq!(alice.decrypt(&b, &reply).unwrap().body, text("hi alice"));
+    assert_eq!(
+        alice.decrypt(Some(&b), &reply).unwrap().body,
+        text("hi alice")
+    );
     let again = alice.encrypt(&b, text("normal message now")).unwrap();
     assert_eq!(again.olm_type, 1);
     assert_eq!(
-        bob.decrypt(&a, &again).unwrap().body,
+        bob.decrypt(Some(&a), &again).unwrap().body,
         text("normal message now")
     );
 }
@@ -62,10 +65,10 @@ fn tampered_ciphertext_is_rejected() {
     for i in (0..env.body.len()).step_by(13) {
         let mut bad = env.clone();
         bad.body[i] ^= 1;
-        assert!(bob.decrypt(&a, &bad).is_err(), "byte {i}");
+        assert!(bob.decrypt(Some(&a), &bad).is_err(), "byte {i}");
     }
     // The original still decrypts: failed attempts did not corrupt state.
-    assert!(bob.decrypt(&a, &env).is_ok());
+    assert!(bob.decrypt(Some(&a), &env).is_ok());
 }
 
 #[test]
@@ -73,8 +76,8 @@ fn replay_is_rejected() {
     let (mut alice, mut bob) = pair();
     let (a, b) = (ed(&alice), ed(&bob));
     let env = alice.encrypt(&b, text("once")).unwrap();
-    bob.decrypt(&a, &env).unwrap();
-    assert!(bob.decrypt(&a, &env).is_err());
+    bob.decrypt(Some(&a), &env).unwrap();
+    assert!(bob.decrypt(Some(&a), &env).is_err());
 }
 
 #[test]
@@ -85,9 +88,9 @@ fn dropped_and_reordered_messages_are_detected() {
         .map(|i| alice.encrypt(&b, text(&i.to_string())).unwrap())
         .collect();
 
-    assert_eq!(bob.decrypt(&a, &m[0]).unwrap().missed, 0);
-    assert_eq!(bob.decrypt(&a, &m[3]).unwrap().missed, 2);
-    let late = bob.decrypt(&a, &m[1]).unwrap();
+    assert_eq!(bob.decrypt(Some(&a), &m[0]).unwrap().missed, 0);
+    assert_eq!(bob.decrypt(Some(&a), &m[3]).unwrap().missed, 2);
+    let late = bob.decrypt(Some(&a), &m[1]).unwrap();
     assert_eq!((late.body, late.missed), (text("2"), 1));
 }
 
@@ -97,13 +100,14 @@ fn wrong_recipient_and_sender_are_rejected() {
     let (a, b) = (ed(&alice), ed(&bob));
     let env = alice.encrypt(&b, text("x")).unwrap();
 
-    let mut misaddressed = env.clone();
-    misaddressed.recipient = a;
-    assert_eq!(bob.decrypt(&a, &misaddressed), Err(Error::WrongRecipient));
+    // Relay puts it in someone else's queue: not for them.
+    let mut carol_side = Client::default();
+    carol_side.add_contact(&alice.identity()).unwrap();
+    assert!(carol_side.decrypt(Some(&a), &env).is_err());
 
     // Relay claims the message came from someone else.
     let carol = Client::default();
-    assert!(bob.decrypt(&ed(&carol), &env).is_err());
+    assert!(bob.decrypt(Some(&ed(&carol)), &env).is_err());
 }
 
 #[test]
@@ -117,7 +121,7 @@ fn stranger_needs_valid_contact_request() {
     // Plain text from a stranger is refused.
     carol.start_session(&b, &keys.remove(0)).unwrap();
     let env = carol.encrypt(&b, text("hello?")).unwrap();
-    assert_eq!(bob.decrypt(&c, &env), Err(Error::UnknownSender));
+    assert_eq!(bob.decrypt(Some(&c), &env), Err(Error::UnknownSender));
 
     // A contact request with someone else's identity is refused.
     let alice = Client::default();
@@ -128,9 +132,9 @@ fn stranger_needs_valid_contact_request() {
         note: "it's alice".into(),
     };
     let env = carol.encrypt(&b, forged).unwrap();
-    assert_eq!(bob.decrypt(&c, &env), Err(Error::SenderMismatch));
+    assert_eq!(bob.decrypt(Some(&c), &env), Err(Error::SenderMismatch));
     // Relay re-labels it as Alice: still refused (the one-time key is already spent).
-    assert!(bob.decrypt(&ed(&alice), &env).is_err());
+    assert!(bob.decrypt(Some(&ed(&alice)), &env).is_err());
     assert_eq!(bob.is_request(&ed(&alice)), None);
 
     // A genuine request lands in requests.
@@ -141,7 +145,7 @@ fn stranger_needs_valid_contact_request() {
         note: "hi".into(),
     };
     let env = carol.encrypt(&b, req).unwrap();
-    assert!(bob.decrypt(&c, &env).unwrap().new_session);
+    assert!(bob.decrypt(Some(&c), &env).unwrap().new_session);
     assert_eq!(bob.is_request(&c), Some(true));
     assert_eq!(bob.nickname(&c), Some("carol"));
     bob.add_contact(&carol.identity()).unwrap();
@@ -156,7 +160,7 @@ fn stranger_needs_valid_contact_request() {
             },
         )
         .unwrap();
-    carol.decrypt(&b, &env).unwrap();
+    carol.decrypt(Some(&b), &env).unwrap();
     let key = create_file_key(b"pw", FAST).unwrap();
     let carol = Client::load(b"pw", &carol.save(&key, "").unwrap())
         .unwrap()
@@ -210,7 +214,7 @@ fn state_survives_save_and_load() {
     assert_eq!(ed(&bob), b);
 
     assert_eq!(
-        bob.decrypt(&a, &first).unwrap().body,
+        bob.decrypt(Some(&a), &first).unwrap().body,
         text("before restart")
     );
     let file = alice
@@ -218,7 +222,7 @@ fn state_survives_save_and_load() {
         .unwrap();
     let mut alice = Client::load(b"alice pw", &file).unwrap().0;
     let second = alice.encrypt(&b, text("after restart")).unwrap();
-    let got = bob.decrypt(&a, &second).unwrap();
+    let got = bob.decrypt(Some(&a), &second).unwrap();
     assert_eq!((got.body, got.missed), (text("after restart"), 0));
 }
 
@@ -229,7 +233,7 @@ fn identity_restored_from_backup_talks_again() {
     let env = alice
         .encrypt(&b, text("before the phone fell in the river"))
         .unwrap();
-    bob.decrypt(&a, &env).unwrap();
+    bob.decrypt(Some(&a), &env).unwrap();
 
     // Backup holds identity and contacts, no sessions; restored on a new device.
     let backup = alice
@@ -245,12 +249,12 @@ fn identity_restored_from_backup_talks_again() {
     let otk = bob.prekeys(0, false).one_time.remove(0);
     alice.start_session(&b, &otk).unwrap();
     let env = alice.encrypt(&b, text("new phone, same me")).unwrap();
-    let got = bob.decrypt(&a, &env).unwrap();
+    let got = bob.decrypt(Some(&a), &env).unwrap();
     assert!(got.new_session);
     assert_eq!(got.body, text("new phone, same me"));
     let reply = bob.encrypt(&a, text("welcome back")).unwrap();
     assert_eq!(
-        alice.decrypt(&b, &reply).unwrap().body,
+        alice.decrypt(Some(&b), &reply).unwrap().body,
         text("welcome back")
     );
 }
@@ -273,17 +277,20 @@ fn requests_are_flagged_names_stick_and_requests_are_capped() {
     carol.add_contact(&bob.identity()).unwrap();
     carol.start_session(&b, &one_time.remove(0)).unwrap();
     let env = carol.encrypt(&b, request(&carol, "carol")).unwrap();
-    assert!(bob.decrypt(&c, &env).unwrap().request);
+    assert!(bob.decrypt(Some(&c), &env).unwrap().request);
     let env = carol.encrypt(&b, text("hidden until accepted")).unwrap();
-    assert!(bob.decrypt(&c, &env).unwrap().request, "still a request");
+    assert!(
+        bob.decrypt(Some(&c), &env).unwrap().request,
+        "still a request"
+    );
     // A pending request may correct its name.
     let env = carol.encrypt(&b, request(&carol, "Carol")).unwrap();
-    bob.decrypt(&c, &env).unwrap();
+    bob.decrypt(Some(&c), &env).unwrap();
     assert_eq!(bob.nickname(&c), Some("Carol"));
 
     bob.add_contact(&carol.identity()).unwrap();
     let env = carol.encrypt(&b, text("now visible")).unwrap();
-    assert!(!bob.decrypt(&c, &env).unwrap().request);
+    assert!(!bob.decrypt(Some(&c), &env).unwrap().request);
     // After acceptance the name no longer changes from the network.
     let env = carol
         .encrypt(
@@ -293,9 +300,9 @@ fn requests_are_flagged_names_stick_and_requests_are_capped() {
             },
         )
         .unwrap();
-    bob.decrypt(&c, &env).unwrap();
+    bob.decrypt(Some(&c), &env).unwrap();
     let env = carol.encrypt(&b, request(&carol, "Alice")).unwrap();
-    bob.decrypt(&c, &env).unwrap();
+    bob.decrypt(Some(&c), &env).unwrap();
     assert_eq!(bob.nickname(&c), Some("Carol"));
 
     // Carol is accepted, so 50 strangers fill the pending slots; the 51st is refused.
@@ -305,7 +312,7 @@ fn requests_are_flagged_names_stick_and_requests_are_capped() {
         let key = one_time.pop().unwrap_or_else(|| fallback.clone());
         s.start_session(&b, &key).unwrap();
         let env = s.encrypt(&b, request(&s, "stranger")).unwrap();
-        let got = bob.decrypt(&ed(&s), &env);
+        let got = bob.decrypt(Some(&ed(&s)), &env);
         match i {
             0..50 => assert!(got.is_ok(), "stranger {i}"),
             _ => assert_eq!(got, Err(Error::TooManyRequests)),
@@ -317,12 +324,12 @@ fn requests_are_flagged_names_stick_and_requests_are_capped() {
 fn exported_identity_keeps_keys_and_sessions() {
     let (mut alice, mut bob) = pair();
     let env = alice.encrypt(&ed(&bob), text("before")).unwrap();
-    bob.decrypt(&ed(&alice), &env).unwrap();
+    bob.decrypt(Some(&ed(&alice)), &env).unwrap();
     let mut bob2 = Client::import(&bob.export().unwrap()).unwrap();
     assert_eq!(bob2.identity(), bob.identity());
     let env = alice.encrypt(&ed(&bob), text("after")).unwrap();
     assert!(matches!(
-        bob2.decrypt(&ed(&alice), &env).unwrap().body,
+        bob2.decrypt(Some(&ed(&alice)), &env).unwrap().body,
         Body::Text { text, .. } if text == "after"
     ));
     assert!(Client::import("{}").is_err());
@@ -344,22 +351,25 @@ fn replay_on_a_fallback_key_session_is_rejected() {
     on_fallback(&mut alice, &bob, &fallback);
     let first = alice.encrypt(&b, text("pay 100")).unwrap();
     let second = alice.encrypt(&b, text("and 5 more")).unwrap();
-    assert_eq!(bob.decrypt(&a, &first).unwrap().body, text("pay 100"));
+    assert_eq!(bob.decrypt(Some(&a), &first).unwrap().body, text("pay 100"));
     for _ in 0..2 {
-        assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+        assert_eq!(bob.decrypt(Some(&a), &first), Err(Error::DecryptFailed));
     }
     // The session itself is unharmed, and survives a save.
     let mut bob = Client::import(&bob.export().unwrap()).unwrap();
-    assert_eq!(bob.decrypt(&a, &second).unwrap().body, text("and 5 more"));
-    assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+    assert_eq!(
+        bob.decrypt(Some(&a), &second).unwrap().body,
+        text("and 5 more")
+    );
+    assert_eq!(bob.decrypt(Some(&a), &first), Err(Error::DecryptFailed));
 
     // Five newer sessions push the first one out; it is still not built again.
     for n in 0..5 {
         on_fallback(&mut alice, &bob, &fallback);
         let env = alice.encrypt(&b, text(&n.to_string())).unwrap();
-        assert!(bob.decrypt(&a, &env).unwrap().new_session);
+        assert!(bob.decrypt(Some(&a), &env).unwrap().new_session);
     }
-    assert_eq!(bob.decrypt(&a, &first), Err(Error::DecryptFailed));
+    assert_eq!(bob.decrypt(Some(&a), &first), Err(Error::DecryptFailed));
 }
 
 #[test]
@@ -376,13 +386,13 @@ fn replay_does_not_bring_back_a_removed_contact() {
         note: String::new(),
     };
     let env = carol.encrypt(&b, request).unwrap();
-    assert!(bob.decrypt(&c, &env).unwrap().request);
+    assert!(bob.decrypt(Some(&c), &env).unwrap().request);
     bob.remove_contact(&c);
-    assert_eq!(bob.decrypt(&c, &env), Err(Error::DecryptFailed));
+    assert_eq!(bob.decrypt(Some(&c), &env), Err(Error::DecryptFailed));
     assert_eq!(bob.is_request(&c), None);
     // A backup carries the list along with the fallback key.
     let mut restored = bob.without_sessions();
-    assert_eq!(restored.decrypt(&c, &env), Err(Error::DecryptFailed));
+    assert_eq!(restored.decrypt(Some(&c), &env), Err(Error::DecryptFailed));
 
     // The relay names Carol as the sender of 200 sessions of its own: they
     // count against the key that built them, and Carol's entry stays.
@@ -391,7 +401,120 @@ fn replay_does_not_bring_back_a_removed_contact() {
     for n in 0..201 {
         on_fallback(&mut mallory, &bob, &fallback);
         let fake = mallory.encrypt(&b, text(&n.to_string())).unwrap();
-        assert!(bob.decrypt(&c, &fake).is_err());
+        assert!(bob.decrypt(Some(&c), &fake).is_err());
     }
-    assert_eq!(bob.decrypt(&c, &env), Err(Error::DecryptFailed));
+    assert_eq!(bob.decrypt(Some(&c), &env), Err(Error::DecryptFailed));
+}
+
+fn request(c: &Client, nick: &str) -> Body {
+    Body::ContactRequestV2 {
+        identity: c.identity(),
+        nickname: nick.into(),
+        note: String::new(),
+        code: [7; 16],
+    }
+}
+
+#[test]
+fn invite_queue_takes_requests_and_finds_the_sender() {
+    let mut bob = Client::default();
+    let b = ed(&bob);
+    let mut keys = bob.prekeys(0, true).one_time;
+    let mut carol = Client::default();
+    let c = ed(&carol);
+    carol.add_contact(&bob.identity()).unwrap();
+    carol.start_session(&b, &keys.remove(0)).unwrap();
+
+    // In the invite queue nobody names the sender; the request does.
+    let env = carol.encrypt(&b, request(&carol, "carol")).unwrap();
+    let got = bob.decrypt(None, &env).unwrap();
+    assert_eq!((got.sender, got.request, got.new_session), (c, true, true));
+    // Her next messages, all pre-key until Bob answers, find her by key.
+    let env = carol
+        .encrypt(
+            &b,
+            Body::QueueOffer {
+                relay_url: "wss://relay.example.org/".into(),
+                onion_url: None,
+                send_id: [3; 16],
+            },
+        )
+        .unwrap();
+    assert_eq!(env.olm_type, 0);
+    let got = bob.decrypt(None, &env).unwrap();
+    assert_eq!((got.sender, got.new_session), (c, false));
+
+    // Once Bob answered, Carol's messages are normal ones: never read from
+    // the invite queue, only from her own.
+    bob.add_contact(&carol.identity()).unwrap();
+    let hi = bob.encrypt(&c, text("hi")).unwrap();
+    carol.decrypt(Some(&b), &hi).unwrap();
+    let env = carol.encrypt(&b, text("normal")).unwrap();
+    assert_eq!(env.olm_type, 1);
+    assert_eq!(bob.decrypt(None, &env), Err(Error::UnknownSender));
+    assert_eq!(bob.decrypt(Some(&c), &env).unwrap().body, text("normal"));
+}
+
+#[test]
+fn invite_queue_stranger_cannot_name_a_contact() {
+    let (mut alice, mut bob) = pair();
+    let (a, b) = (ed(&alice), ed(&bob));
+    let env = alice.encrypt(&b, text("hi")).unwrap();
+    bob.decrypt(Some(&a), &env).unwrap();
+    let mut keys = bob.prekeys(0, false).one_time;
+
+    // Mallory writes to Bob's invite queue claiming Alice's identity.
+    let mut mallory = Client::default();
+    mallory.add_contact(&bob.identity()).unwrap();
+    mallory.start_session(&b, &keys.remove(0)).unwrap();
+    let forged = mallory.encrypt(&b, request(&alice, "alice")).unwrap();
+    assert_eq!(bob.decrypt(None, &forged), Err(Error::SenderMismatch));
+    // Plain text from a stranger in the invite queue: refused too.
+    mallory.start_session(&b, &keys.remove(0)).unwrap();
+    let env = mallory.encrypt(&b, text("hello?")).unwrap();
+    assert_eq!(bob.decrypt(None, &env), Err(Error::UnknownSender));
+    assert_eq!(bob.nickname(&a), None, "Alice untouched");
+}
+
+#[test]
+fn a_known_contact_asking_again_joins_its_old_entry() {
+    // ADR-023: after the switch to queues, contacts exchange invites again.
+    // A request from a key Bob already has is that contact, not a new one.
+    let (mut alice, mut bob) = pair();
+    let (a, b) = (ed(&alice), ed(&bob));
+    let accept = Body::ContactAccept {
+        nickname: "alice".into(),
+    };
+    let env = alice.encrypt(&b, accept).unwrap();
+    bob.decrypt(Some(&a), &env).unwrap();
+
+    let otk = bob.one_time_keys(1).remove(0);
+    alice.start_session(&b, &otk).unwrap();
+    let env = alice.encrypt(&b, request(&alice, "someone else")).unwrap();
+    let got = bob.decrypt(None, &env).unwrap();
+    assert_eq!((got.sender, got.request, got.new_session), (a, false, true));
+    assert_eq!(bob.nickname(&a), Some("alice"), "the name does not change");
+}
+
+#[test]
+fn contact_queue_keys_are_fresh_and_signed() {
+    let mut bob = Client::default();
+    let all = bob.prekeys(0, true);
+    let two = bob.one_time_keys(2);
+    assert_eq!(two.len(), 2);
+    assert!(
+        two.iter()
+            .all(|k| all.one_time.iter().all(|o| o.key != k.key))
+    );
+    assert_ne!(two[0].key, two[1].key);
+    // Not handed out again with the invite queue's next top-up.
+    assert!(
+        bob.prekeys(0, false)
+            .one_time
+            .iter()
+            .all(|k| !two.contains(k))
+    );
+    let mut alice = Client::default();
+    alice.add_contact(&bob.identity()).unwrap();
+    alice.start_session(&ed(&bob), &two[0]).unwrap();
 }
