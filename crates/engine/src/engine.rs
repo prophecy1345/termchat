@@ -1375,7 +1375,7 @@ impl Engine {
             } => {
                 // Our own queue is gone (the relay expired it or lost its
                 // database): make a new one and tell whoever uses it.
-                // ponytail: the oldest pending subscribe is taken as the one
+                // The oldest pending subscribe is taken as the one
                 // refused; an unknown queue from a ClaimKey in between would
                 // make us renew a queue that was fine (harmless: a new address).
                 let lost = match self.links.get_mut(link) {
