@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.8.2
+
+- Desktop: buttons, text fields, drop-down lists and check boxes are
+  readable in light themes. They used to stay dark grey with dark text.
+
 ## 0.8.1
 
 - Android: accepting a contact request now answers them at once. Since
