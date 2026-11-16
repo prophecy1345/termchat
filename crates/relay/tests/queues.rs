@@ -61,10 +61,17 @@ impl Ws {
         ServerFrame::decode(&self.bytes().await).unwrap()
     }
 
-    /// Nothing arrives for a moment.
+    /// No frame arrives for a moment. Pings are the relay's keepalive, not
+    /// frames: its first one comes right after connecting.
     async fn quiet(&mut self) {
-        let next = tokio::time::timeout(Duration::from_millis(300), self.0.next()).await;
-        assert!(next.is_err(), "unexpected {next:?}");
+        let until = tokio::time::Instant::now() + Duration::from_millis(300);
+        loop {
+            match tokio::time::timeout_at(until, self.0.next()).await {
+                Err(_) => return,
+                Ok(Some(Ok(Message::Ping(_) | Message::Pong(_)))) => {}
+                next => panic!("unexpected {next:?}"),
+            }
+        }
     }
 
     async fn create(&mut self) -> Queue {
