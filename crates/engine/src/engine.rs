@@ -1068,6 +1068,7 @@ impl Engine {
             expires_at: None,
             status: Status::System,
             file: None,
+            unfetched: false,
         });
     }
 
@@ -1681,6 +1682,7 @@ impl Engine {
                         expires_at: None,
                         status: Status::Received,
                         file: None,
+                        unfetched: true,
                     }),
                     false => c.held_back = c.held_back.saturating_add(1),
                 }
@@ -1697,6 +1699,7 @@ impl Engine {
                     expires_at: expires_in.map(|s| at + u64::from(s)),
                     status: Status::Received,
                     file: None,
+                    unfetched: true,
                 });
                 self.happened.push(alert(false));
             }
@@ -1848,6 +1851,7 @@ impl Engine {
             expires_at: None,
             status: Status::System,
             file: None,
+            unfetched: false,
         });
         let hidden = std::mem::take(&mut c.hidden);
         let held = std::mem::take(&mut c.held_back);
@@ -2003,6 +2007,7 @@ impl Engine {
             expires_at: expires_in.map(|s| at + u64::from(s)),
             status: Status::Queued,
             file: None,
+            unfetched: false,
         });
         self.persist();
         self.deliver(i);
@@ -2043,6 +2048,7 @@ impl Engine {
                 done: 0,
                 data: Some(bytes),
             }),
+            unfetched: false,
         });
         self.persist();
         match self.has_session(&key) {
@@ -2422,16 +2428,85 @@ impl Engine {
         Ok(i)
     }
 
+    /// The local name, or else the nickname they chose; empty if neither.
+    fn base_name(&self, c: &Contact) -> String {
+        let nick = self
+            .slot_for(&c.key)
+            .and_then(|s| self.core_at(s).nickname(&c.key).map(str::to_owned));
+        clean(&c.petname.clone().or(nick).unwrap_or_default())
+    }
+
+    /// The one contact `query` names, for the command line (ADR-024): its
+    /// name as shown here, the name without the fingerprint part, or the
+    /// start of the fingerprint (at least 5 digits, spaces ignored). More
+    /// than one match is an error, so a message never goes to the wrong one.
+    pub fn find(&self, query: &str) -> Result<usize, String> {
+        let q = query.trim();
+        let digits: String = q.chars().filter(|c| !c.is_whitespace()).collect();
+        let by_fingerprint = digits.len() >= 5 && digits.chars().all(|c| c.is_ascii_digit());
+        let lower = q.to_lowercase();
+        let hits: Vec<usize> = (0..self.data.contacts.len())
+            .filter(|&i| {
+                let c = &self.data.contacts[i];
+                match by_fingerprint {
+                    true => termchat_core::fingerprint(&c.key)
+                        .chars()
+                        .filter(|c| !c.is_whitespace())
+                        .collect::<String>()
+                        .starts_with(&digits),
+                    false => {
+                        !lower.is_empty()
+                            && (self.name(c).to_lowercase() == lower
+                                || self.base_name(c).to_lowercase() == lower)
+                    }
+                }
+            })
+            .collect();
+        match hits.as_slice() {
+            [i] => Ok(*i),
+            [] => Err(format!("no contact called \"{}\"", clean(q))),
+            many => Err(format!(
+                "\"{}\" matches {} contacts ({}); use more of the fingerprint",
+                clean(q),
+                many.len(),
+                many.iter()
+                    .map(|&i| self.name(&self.data.contacts[i]))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+
+    /// Messages that arrived since the last call, for `termchat recv`
+    /// (ADR-024): oldest first, each with its contact's index, and marked as
+    /// taken. A file counts once it is whole. A request not yet accepted
+    /// shows nothing, as in the apps (ADR-007).
+    pub fn take_new(&mut self, from: Option<usize>) -> Vec<(usize, Msg)> {
+        let mut out = Vec::new();
+        for i in 0..self.data.contacts.len() {
+            if from.is_some_and(|f| f != i) || self.is_request(&self.data.contacts[i].key) {
+                continue;
+            }
+            for m in &mut self.data.contacts[i].messages {
+                let whole = m.file.as_ref().is_none_or(|f| f.complete());
+                if m.unfetched && whole {
+                    m.unfetched = false;
+                    out.push((i, m.clone()));
+                }
+            }
+        }
+        if !out.is_empty() {
+            self.persist();
+        }
+        out.sort_by_key(|(_, m)| m.at);
+        out
+    }
+
     /// What the contact is called here. Names are chosen by the peer, so an
     /// unverified contact, or one whose name collides with another contact or with
     /// ours, also shows the start of its fingerprint: "Alice·48213" (ADR-007).
     pub fn name(&self, c: &Contact) -> String {
-        let base = |c: &Contact| {
-            let nick = self
-                .slot_for(&c.key)
-                .and_then(|s| self.core_at(s).nickname(&c.key).map(str::to_owned));
-            clean(&c.petname.clone().or(nick).unwrap_or_default())
-        };
+        let base = |c: &Contact| self.base_name(c);
         let fp = termchat_core::fingerprint(&c.key);
         let name = base(c);
         if name.is_empty() {
@@ -2520,6 +2595,7 @@ fn show_missed(c: &mut Contact, missed: u64) {
             expires_at: None,
             status: Status::System,
             file: None,
+            unfetched: false,
         });
     }
 }
@@ -2627,6 +2703,105 @@ mod tests {
         e.links.get_mut(&link).unwrap().connected = true;
         e.tick();
         assert!(e.data.fallback_since >= made && e.data.old_fallback_since.is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn offline(name: &str) -> (Box<Engine>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("termchat-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let setup = Setup {
+            relay_url: "ws://127.0.0.1:9/",
+            onion_url: None,
+            tor: false,
+            nickname: "me",
+            password: "correct horse battery staple violin",
+        };
+        (Engine::setup(&dir.join("state"), &setup).unwrap(), dir)
+    }
+
+    fn contact(key: u8, petname: &str) -> Contact {
+        Contact {
+            key: [key; 32],
+            petname: Some(petname.into()),
+            verified: true,
+            ..Contact::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn the_command_line_finds_exactly_one_contact() {
+        let (mut e, dir) = offline("find");
+        for (k, n) in [(1, "Alice"), (2, "Bob"), (3, "Bob"), (4, "server-01")] {
+            e.data.contacts.push(contact(k, n));
+        }
+        assert_eq!(e.find("alice"), Ok(0), "case does not matter");
+        assert_eq!(e.find("  server-01 "), Ok(3));
+        // Shown in groups of five; typed with or without the spaces.
+        let fp = termchat_core::fingerprint(&[1; 32]);
+        assert_eq!(e.find(&fp[..5]), Ok(0), "by fingerprint");
+        assert_eq!(e.find(&fp[..11]), Ok(0), "with the space");
+        assert_eq!(e.find(&fp[..11].replace(' ', "")), Ok(0), "without it");
+        // Two Bobs: the shown names carry their fingerprints, either works.
+        let many = e.find("Bob").unwrap_err();
+        assert!(many.contains("2 contacts"), "{many}");
+        let bob2 = e.name(&e.data.contacts[2].clone());
+        assert_eq!(e.find(&bob2), Ok(2));
+        assert!(e.find("Carol").is_err());
+        assert!(e.find("").is_err(), "nothing is not everything");
+        assert!(
+            e.find("1234").is_err(),
+            "four digits are a name, not a fingerprint"
+        );
+        assert!(
+            !e.find("evil\u{1b}[2J").unwrap_err().contains('\u{1b}'),
+            "the query is cleaned before it is shown"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn recv_takes_each_new_message_once_and_files_only_whole() {
+        let (mut e, dir) = offline("take");
+        e.data.contacts.push(contact(1, "Alice"));
+        e.data.contacts.push(contact(2, "Bob"));
+        let msg = |text: &str, at, unfetched| Msg {
+            mine: false,
+            text: text.into(),
+            at,
+            expires_at: None,
+            status: Status::Received,
+            file: None,
+            unfetched,
+        };
+        e.data.contacts[0].messages.push(msg("old", 1, false));
+        e.data.contacts[0].messages.push(msg("second", 3, true));
+        e.data.contacts[1].messages.push(msg("first", 2, true));
+        let mut file = msg("half.pdf", 4, true);
+        file.file = Some(FileMsg {
+            id: 1,
+            name: "half.pdf".into(),
+            size: 32_000,
+            done: 1,
+            data: Some(vec![0; 16_000]),
+        });
+        e.data.contacts[1].messages.push(file);
+
+        let texts = |got: &[(usize, Msg)]| -> Vec<(usize, String)> {
+            got.iter().map(|(i, m)| (*i, m.text.clone())).collect()
+        };
+        assert_eq!(texts(&e.take_new(Some(1))), [(1, "first".into())]);
+        assert_eq!(texts(&e.take_new(None)), [(0, "second".into())]);
+        assert!(e.take_new(None).is_empty(), "once each");
+        // The file comes once its last chunk is in.
+        if let Some(f) = e.data.contacts[1].messages[1].file.as_mut() {
+            f.done = 2;
+        }
+        assert_eq!(texts(&e.take_new(None)), [(1, "half.pdf".into())]);
+
+        // A state file from before ADR-024 has no field: all of it counts as taken.
+        let json = r#"{"mine":false,"text":"x","at":1,"expires_at":null,"status":"Received"}"#;
+        let old: Msg = serde_json::from_str(json).unwrap();
+        assert!(!old.unfetched);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

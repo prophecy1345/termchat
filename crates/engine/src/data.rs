@@ -185,6 +185,10 @@ pub struct Msg {
     /// A document instead of a text; `text` holds its name (ADR-017).
     #[serde(default)]
     pub file: Option<FileMsg>,
+    /// From the contact and not yet taken by `termchat recv` (ADR-024).
+    /// Absent in older files: everything there counts as taken.
+    #[serde(default)]
+    pub unfetched: bool,
 }
 
 /// What was said is wiped when a message goes: on lock, when its timer runs
@@ -280,6 +284,7 @@ impl Data {
             expires_at: None,
             status: Status::System,
             file: None,
+            unfetched: false,
         };
         let Some(c) = self.contacts.get_mut(i) else {
             return false;
@@ -328,6 +333,7 @@ impl Data {
             expires_at: expires_in.map(|s| at + u64::from(s)),
             status: Status::Received,
             file: Some(file),
+            unfetched: true,
         });
         whole
     }
@@ -900,6 +906,7 @@ mod tests {
             expires_at: None,
             status: Status::Received,
             file: None,
+            unfetched: false,
         };
         let new = Contact {
             key: [1; 32],
@@ -933,6 +940,7 @@ mod tests {
             expires_at: None,
             status,
             file: None,
+            unfetched: false,
         };
         let mut kept = Contact {
             key: [1; 32],

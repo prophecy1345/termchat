@@ -829,6 +829,7 @@ mod tests {
             expires_at: None,
             status,
             file: None,
+            unfetched: false,
         };
         engine.data.contacts.push(Contact {
             key: [1; 32],
