@@ -393,15 +393,27 @@ async fn a_lagging_reader_is_cut_off_and_finds_everything_queued() {
     let mut owner = Ws::new(&url).await;
     let q = owner.create().await;
     owner.subscribe(&q).await;
-    // The owner reads nothing while more than a channel's worth arrives.
+    // The owner reads nothing while far more than its socket buffers and the
+    // relay's channel can hold arrives: 400 envelopes of 16 KB, about 6 MB.
+    // Small ones would all fit in the buffers and never fill the channel.
+    const N: u64 = 400;
     let mut w = Ws::new(&url).await;
-    for id in 0..100 {
-        w.put(id, q.send_id, 1).await;
+    for id in 0..N {
+        w.send(ClientFrame::Send {
+            client_id: id,
+            send_id: q.send_id,
+            envelope: Envelope {
+                body: vec![1; 16_000],
+                ..env(1)
+            },
+        })
+        .await;
+        assert_eq!(w.recv().await, ServerFrame::Accepted { client_id: id });
     }
-    let mut ended = false;
-    for _ in 0..200 {
+    let (mut ended, mut seen) = (false, 0);
+    for _ in 0..N + 100 {
         match tokio::time::timeout(WAIT, owner.0.next()).await.unwrap() {
-            Some(Ok(Message::Binary(_))) => {}
+            Some(Ok(Message::Binary(_))) => seen += 1,
             _ => {
                 ended = true;
                 break;
@@ -409,6 +421,7 @@ async fn a_lagging_reader_is_cut_off_and_finds_everything_queued() {
         }
     }
     assert!(ended, "the lagging connection was closed");
+    assert!(seen < N, "cut off before everything came: {seen} of {N}");
     let mut again = Ws::new(&url).await;
-    assert_eq!(again.subscribe(&q).await.len(), 100);
+    assert_eq!(again.subscribe(&q).await.len(), N as usize);
 }
