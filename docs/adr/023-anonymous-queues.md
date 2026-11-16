@@ -198,3 +198,17 @@ Decision:
 - A profile has no relay connection of its own. Its queues are served by the same per-contact connection as every other contact's.
 - A profile's `Unregister` is replaced by `DeleteQueue` on its queues.
 - The parts of ADR-014 about what the relay sees are replaced by this ADR. The part about contacts still holds.
+
+## Amendment of 2026-11-16 (maintainer): requests without an invite code
+
+ADR-013 allowed contact requests without a code until the owner turned off the "accept requests without an invite code" setting, so that old invites without a code kept working. With queues, that setting lost its meaning and became a hole.
+
+- **Meaning.** Invites of versions 1 and 2 are refused (section 8). A version 3 invite always carries a code. A genuine request without a code cannot arrive.
+- **Hole.** The invite queue's address stays the same when the owner renews the public invite: only the code changes. Someone holding the old public invite could send a `ContactRequest` without a code into the same queue and get past the renewal, if the setting were on.
+
+Decision:
+
+- A request without a code (`ContactRequest` instead of `ContactRequestV2`) from a stranger is always refused, silently, like any request with a wrong code.
+- The setting is removed from every interface. Its place in settings goes to "one connection for all contacts" (decision 1).
+- A contact we already have is not affected: their request from the invite queue joins the existing contact without a code check (section 8).
+- So renewing the public invite is now enough: the old code opens nothing, and there is no way in without one. The invite queue itself stays the same.
