@@ -1,6 +1,6 @@
 # termchat.app protocol, version 1
 
-Status: accepted (M0, 2026-10-15). Format changes increase `version`.
+Status: accepted (M0, 2026-10-15); version 2, anonymous queues, accepted 2026-11-16 (ADR-023). Format changes increase `version`.
 Русская версия: [protocol.ru.md](protocol.ru.md).
 
 ## 1. Layers
@@ -9,7 +9,7 @@ Status: accepted (M0, 2026-10-15). Format changes increase `version`.
    TLS; the relay sees plain WS. Every message is one binary WS frame. Text
    frames are a protocol error and close the connection.
 2. **Frames:** the `ClientFrame` and `ServerFrame` enums, encoded with
-   `postcard`. Used for registration, keys, sending and delivery.
+   `postcard`. Used for queues, keys, sending and delivery.
 3. **Envelope:** what the relay forwards from client to client. Its body is an
    Olm message.
 4. **Inner message:** the plaintext inside Olm, padded.
@@ -35,114 +35,127 @@ contact only after checking this signature.
 
 ## 2. Version
 
-The client's first frame is `Hello { version: u16 }`; currently `version = 1`.
-If the relay does not support it, it answers `Error { code: UnsupportedVersion }`
-and closes the connection. The envelope carries `version` too, so clients of
-different versions can understand each other or refuse explicitly.
+The client's first frame on every connection is `Hello { version: u16 }`;
+currently `version = 2` (ADR-023). The relay sends nothing back if it accepts
+it. Otherwise it answers `Error { code: UnsupportedVersion }` and closes the
+connection. `Hello` stays variant 0 and `Error` variant 7 of their enums, as in
+version 1, so a version 1 client can still read that refusal. The envelope
+carries `version` too.
+
+Version 1 had accounts: a signed login, and envelopes addressed to identity
+keys. It is not supported; a relay of version 2 erases its data on upgrade.
 
 The relay's HTTP upgrade response carries `x-termchat-version: X.Y.Z`, the
 relay's software version. Clients use it only to say that a newer termchat.app is
 out (ADR-010); it plays no part in the protocol.
 
-## 3. Registration (challenge-response)
+## 3. Queues (ADR-023)
+
+The relay knows no users. It knows queues:
 
 ```
-C -> R  Hello { version }
-R -> C  Challenge { nonce: [u8; 32] }
-C -> R  Auth { identity: Identity, signature }
-R -> C  AuthOk | Error { code }
+C -> R  CreateQueue
+R -> C  QueueCreated { recv_id: [u8; 16], send_id: [u8; 16], token: [u8; 32] }
+C -> R  Subscribe { recv_id, token }
+R -> C  Subscribed { recv_id }
+C -> R  DeleteQueue { recv_id, token }
+R -> C  QueueDeleted { recv_id }
 ```
 
-`signature` is an Ed25519 signature over:
-
-```
-"termchat-auth-v1" || relay_host || nonce
-```
-
-- `relay_host`, from the relay URL (for example `relay.example.org` or
-  `xxxx.onion`), stops a signature from being reused on another relay. The relay
-  accepts any of its addresses (`--host` can be given several times).
-- The signature inside `identity` binds the exchange key to the signing key; the
-  relay checks it.
-- The nonce is single-use and tied to the connection; the whole exchange up to
-  `Auth` has 10 seconds (`auth_timeout`).
-
-Before `AuthOk` the relay accepts only `Hello` and `Auth`.
+- The relay picks all three values at random. It stores `recv_id`, `send_id`
+  and the SHA-256 of `token`, and compares hashes in constant time.
+- `recv_id` and `token` stay with the queue's owner: they read and delete it.
+  `send_id` is what others write to; it goes to them only inside Olm
+  (`QueueOffer`, section 7) or in an invite (section 9).
+- A wrong token and an unknown queue get the same answer, `UnknownQueue`.
+- After `Subscribed` the relay sends the queue's stored envelopes, then
+  `KeyCount`, then new envelopes as they come. A newer subscription to the
+  same queue takes it over.
+- Every identity has an invite queue, where strangers write. Every contact
+  has a queue of their own, which only that contact writes to. Blocking a
+  contact deletes their queue.
+- A client keeps one connection per queue it reads, so the relay cannot link
+  queues by connection (ADR-023, section 7); with Tor, each on its own circuit.
+- Queues unused for 90 days are deleted.
 
 ## 4. Keys (prekeys)
 
 ```
-C -> R  PublishKeys { one_time: Vec<SignedKey>, fallback: Option<SignedKey> }
-C -> R  ClaimKey { target: ed25519 }
-R -> C  ClaimedKey { target, key: SignedKey } | Error { code: NoKeys }
-R -> C  KeyCount { one_time_left: u32, fallback_used: bool }
+C -> R  PublishKeys { recv_id, token, one_time: Vec<SignedKey>, fallback: Option<SignedKey> }
+C -> R  ClaimKey { send_id }
+R -> C  ClaimedKey { send_id, key: SignedKey } | Error { code: NoKeys }
+R -> C  KeyCount { recv_id, one_time_left: u32, fallback_used: bool }
 ```
 
-- `KeyCount` arrives right after `AuthOk`, in reply to `PublishKeys`, and to the
-  key owner (if online) when someone claims one of their keys.
+- An invite queue carries the identity's one-time keys and its fallback key.
+  A contact's queue carries two one-time keys and no fallback key, so a contact
+  can start a new session (after a restore from backup) without the relay
+  linking queues by a shared key (ADR-023, amendment).
+- `KeyCount` goes to the queue's subscriber after `Subscribed`, in reply to
+  `PublishKeys`, and when someone claims one of its keys.
 - `fallback_used = true`: the relay handed out the fallback key; the client
   rotates it (ADR-002). The client also rotates a fallback key older than 7
   days on its own clock, whatever the relay reports (ADR-019).
 - An error on `ClaimKey` comes with `client_id: None`; the client claims keys one
   at a time.
-- Past the limit on `ClaimKey` towards one target, the relay hands out only the
+- Past the limit on `ClaimKey` towards one queue, the relay hands out only the
   fallback key and spends no one-time keys.
 
 `SignedKey { key: [u8; 32], signature: [u8; 64] }`: the owner's Ed25519 signature
 over `"termchat-otk-v1" || key`. No separate id is needed: vodozemac finds a
 one-time key by its public part. The client receiving a key checks the signature
-against `target`, so the relay cannot slip in a key of its own.
+against the identity it knows from the invite, so the relay cannot slip in a key
+of its own.
 
 The relay hands out each one-time key once and deletes it. When they run out it
-hands out the fallback key. How many to publish and when to top up: ADR-002.
+hands out the fallback key, if the queue has one. How many to publish and when
+to top up: ADR-002.
 
 ## 5. Sending and delivery
 
 ```
-C -> R  Send { client_id: u64, envelope: Envelope }
+C -> R  Send { client_id: u64, send_id, envelope: Envelope }
 R -> C  Accepted { client_id } | Error { client_id, code }
-R -> C  Deliver { relay_id: u64, sender: ed25519, envelope: Envelope }
-C -> R  Ack { relay_id }
-C -> R  Report { sender: ed25519, text: String }   // ADR-006, text up to 16000 bytes
-R -> C  Reported                                  // the same answer on every path
-C -> R  Unregister                                // ADR-009: forget my key, prekeys and queue
-R -> C  Unregistered                              // then the relay closes the connection
-C -> R  SetPush { endpoint: Option<String> }      // ADR-012: https URL, up to 512 bytes; None forgets it
-R -> C  PushSet                                   // or Error { Malformed } for a bad URL
+R -> C  Deliver { recv_id, relay_id: u64, envelope: Envelope }
+C -> R  Ack { recv_id, relay_id }
+C -> R  Report { recv_id, token, text: String }  // ADR-006, text up to 16000 bytes
+R -> C  Reported                                 // the same answer on every path
+C -> R  SetPush { recv_id, token, endpoint: Option<String> }  // ADR-012
+R -> C  PushSet                                  // or Error { Malformed } for a bad URL
 ```
 
-- The relay keeps an envelope in the recipient's queue until the recipient sends
-  `Ack`. Unacknowledged envelopes are delivered again on every connection. The
-  queue lives in SQLite with a TTL (ADR-005).
+- `Send` needs no login: knowing `send_id` is the right to write.
+- The relay keeps an envelope in the queue until its subscriber sends `Ack`.
+  Unacknowledged envelopes are delivered again on every subscription. The
+  queue lives in SQLite with a TTL (ADR-005). Only a subscriber of the queue
+  can acknowledge.
 - `Accepted` means the relay took the envelope; the client shows it as "on the
   relay". There are no end-to-end read receipts.
-- The relay fills in `sender` in `Deliver` from the authenticated connection. The
-  client does not trust this field: the real sender is confirmed by decrypting
-  and checking the inner message (section 7).
-- `Ack` lets the relay delete the envelope.
-- `Unregister` is sent by a wipe after the goodbyes (ADR-009). The relay deletes
-  the account row with its prekeys and incoming queue (bans stay), answers
-  `Unregistered` and closes the connection. Afterwards `ClaimKey` and `Send` to
-  that key answer `UnknownRecipient`.
-- `SetPush` stores a UnifiedPush endpoint with the account (ADR-012). When an
-  envelope is queued for that key while it is offline, the relay POSTs an empty
-  body to the endpoint, at most once every 30 seconds, only to public addresses.
-  Clients send it only to a relay whose version header (section 2) is at least
-  0.1.13, since an older relay closes the connection on an unknown frame.
+- `Deliver` names no sender: the relay does not know one. The client knows the
+  contact by the queue, and confirms it by decrypting and checking the inner
+  message (section 7). From an invite queue it reads only pre-key messages.
+- `Report` sends the disclosed text to the operator's journal. The relay cannot
+  ban anyone: it knows no keys (ADR-023, section 6).
+- `SetPush` stores a UnifiedPush endpoint with the queue (ADR-012), `None`
+  forgets it: an `https` URL on port 443, up to 512 bytes. When an envelope is
+  queued while nobody reads the queue, or the reader's link sleeps, the relay
+  POSTs an empty body to the endpoint, at most once every 30 seconds, only to
+  public addresses. Every queue has its own endpoint, or the relay could link
+  them by it.
+- A wipe sends goodbyes, then deletes every queue (ADR-009).
 
 ## 6. Envelope
 
 ```
 Envelope {
     version: u16,
-    recipient: [u8; 32],      // recipient's ed25519
     olm_type: u8,             // 0 = pre-key, 1 = normal
     body: Vec<u8>,            // Olm ciphertext
 }
 ```
 
-There is no sender field, so sealed sender can be added later without changing
-the format.
+Neither sender nor recipient: the relay addresses the queue, and both names are
+inside the ciphertext (section 7).
 
 ## 7. Inner message
 
@@ -163,6 +176,7 @@ Body =
   | Goodbye                                                                // ADR-009: the sender wiped their account
   | ContactRequestV2 { identity: Identity, nickname: String, note: String, code: [u8; 16] }  // ADR-013
   | File { id: u32, name: String, size: u32, index: u16, expires_in: Option<u32>, data: Vec<u8> }  // ADR-017
+  | QueueOffer { relay_url: String, onion_url: Option<String>, send_id: [u8; 16] }  // ADR-023: write to me here
 ```
 
 Limits: `text` up to 16000 bytes, `nickname` up to 64 bytes, `note` up to 256
@@ -175,11 +189,26 @@ characters, no `/`, `\` or NUL, and is not `.` or `..`. The receiver takes
 chunks of one file strictly in order, only from accepted contacts, and drops
 the transfer on a gap.
 
+`QueueOffer` gives the contact the `send_id` of the queue we made for them; the
+URLs follow the invite's limits and must be `wss://` (or `ws://` for an onion
+address). From then on they write there. Meeting goes in this order:
+
+1. The one asking writes to the invite queue: `ContactRequestV2`, then a
+   `QueueOffer` with their queue.
+2. The one accepting writes to that queue: first their own `QueueOffer`, then
+   `ContactAccept`. So the asker has the address before it may send an
+   ordinary message.
+
+A contact we already have asking again (a new device, or the move from
+version 1) joins that contact: name, history and fingerprint stay.
+
 Checks on receipt:
 1. `recipient` equals our own key.
-2. `sender` equals the key the Olm session belongs to. For a pre-key message from
-   a contact: the Curve25519 key in the message equals `curve25519` in their
-   verified `Identity`.
+2. `sender` equals the contact whose queue the envelope came in, and the key the
+   Olm session belongs to. For a pre-key message from a contact: the
+   Curve25519 key in the message equals `curve25519` in their verified
+   `Identity`. In the invite queue the sender is the contact holding that
+   Curve25519 key; a stranger there cannot name a contact we have.
 3. A pre-key message from a stranger is accepted only if it is a
    `ContactRequest` or `ContactRequestV2` with a live invite code (section 9),
    its `identity.ed25519` equals `sender`, its
@@ -247,19 +276,22 @@ The serialized `Inner` is padded up to the nearest bucket: `0x80`, then zeros
 ```
 termchat:<base64url(postcard(Invite))>
 
-Invite { version: 2, relay_url: String, onion_url: Option<String>, identity: Identity, code: [u8; 16] }
-Invite { version: 1, relay_url: String, onion_url: Option<String>, identity: Identity }  // before ADR-013
+Invite { version: 3, relay_url: String, onion_url: Option<String>, identity: Identity, queue: [u8; 16], code: [u8; 16] }
 ```
 
-`code` is random. A request made from a version 2 invite echoes it in
-`ContactRequestV2`. The owner's client admits a stranger only with a live code:
+`queue` is the `send_id` of the owner's invite queue (ADR-023). Invites of
+versions 1 and 2 named only the identity and are refused with
+`UnsupportedVersion`; the client asks for a new one. The relay may be another
+one than the owner's own.
+
+`code` is random. A request echoes it in `ContactRequestV2`. The owner's client admits a stranger only with a live code:
 a one-time code is spent on arrival, and the public code works until it is
-renewed. A request without a code is admitted only while the owner allows old
-invites. Everything else is dropped silently. The relay never sees the code
+renewed. Everything else is dropped silently. The relay never sees the code
 (ADR-013).
 
 The fallback key is not part of the invite: it rotates and would go stale. The
-one-time key is claimed with `ClaimKey`; its signature prevents substitution.
+one-time key is claimed with `ClaimKey { send_id: queue }`; its signature
+prevents substitution.
 
 There is no short form for typing by hand: the string is copied, and a short
 code would need the relay to store a "code → keys" mapping. Later: a QR code in
@@ -287,37 +319,36 @@ fingerprint as one specific person: ~2^99 tries.
 |---|---|
 | WS frame size | 64 KiB |
 | Envelope `body` | 16384 plus Olm overhead, at most 20 KiB |
-| `Send` per key | token bucket: 30 in a burst, then 1 every 2 seconds |
-| New recipients per key | 20 per day |
+| `Send` into one queue, from everyone | token bucket: 30 in a burst, then 1 every 2 seconds |
 | Connections per IP | 50 (CGNAT: many people behind one IP) |
-| Any frame after `Auth`, per key | token bucket: 2000 in a burst (a whole queue acknowledged after a reconnect), then 20 per second; past it the connection is closed |
-| New registrations per IP | 20 per hour (over onion: a shared budget of 200 per hour, ADR-004) |
-| One-time keys per key | the client keeps 50 on the relay (`Account::max_number_of_one_time_keys()`), the relay stores at most the 100 newest |
-| `PublishKeys` per key | 30 per hour |
-| `ClaimKey` per key | 30 per hour |
-| `ClaimKey` towards one target, from everyone | 100 per day (past that, only the fallback key) |
-| Time to authenticate | 10 seconds after connecting |
+| Any frame, per connection | token bucket: 2000 in a burst (a whole queue acknowledged after a reconnect), then 20 per second; past it the connection is closed |
+| New queues per IP | 20 per hour (over onion: a shared budget of 200 per hour, ADR-004) |
+| One-time keys per queue | an invite queue gets 50 (`Account::max_number_of_one_time_keys()`), a contact's queue 2; the relay stores at most the 100 newest |
+| `PublishKeys` per queue | 30 per hour |
+| `ClaimKey` per connection | 30 per hour |
+| `ClaimKey` towards one queue, from everyone | 100 per day (past that, only the fallback key) |
+| Time to send `Hello` | 10 seconds after connecting |
 | Writing to a client | 30 seconds: a client that does not read is disconnected |
-| Queue per recipient | 1000 envelopes and 10 MiB, TTL 14 days |
-| A stranger's share of a queue (ADR-007) | 20 envelopes and 256 KiB from a sender the recipient never wrote to |
+| Queue | 1000 envelopes and 10 MiB, TTL 14 days; unused queues go after 90 days |
+| `Report` per connection | 10 per day |
 | Full channel to an online client | the relay drops the connection; the client reconnects and gets the queue (ADR-007) |
 
-Counters live in memory only.
+Counters live in memory only. Strangers reach only an invite queue, so there is
+no stranger share of a contact's queue any more (ADR-023, section 6).
 
 Connections over Tor arrive from shared exit IPs, so per-IP limits would hit
 them unfairly. For them the relay publishes an onion address: onion connections
-have no per-IP limits, only per-key limits and the onion port's overall budget.
-There is no proof-of-work of our own: Tor provides it for onion services
-(ADR-004).
+have no per-IP limits, only per-queue and per-connection limits and the onion
+port's overall budget. There is no proof-of-work of our own: Tor provides it
+for onion services (ADR-004).
 
 ## 12. Error codes
 
-`UnsupportedVersion`, `Malformed`, `TooLarge`, `NotAuthenticated`,
-`BadSignature`, `ChallengeExpired`, `RateLimited`, `NoKeys`,
-`UnknownRecipient`, `QueueFull`, `Banned`, `Internal`.
+`UnsupportedVersion`, `Malformed`, `TooLarge`, `RateLimited`, `NoKeys`,
+`UnknownQueue`, `QueueFull`, `Internal`.
 
-An error with a specific `client_id` does not close the connection.
-`Malformed`, `BadSignature` and `NotAuthenticated` do.
+`UnknownQueue` covers a wrong token too. An error does not close the connection,
+except `Malformed`.
 
 ## 13. Keepalive and reconnect
 
@@ -325,5 +356,5 @@ An error with a specific `client_id` does not close the connection.
   connection.
 - The client reconnects with exponential backoff and jitter, from 1 to 60
   seconds.
-- The client resends unacknowledged `Send` frames after re-authenticating. The
+- The client resends unacknowledged `Send` frames after reconnecting. The
   recipient drops duplicates by `seq`.

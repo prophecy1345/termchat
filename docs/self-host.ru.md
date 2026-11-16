@@ -50,7 +50,7 @@ Description=termchat.app relay
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/termchat-relay --host relay.example.org --trust-proxy --listen 127.0.0.1:8080
+ExecStart=/usr/local/bin/termchat-relay --trust-proxy --listen 127.0.0.1:8080
 DynamicUser=yes
 StateDirectory=termchat-relay
 WorkingDirectory=/var/lib/termchat-relay
@@ -102,10 +102,11 @@ sudo systemctl restart tor
 sudo cat /var/lib/tor/termchat/hostname   # xxxx.onion
 ```
 
-Затем запустите relay с обоими именами и onion-портом:
+Затем запустите relay с onion-портом (`--host` с версии 0.7.0 не нужен, ADR-023;
+старые файлы служб с ним продолжают работать):
 
 ```
-termchat-relay --host relay.example.org --host xxxx.onion --trust-proxy \
+termchat-relay --trust-proxy \
   --listen 127.0.0.1:8080 --onion-listen 127.0.0.1:8081
 ```
 
@@ -120,9 +121,9 @@ IP не отрезают пользователей Tor.
   `sqlite3 termchat-relay.db ".backup backup.db"`. В копии те же метаданные,
   защищайте её так же.
 - **Жалобы.** Читайте `termchat-reports.log`, принимайте меры и удаляйте
-  разобранные строки. Три жалобы от разных людей, которым этот ключ
-  действительно писал, банят его автоматически. Баны лежат в таблице
-  `accounts` (`banned = 1`).
+  разобранные строки. В жалобе только время и текст: relay не знает, кто его
+  написал, поэтому банить некого (ADR-023). Клиент пожаловавшегося уже удалил
+  очередь этого контакта.
 - **Шифрование диска.** Включите полное шифрование диска на сервере: удалённые
   строки могут оставаться на SSD до TRIM.
 - **Обновление.** Остановить, заменить бинарник, запустить. Версия схемы

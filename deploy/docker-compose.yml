@@ -2,7 +2,7 @@
 services:
   relay:
     build: ..
-    command: ["--host", "relay.example.org", "--trust-proxy"]
+    command: ["--trust-proxy"]
     volumes:
       - relay-data:/data
     restart: unless-stopped

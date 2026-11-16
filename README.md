@@ -36,9 +36,11 @@ The goal is not "impossible to break" but "breaking the server is pointless".
 - Your data at rest: everything on disk is encrypted with your password (Argon2id).
 
 **Partly protected**
-- **Metadata.** The relay sees which key writes to which and when, and message size
-  rounded up to 512 / 4096 / 16384 bytes. A document travels as a run of 16 KB
-  messages, so the relay can estimate its size. Nicknames are never visible to it.
+- **Metadata.** The relay knows anonymous queues, not people: no keys, no senders,
+  no "who writes to whom" (ADR-023). It still sees when each queue is written to
+  and read, which can link queues by timing, and message size rounded up to
+  512 / 4096 / 16384 bytes. Each contact gets its own connection; without Tor,
+  your IP address links them. Nicknames are never visible to it.
 - **Someone with your unlocked computer.** Auto-lock after 5 minutes, Ctrl+K to lock
   now, disappearing messages, chats without history.
 - **Being forced to give a password.** An optional duress password silently erases
@@ -334,7 +336,7 @@ All of these act on the chosen contact; right-clicking it offers the same list:
 | **Ctrl+R** | Rename the contact. Only on your device; empty name resets it. |
 | **Ctrl+B** | Block / unblock. Their messages are thrown away unread; you cannot write to them. |
 | **Ctrl+D** | Delete the contact and the chat (asks for **y**). Deleting a request rejects it for good; adding that person's invite later takes the rejection back. |
-| **Ctrl+X** | Report to the relay operator. Shows exactly which messages (their last 5) the operator will read; **y** sends the report and blocks the contact. A key reported by several different people it really wrote to is banned on that relay. |
+| **Ctrl+X** | Report to the relay operator. Shows exactly which messages (their last 5) the operator will read; **y** sends the report and blocks the contact, which deletes their queue. The relay does not know who wrote, so it bans nobody. |
 
 ### 8. Backup and restore
 
@@ -387,7 +389,7 @@ The rest is in **settings**: open them with **Ctrl+P**, then **s**, and go to th
   crime in some countries. Leave the new field empty to turn it off.
 - **Wipe everything:** type `WIPE`. Keys, contacts and history are
   erased from this device. There is no undo. Your contacts get a goodbye
-  (their chat with you becomes read-only) and the relay forgets your key.
+  (their chat with you becomes read-only) and the relay deletes your queues.
   Without a connection the client asks whether to wipe without telling them.
   The duress password never does this: it wipes silently.
   Moved to another device? Type `MOVED` instead: it erases only this device,

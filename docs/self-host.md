@@ -48,7 +48,7 @@ Description=termchat.app relay
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/termchat-relay --host relay.example.org --trust-proxy --listen 127.0.0.1:8080
+ExecStart=/usr/local/bin/termchat-relay --trust-proxy --listen 127.0.0.1:8080
 DynamicUser=yes
 StateDirectory=termchat-relay
 WorkingDirectory=/var/lib/termchat-relay
@@ -99,10 +99,11 @@ sudo systemctl restart tor
 sudo cat /var/lib/tor/termchat/hostname   # xxxx.onion
 ```
 
-Then run the relay with both names and the onion port:
+Then run the relay with the onion port (`--host` is no longer needed since
+version 0.7.0, ADR-023; old service files with it still work):
 
 ```
-termchat-relay --host relay.example.org --host xxxx.onion --trust-proxy \
+termchat-relay --trust-proxy \
   --listen 127.0.0.1:8080 --onion-listen 127.0.0.1:8081
 ```
 
@@ -117,8 +118,9 @@ not lock out Tor users.
   `sqlite3 termchat-relay.db ".backup backup.db"`; the backup holds the same
   metadata, so protect it the same way.
 - **Reports.** Read `termchat-reports.log`, act, then delete the reviewed
-  lines. Three reports from different people the key really wrote to ban it
-  automatically. Bans are in the `accounts` table (`banned = 1`).
+  lines. A report holds only the time and the text: the relay does not know
+  who wrote it, so there is nobody to ban (ADR-023). The reporter's client
+  has already deleted that contact's queue.
 - **Disk encryption.** Use full-disk encryption on the server: deleted rows can
   linger on SSDs until TRIM.
 - **Upgrades.** Stop, replace the binary, start. The schema version is stored in

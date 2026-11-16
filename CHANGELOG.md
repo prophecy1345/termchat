@@ -3,6 +3,28 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.7.0
+
+The relay no longer knows who talks to whom (ADR-023). This release
+breaks with every earlier one: read this before you update.
+
+- The relay knows anonymous queues, not people. It stores no keys and
+  learns no senders: anyone who has a queue's address can write to it,
+  and only the address's owner can read it. Each contact gets a queue of
+  their own and, with Tor, its own circuit.
+- **Every contact must exchange invites again.** Old contacts show "needs
+  a new invite". Ask them for one, or send yours: the chat, its history
+  and the contact's name stay. Old invites no longer work.
+- Blocking a contact deletes their queue: they cannot put a single byte
+  in it. Unblocking makes a new one.
+- Reports still reach the relay operator, but the relay cannot ban
+  anyone any more: it does not know who wrote.
+- A contact on another relay can be added.
+- The relay still sees when each queue is written to and read; timing can
+  link queues. Without Tor, your IP address links your connections.
+- Relay operators: the upgrade erases the old database. `--host` is no
+  longer needed. Clients older than 0.7.0 are told to update.
+
 ## 0.6.3
 
 More fixes from the second source review (ADR-022).

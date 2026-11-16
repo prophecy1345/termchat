@@ -18,17 +18,20 @@ Status: accepted (M0, 2026-10-15). Русская версия: [threat-model.ru
 |---|---|
 | Internet provider, Wi-Fi, the network | That the client talks to a relay, when, and how much. Not the contents or the recipients: everything is inside TLS. With Tor on, that the client uses Tor; with Tor bridges (ADR-015), the disguised transport (obfs4, webtunnel, snowflake) instead, which a determined censor can sometimes recognise. |
 | Someone with the device's files, without the password | Nothing from the encrypted state file. While Tor bridges are on, the bridge lines in Arti's own folder (ADR-015), which Arti keeps in the clear. |
-| Relay operator (or whoever seizes the server) | Users' public keys; who writes to whom and when (the relay knows the sender from the authenticated connection); message size rounded up to a bucket; IP addresses of live connections (not written to disk by default); the queue of undelivered ciphertext. The `Auth` signature is non-repudiable: an operator who keeps it can prove to others that a key connected at a given time. The stock relay does not keep it. When someone wipes their account (not with the duress password), that the key left and to whom it wrote last (ADR-009). |
+| Relay operator (or whoever seizes the server) | Queues, not people (ADR-023): random queue IDs, when each is written to and read, message size rounded up to a bucket, and the queue of undelivered ciphertext. No user keys, no senders, no recipients by name. Which queues belong together only by a shared connection, IP address or timing: the client keeps a connection per contact, and with Tor a circuit per contact, so the first two are hidden; timing is not. IP addresses of live connections (not written to disk by default). When someone wipes their account (not with the duress password), that their queues were deleted together (ADR-009). |
 | A contact | The conversation with them. |
-| A stranger who knows a public key | Can send a contact request. Can try to spam or to exhaust prekeys. Can learn whether that key is registered on a given relay: `ClaimKey` and `Send` to an unknown key answer `UnknownRecipient`. Keys are random, so this tells nothing about anyone the stranger does not already know. |
+| A stranger with an invite | Can send a contact request to that invite's queue, and nowhere else. Can try to spam it or to exhaust its prekeys; the owner can make a new invite queue, which revokes the old invites. Learns nothing from the relay about anyone else's queues. |
 
 ## What is on the relay's disk (ADR-005)
 
-Public keys, registration and last-seen times; public prekeys; undelivered
-ciphertext with sender, recipient and time (at most 14 days old, deleted as soon
-as it is delivered); banned keys; the report log (only what recipients chose to
-disclose). No message contents, nicknames, IP addresses, history of delivered
-messages, or "who wrote to whom" beyond the queue.
+Queues: two random IDs each, the SHA-256 of the owner's token, creation and
+last-use times, and its UnifiedPush endpoint if set; public prekeys per queue;
+undelivered ciphertext per queue and time (at most 14 days old, deleted as soon
+as it is acknowledged); the report log (only texts recipients chose to disclose,
+with no queue and no sender). No user keys, message contents, nicknames, IP
+addresses, senders, history of delivered messages, or "who wrote to whom".
+A relay upgraded from version 1 erases its old database, which held all of
+that (ADR-023).
 
 ## Protected against
 
@@ -42,12 +45,14 @@ messages, or "who wrote to whom" beyond the queue.
 5. **Forged, replayed or reordered messages:** authenticated encryption and the
    Olm ratchet state; a session is never built twice from the same first
    message (ADR-019).
-6. **Registering under someone else's key:** the relay demands a signature over
-   a nonce with the Ed25519 key.
-7. **Spam:** a stranger's first message lands in "requests". The relay rate-limits
-   by key and IP and limits new recipients per day.
-8. **Exhausting one-time prekeys:** a fallback key and a per-requester limit.
-9. **Queue flooding:** a quota and a TTL per recipient.
+6. **Reading or deleting someone else's queue:** it takes the queue's random
+   token, which the relay keeps only as a hash (ADR-023).
+7. **Spam:** strangers reach only an invite queue, and their first message lands
+   in "requests". A contact's queue takes only that contact; blocking deletes
+   it. The relay rate-limits writes per queue and new queues per IP.
+8. **Exhausting one-time prekeys:** a fallback key on the invite queue and a
+   per-queue limit.
+9. **Queue flooding:** a quota and a TTL per queue.
 10. **Forwarding someone else's ciphertext** (misattribution): the encrypted
     message carries the sender's and recipient's keys and the client checks them.
 11. **Revealing the user's IP to the relay and the provider** (optional,
@@ -60,18 +65,19 @@ messages, or "who wrote to whom" beyond the queue.
 
 ## Partly protected
 
-- **Metadata.** Size is hidden by padding to buckets, but the relay sees the
-  social graph and timing of each identity. A document (ADR-017) goes as a
-  run of full 16 KB messages, so the relay can estimate its size to about
-  16 KB. **Incognito contacts** (ADR-014)
-  give one contact an identity of its own: its own keys, name and relay
-  account. The relay then sees two keys that talk only to each other.
-  - Under Tor, with separate circuits, the relay cannot link that pair to your
-    other keys from the network, though it may guess from timing.
-  - Without Tor, the shared IP address links them.
-  - Contacts of different identities cannot link you by key or fingerprint.
-  - Incognito is opt-in per contact; the main identity's contacts stay visible
-    to the relay as one circle. Sealed sender is not planned (ADR-014, section 5).
+- **Metadata.** The relay knows queues, not people (ADR-023), but it still sees:
+  - **timing**: when a queue is written to and when it is read, so a message
+    into one queue followed by a read from another can link them. Only a
+    mixnet with cover traffic hides this (see "Not protected");
+  - **links by connection or IP**: each contact has its own connection and,
+    with Tor, its own circuit. Without Tor, the shared IP address shows which
+    queues are one person's;
+  - **size** rounded up to a bucket; a document (ADR-017) goes as a run of full
+    16 KB messages, so its size shows to about 16 KB;
+  - the number of contacts, roughly, from the number of connections that
+    come and go together at unlock.
+  **Incognito contacts** (ADR-014) still give one contact an identity of its
+  own, so contacts cannot link you to each other by key or fingerprint.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the
