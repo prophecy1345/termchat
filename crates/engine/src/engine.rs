@@ -715,6 +715,9 @@ impl Engine {
     /// Asks for a queue for `who` (an identity or a contact) if it has none
     /// and none is on the way; the link's `Connected` asks otherwise.
     fn ensure_queue(&mut self, who: Ed25519Key) {
+        if self.queue_of(&who).is_some() {
+            return;
+        }
         let home = self.home();
         if let Some(l) = self.live_mut(&who, &home)
             && l.connected
@@ -1168,10 +1171,7 @@ impl Engine {
                 nickname: self.nickname_at(slot),
             };
             match self.transmit(&key, body) {
-                Ok(_) => {
-                    self.data.contacts[i].accept_pending = false;
-                    self.system(i, "you accepted the request");
-                }
+                Ok(_) => self.data.contacts[i].accept_pending = false,
                 Err(e) => return self.note(e),
             }
         }
@@ -1710,9 +1710,15 @@ impl Engine {
                 } else {
                     // A contact we have, asking again: from a new device, or
                     // after the move to queues (ADR-023). They get our queue.
+                    // They may have lost us (deleted, new device): our name
+                    // travels only in `ContactAccept`, after our queue's address.
                     let c = &mut self.data.contacts[i];
                     c.request_pending = false;
                     c.offer_pending = c.mine.is_some();
+                    c.accept_pending = true;
+                    // Their old queue may be gone with them; the new one's
+                    // address comes right after the request (protocol, 7).
+                    c.theirs = None;
                     self.system(i, "connected");
                     let _ = self.sync_links();
                     self.ensure_queue(sender);
@@ -1835,6 +1841,14 @@ impl Engine {
         }
         let c = &mut self.data.contacts[i];
         c.accept_pending = true;
+        c.messages.push(Msg {
+            mine: false,
+            text: "you accepted the request".into(),
+            at: now(),
+            expires_at: None,
+            status: Status::System,
+            file: None,
+        });
         let hidden = std::mem::take(&mut c.hidden);
         let held = std::mem::take(&mut c.held_back);
         c.messages.extend(hidden);

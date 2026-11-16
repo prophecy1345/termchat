@@ -271,3 +271,27 @@ async fn one_shared_connection_carries_every_queue() {
     pump(&mut alice, &mut bob, |a, _| got("after the switch")(a)).await;
     let _ = std::fs::remove_dir_all(d);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_contact_who_lost_us_learns_our_name_again() {
+    // Bob deleted Alice (or lost his phone); Alice still has him. He adds her
+    // invite again: she joins it to the contact she has, and he must learn her
+    // name, which travels only in `ContactAccept`.
+    let url = start_relay().await;
+    let (mut alice, mut bob, d) = meet(&url, "lost").await;
+    bob.delete(0);
+    assert!(bob.data.contacts.is_empty());
+    let invite = alice.invite().unwrap();
+    bob.add(&invite, false).unwrap();
+    pump(&mut alice, &mut bob, |_, b| {
+        b.name(&b.data.contacts[0]).starts_with("alice")
+    })
+    .await;
+    assert!(
+        !alice.is_request(&alice.data.contacts[0].key),
+        "no new request"
+    );
+    bob.send(0, "hi again").unwrap();
+    pump(&mut alice, &mut bob, |a, _| got("hi again")(a)).await;
+    let _ = std::fs::remove_dir_all(d);
+}
