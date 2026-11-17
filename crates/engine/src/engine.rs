@@ -1869,15 +1869,20 @@ impl Engine {
             | Body::GroupKey { .. }
             | Body::GroupRoster { .. }
             | Body::GroupLeave { .. }
+            | Body::GroupMove { .. }
                 if got.request =>
             {
                 return self.persist();
             }
-            body @ (Body::GroupInvite { .. } | Body::GroupJoin { .. } | Body::GroupKey { .. }) => {
+            body @ (Body::GroupInvite { .. }
+            | Body::GroupJoin { .. }
+            | Body::GroupKey { .. }
+            | Body::GroupMove { .. }
+            | Body::GroupLeave { .. }) => {
                 self.group_from_contact(i, body);
                 return self.persist();
             }
-            Body::GroupRoster { .. } | Body::GroupLeave { .. } => return self.persist(),
+            Body::GroupRoster { .. } => return self.persist(),
             // Pointing at messages waits for the request to be accepted.
             Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } if got.request => {
                 return self.persist();

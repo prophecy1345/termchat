@@ -160,5 +160,27 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
             .filter(|m| m.mine)
             .all(|m| m.text == "hi from bob")
     );
+
+    // Alice removes Carol: the group moves, Carol hears so and reads nothing more.
+    let carol = e[2].me();
+    e[0].remove_from_group(0, &carol).unwrap();
+    pump(&mut e, |e| {
+        e[2].data.groups[0].left
+            && e[0].data.groups[0].members().len() == 2
+            && e[1].data.groups[0].members().len() == 2
+    })
+    .await;
+    e[1].send_group(0, "just us now").unwrap();
+    pump(&mut e, |e| said(&e[0], 0, "just us now")).await;
+    settle(&mut e).await;
+    assert!(!said(&e[2], 0, "just us now"));
+
+    // Bob leaves; Alice is told, and her next message no longer reaches him.
+    e[1].leave_group(0).unwrap();
+    pump(&mut e, |e| said(&e[0], 0, "bob left the group")).await;
+    pump(&mut e, |e| e[0].data.groups[0].members().len() == 1).await;
+    e[0].send_group(0, "anyone?").unwrap();
+    settle(&mut e).await;
+    assert!(!said(&e[1], 0, "anyone?"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

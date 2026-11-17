@@ -470,9 +470,17 @@ pub enum Body {
     GroupRoster {
         roster: Roster,
     },
-    /// The sender leaves the group, inside the group.
+    /// The sender leaves the group, inside the group; from the admin over a
+    /// chat, the receiver was removed.
     GroupLeave {
         group: GroupId,
+    },
+    /// The admin moved the group to a new queue (someone was removed), over a
+    /// chat: the new roster and the receiver's reader of the new queue.
+    GroupMove {
+        roster: Roster,
+        send_id: QueueId,
+        reader: ReaderGrant,
     },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
@@ -485,7 +493,7 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 17;
+const KNOWN_KINDS: u32 = 18;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups (ADR-027).
 pub const UNDERSTANDS: u16 = 2;
@@ -719,7 +727,7 @@ fn check_body(body: &Body) -> Result<(), Error> {
             roster.check()?;
             check_urls(relay_url, onion_url.as_deref())
         }
-        Body::GroupRoster { roster } => roster.check(),
+        Body::GroupRoster { roster } | Body::GroupMove { roster, .. } => roster.check(),
         Body::GroupKey { key, .. } if key.0.len() > MAX_GROUP_KEY_BYTES => Err(Error::TooLarge),
         Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
             if note.len() > MAX_NOTE_BYTES =>
@@ -922,7 +930,23 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::GroupLeave { group: [0; 16] })).unwrap();
+        let raw = postcard::to_allocvec(&with(Body::GroupMove {
+            roster: Roster {
+                group: [0; 16],
+                no: 1,
+                admin: [0; 32],
+                name: "g".into(),
+                members: Vec::new(),
+                signature: [0; 64],
+            },
+            send_id: [0; 16],
+            reader: ReaderGrant {
+                recv_id: [0; 16],
+                send_id: [0; 16],
+                token: [0; 32],
+            },
+        }))
+        .unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
     }

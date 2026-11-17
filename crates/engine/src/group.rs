@@ -3,7 +3,7 @@
 //! A child of `engine`, for its private state.
 
 use super::*;
-use crate::data::{Group, GroupInvite};
+use crate::data::{Group, GroupInvite, GroupMoving};
 use termchat_core::proto::{
     Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Roster, RosterMember, SecretBytes,
 };
@@ -347,8 +347,11 @@ impl Engine {
                 token,
             } => {
                 let group = &mut self.data.groups[g];
-                if group.admin.is_some() {
-                    return;
+                match group.moving.as_mut() {
+                    // The new queue of a move; the old one goes once all moved.
+                    Some(m) if m.old.is_none() => m.old = group.admin.take(),
+                    _ if group.admin.is_some() => return,
+                    _ => {}
                 }
                 group.admin = Some((group_id, token));
                 group.send_id = send_id;
@@ -372,6 +375,16 @@ impl Engine {
                     return;
                 }
                 let who = self.data.groups[g].asking.remove(0);
+                let readers = &mut self.data.groups[g].readers;
+                readers.retain(|(k, _)| *k != who);
+                readers.push((who, recv_id));
+                if let Some(m) = self.data.groups[g].moving.as_mut() {
+                    m.grants.push((who, grant));
+                    if self.data.groups[g].asking.is_empty() {
+                        self.finish_move(g);
+                    }
+                    return self.persist_unit();
+                }
                 if who == self.me() {
                     self.data.groups[g].reader = Some(grant.clone());
                     self.add_to_roster(g, who, grant.send_id);
@@ -591,6 +604,13 @@ impl Engine {
                 group.unread += 1;
             }
             Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
+            Body::GroupLeave { .. } => {
+                let name = self.member_name(g, &sender);
+                self.group_system(g, format!("{name} left the group"));
+                if self.data.groups[g].is_admin() {
+                    let _ = self.remove_from_group(g, &sender);
+                }
+            }
             _ => {}
         }
     }
@@ -612,12 +632,182 @@ impl Engine {
         self.share_key(g);
     }
 
+    fn persist_unit(&mut self) {
+        self.persist();
+    }
+
+    /// The admin takes `who` out of group `g`: the group moves to a new
+    /// queue without them, everyone gets a new reader and a new roster, and
+    /// every member starts a new session (ADR-027).
+    pub fn remove_from_group(&mut self, g: usize, who: &Ed25519Key) -> Result<(), String> {
+        let me = self.me();
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if !group.is_admin() {
+            return Err("only the group's admin removes members".into());
+        }
+        if *who == me {
+            return Err("the admin cannot remove themselves; leave the group instead".into());
+        }
+        if !group.members().iter().any(|m| m.ed25519 == *who) {
+            return Err("not in this group".into());
+        }
+        let stay: Vec<Ed25519Key> = group
+            .members()
+            .iter()
+            .map(|m| m.ed25519)
+            .filter(|k| k != who)
+            .collect();
+        let group = &mut self.data.groups[g];
+        match group.moving.as_mut() {
+            Some(m) => m.removed.push(*who),
+            None => {
+                group.moving = Some(GroupMoving {
+                    stay: stay.clone(),
+                    removed: vec![*who],
+                    grants: Vec::new(),
+                    old: None,
+                });
+                group.asking = stay;
+                self.group_send(g, ClientFrame::CreateGroup);
+            }
+        }
+        self.persist();
+        Ok(())
+    }
+
+    /// Every remaining member has a reader of the new queue: tell them, tell
+    /// the removed, delete the old queue, start a new session.
+    fn finish_move(&mut self, g: usize) {
+        let me = self.me();
+        let Some(moving) = self.data.groups[g].moving.take() else {
+            return;
+        };
+        let Some(old_roster) = self.data.groups[g].roster.clone() else {
+            return;
+        };
+        let reader_of = |k: &Ed25519Key| {
+            moving
+                .grants
+                .iter()
+                .find(|(x, _)| x == k)
+                .map(|(_, r)| r.clone())
+        };
+        let mut roster = old_roster.clone();
+        roster.members = old_roster
+            .members
+            .iter()
+            .filter(|m| !moving.removed.contains(&m.ed25519))
+            .filter_map(|m| {
+                let r = reader_of(&m.ed25519)?;
+                Some(RosterMember {
+                    reader: r.send_id,
+                    ..m.clone()
+                })
+            })
+            .collect();
+        roster.no += 1;
+        roster.signature = self.core().sign_roster(&roster.signed_bytes());
+        let group = &mut self.data.groups[g];
+        group.roster = Some(roster.clone());
+        if let Some(mine) = reader_of(&me) {
+            group.reader = Some(mine);
+        }
+        let send_id = group.send_id;
+        self.persist();
+        for (who, grant) in &moving.grants {
+            if *who == me {
+                continue;
+            }
+            let body = Body::GroupMove {
+                roster: roster.clone(),
+                send_id,
+                reader: grant.clone(),
+            };
+            if let Err(e) = self.transmit(who, body) {
+                self.note(e);
+            }
+        }
+        let gid = self.data.groups[g].id;
+        for who in &moving.removed {
+            if self.index(who).is_some() {
+                let _ = self.transmit(who, Body::GroupLeave { group: gid });
+            }
+        }
+        if let Some((group_id, token)) = moving.old {
+            self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
+        }
+        if let Some(r) = self.data.groups[g].reader.clone() {
+            self.group_send(
+                g,
+                ClientFrame::Subscribe {
+                    recv_id: r.recv_id,
+                    token: r.token,
+                },
+            );
+        }
+        self.after_members_left(g, &moving.removed);
+    }
+
+    /// Members gone from the roster: their sessions are forgotten and ours
+    /// starts again, so they read nothing more.
+    fn after_members_left(&mut self, g: usize, gone: &[Ed25519Key]) {
+        let gid = self.data.groups[g].id;
+        {
+            let mut core = self.core();
+            for who in gone {
+                core.group_forget_member(&gid, who);
+            }
+        }
+        let group = &mut self.data.groups[g];
+        group.since.retain(|(k, _)| !gone.contains(k));
+        group.shared.retain(|k| !gone.contains(k));
+        group.readers.retain(|(k, _)| !gone.contains(k));
+        self.rotate_group(g);
+        self.persist();
+    }
+
+    /// What a member is called in group `g`: their roster nickname.
+    fn member_name(&self, g: usize, who: &Ed25519Key) -> String {
+        self.data.groups[g]
+            .members()
+            .iter()
+            .find(|m| m.ed25519 == *who)
+            .map_or_else(|| "someone".to_string(), |m| clean(&m.nickname))
+    }
+
+    fn group_system(&mut self, g: usize, text: String) {
+        self.data.groups[g].messages.push(Msg {
+            mine: false,
+            text,
+            at: now(),
+            expires_at: None,
+            status: Status::System,
+            file: None,
+            ..Default::default()
+        });
+    }
+
+    /// We leave group `g`: the others are told, and it becomes read-only here.
+    pub fn leave_group(&mut self, g: usize) -> Result<(), String> {
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if group.left {
+            return Ok(());
+        }
+        let gid = group.id;
+        self.send_group_body(g, Body::GroupLeave { group: gid });
+        self.data.groups[g].left = true;
+        self.core().group_forget(&gid);
+        // The link stays until the next restart, so the goodbye goes out.
+        self.persist();
+        Ok(())
+    }
+
     /// The admin puts `who` on the roster, signs it and tells the group.
     fn add_to_roster(&mut self, g: usize, who: Ed25519Key, reader: QueueId) {
-        let nickname = match self.index(&who) {
-            Some(i) => clean(&self.name(&self.data.contacts[i])),
-            None => self.data.nickname.clone(),
-        };
+        // The name they chose, as every member's app shows names: not our
+        // own petname for them.
+        let theirs = self.core().nickname(&who).map(clean);
+        let nickname = theirs.unwrap_or_else(|| self.data.nickname.clone());
         // One lock at a time: the core's mutex is not reentrant.
         let me = self.me();
         let curve = self.core().curve_of(&who);
@@ -730,6 +920,68 @@ impl Engine {
                 self.add_to_roster(g, from, grant.send_id);
             }
             body @ Body::GroupKey { .. } => self.group_key_from(from, body),
+            Body::GroupMove {
+                roster,
+                send_id,
+                reader,
+            } => {
+                let Some(g) = self
+                    .data
+                    .groups
+                    .iter()
+                    .position(|x| x.id == roster.group && !x.left)
+                else {
+                    return;
+                };
+                let current = self.data.groups[g].roster.clone();
+                let ok = current
+                    .as_ref()
+                    .is_some_and(|r| r.admin == from && roster.admin == from && roster.no > r.no)
+                    && verify_roster(&roster).is_ok();
+                if !ok {
+                    return;
+                }
+                let gone: Vec<Ed25519Key> = current
+                    .map(|r| r.members)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|m| m.ed25519)
+                    .filter(|k| !roster.members.iter().any(|m| m.ed25519 == *k))
+                    .collect();
+                let group = &mut self.data.groups[g];
+                group.roster = Some(roster);
+                group.send_id = send_id;
+                group.reader = Some(reader.clone());
+                self.group_send(
+                    g,
+                    ClientFrame::Subscribe {
+                        recv_id: reader.recv_id,
+                        token: reader.token,
+                    },
+                );
+                self.after_members_left(g, &gone);
+            }
+            // From the admin, over our chat: we were removed.
+            Body::GroupLeave { group } => {
+                let Some(g) = self
+                    .data
+                    .groups
+                    .iter()
+                    .position(|x| x.id == group && !x.left)
+                else {
+                    return;
+                };
+                if self.data.groups[g]
+                    .roster
+                    .as_ref()
+                    .is_none_or(|r| r.admin != from)
+                {
+                    return;
+                }
+                self.group_system(g, "the admin removed you from the group".to_string());
+                self.data.groups[g].left = true;
+                self.core().group_forget(&group);
+            }
             _ => {}
         }
         self.persist();

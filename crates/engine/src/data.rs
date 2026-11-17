@@ -121,10 +121,24 @@ pub struct Group {
     pub asking: Vec<Ed25519Key>,
     /// Admin: contacts invited, with the reader made for them.
     pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// Admin: each member's reader of the current queue, to move the group.
+    pub readers: Vec<(Ed25519Key, QueueId)>,
+    /// Admin: a move to a new queue under way (ADR-027).
+    pub moving: Option<GroupMoving>,
     /// Group messages that came before their sender's key, to read later.
     pub early: Vec<Vec<u8>>,
     /// We left, or were removed: read-only.
     pub left: bool,
+}
+
+/// The admin moves group to a new queue: who stays, the readers made so far,
+/// and the old queue to delete once everyone has their new reader.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GroupMoving {
+    pub stay: Vec<Ed25519Key>,
+    pub removed: Vec<Ed25519Key>,
+    pub grants: Vec<(Ed25519Key, ReaderGrant)>,
+    pub old: Option<(QueueId, QueueToken)>,
 }
 
 /// An invite into a group, from the contact who is its admin.
