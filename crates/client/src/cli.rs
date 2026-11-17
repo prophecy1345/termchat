@@ -306,7 +306,7 @@ async fn init(a: &Args, path: &Path) -> Result<(), Fail> {
     };
     let mut e = Engine::setup(path, &setup).map_err(|why| Fail(1, why))?;
     let deadline = Instant::now() + Duration::from_secs(a.timeout.unwrap_or(60));
-    pump(&mut e, deadline, |e| e.data.invite_queue.is_some()).await;
+    keys_out(&mut e, deadline).await;
     println!(
         "identity made in {}; fingerprint {}",
         path.parent().unwrap_or(path).display(),
@@ -316,12 +316,26 @@ async fn init(a: &Args, path: &Path) -> Result<(), Fail> {
 }
 
 async fn invite(e: &mut Engine, deadline: Instant) -> Result<(), Fail> {
-    if !pump(e, deadline, |e| e.data.invite_queue.is_some()).await {
+    if !keys_out(e, deadline).await {
         return fail(4, "could not reach the relay in time");
     }
     let invite = e.invite().map_err(|why| Fail(4, why))?;
     println!("{invite}");
     Ok(())
+}
+
+/// The invite queue is made and its keys are on their way: without them,
+/// whoever takes the invite cannot write until this identity runs again.
+async fn keys_out(e: &mut Engine, deadline: Instant) -> bool {
+    let ready = pump(e, deadline, |e| {
+        e.data.invite_queue.is_some() && e.data.fallback_published
+    })
+    .await;
+    // ponytail: a fixed second for the frame to leave; an ack from the relay
+    // would be exact, if one is ever added.
+    let flush = Instant::now() + Duration::from_secs(1);
+    pump(e, flush.min(deadline), |_| false).await;
+    ready
 }
 
 async fn add(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {

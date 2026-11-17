@@ -82,6 +82,40 @@ fn text(out: &Output) -> (Option<i32>, String, String) {
     )
 }
 
+/// An invite printed by `termchat invite` works while that identity is
+/// offline: its keys went out before the command ended.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invite_from_the_command_line_works_offline() {
+    let url = start_relay().await;
+    let dir = tmp("offline");
+    let pw = secret(&dir, PASSWORD, 0o600);
+    let home = dir.clone();
+    let run = move |name: &str, args: &[&str]| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_termchat"));
+        cmd.env("TERMCHAT_HOME", home.join(name))
+            .args(args)
+            .args(["--password-file", pw.to_str().unwrap()])
+            .stdin(Stdio::null());
+        text(&cmd.output().unwrap())
+    };
+    let url = url.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        for name in ["one", "two"] {
+            assert_eq!(
+                run(name, &["init", "--nickname", name, "--relay", &url]).0,
+                Some(0)
+            );
+        }
+        let (code, invite, _) = run("one", &["invite"]);
+        assert_eq!(code, Some(0));
+        run("two", &["add", invite.trim(), "--timeout", "15"])
+    })
+    .await
+    .unwrap();
+    assert_eq!(out.0, Some(0), "{out:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_server_identity_sends_and_receives_from_the_command_line() {
     let url = start_relay().await;
