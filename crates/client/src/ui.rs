@@ -904,13 +904,36 @@ fn scrollbar(f: &mut Frame, t: &Palette, area: Rect, max: usize, top: usize) {
     f.render_stateful_widget(bar, area, &mut state);
 }
 
-/// The user guide from the README, between its manual markers.
+/// The user guide (docs/guide/), the sections that concern this client,
+/// without their front matter and the pointer to the other language.
 fn manual() -> &'static str {
-    const README: &str = include_str!("../../../README.md");
-    let start = README.find("<!-- manual:start").unwrap_or(0);
-    let end = README.find("<!-- manual:end -->").unwrap_or(README.len());
-    let body = &README[start..end.max(start)];
-    body.split_once('\n').map_or(body, |(_, rest)| rest)
+    static GUIDE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        [
+            include_str!("../../../docs/guide/first-run.md"),
+            include_str!("../../../docs/guide/contacts.md"),
+            include_str!("../../../docs/guide/messages.md"),
+            include_str!("../../../docs/guide/terminal.md"),
+            include_str!("../../../docs/guide/safety.md"),
+            include_str!("../../../docs/guide/tor.md"),
+            include_str!("../../../docs/guide/settings.md"),
+            include_str!("../../../docs/guide/scripts.md"),
+            include_str!("../../../docs/guide/trouble.md"),
+        ]
+        .map(|page| {
+            let page = match page.strip_prefix("---\n") {
+                Some(rest) => rest.split_once("\n---\n").map_or(rest, |(_, body)| body),
+                None => page,
+            };
+            page.lines()
+                .filter(|l| !l.starts_with("Русская версия:"))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string()
+        })
+        .join("\n\n")
+    });
+    &GUIDE
 }
 
 /// CHANGELOG.md from its first version heading.
@@ -940,6 +963,12 @@ fn markdown(t: &Palette, src: &str, q: &str) -> Vec<Line<'static>> {
                 Span::styled("▏ ", Style::new().fg(t.overlay0)),
                 Span::styled(raw.to_string(), Style::new().fg(t.accent)),
             ])
+        } else if let Some(title) = raw.strip_prefix("# ") {
+            // A section of the guide.
+            Line::styled(
+                title.to_uppercase(),
+                Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
+            )
         } else if let Some(title) = raw.strip_prefix("### ").or(raw.strip_prefix("## ")) {
             Line::styled(
                 title.to_string(),
@@ -1459,10 +1488,13 @@ mod tests {
     }
 
     #[test]
-    fn manual_is_the_readme_guide() {
+    fn manual_is_the_guide() {
         let m = manual();
-        assert!(m.starts_with("### 2. First run"), "{}", &m[..40]);
-        assert!(!m.contains("manual:end"));
+        assert!(m.starts_with("# First run"), "{}", &m[..40]);
+        let t0 = crate::theme::by_name("catppuccin");
+        assert_eq!(markdown(t0, "# First run", "")[0].to_string(), "FIRST RUN");
+        assert!(m.contains("# If something goes wrong"));
+        assert!(!m.contains("title:") && !m.contains("Русская версия"));
         let t = crate::theme::by_name("catppuccin");
         let lines = markdown(t, "## A\n- **b** `c` [d](e)\n|---|\n| x | y |", "");
         let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
