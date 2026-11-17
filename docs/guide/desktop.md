@@ -18,7 +18,20 @@ The terminal client and the desktop app open the same account (`~/.termchat`), b
 - **Bottom:** the field, **SEND**, **File** and the disappearing-messages timer (**timer off**, then 5m, 1h, 1d, 1w with each click). **Enter** sends, **Shift+Enter** starts a new line.
 - **Status bar:** online or connecting, your nickname, warnings.
 
-Right-click a message to answer, react, and edit or delete your own; see [Messages](messages.md).
+Double-click a message to answer it. Right-click it to answer, react, and edit or delete your own; see [Messages](messages.md).
+
+## Groups
+
+A small private group of up to 32 people, by invitation only. Nobody can find it.
+
+- **Create:** **+ New** above the list of groups, then a name. You are its admin.
+- **Invite:** **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
+- **Join:** the invite comes in your chat with the admin, with **Join** and **Decline**.
+- **In the group:** each run of messages shows who wrote it; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer.
+- **Members:** **Members** lists everyone with their fingerprints; the admin removes people there (**Remove…**). The group moves to a new queue; they read nothing from then on.
+- **Leave:** **Leave**. The others are told; the chat stays with you, read-only.
+
+A new member does not see what was said before they joined. Groups carry no files yet.
 
 ## Invites with a QR code
 
