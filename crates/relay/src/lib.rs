@@ -20,8 +20,8 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
 use termchat_proto::{
-    ClientFrame, ErrorCode, MAX_FRAME_BYTES, QueueId, QueueToken, ServerFrame, VERSION,
-    VERSION_HEADER,
+    ClientFrame, Envelope, ErrorCode, MAX_FRAME_BYTES, MAX_GROUP_MEMBERS, QueueId, QueueToken,
+    ServerFrame, VERSION, VERSION_HEADER,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, mpsc};
@@ -555,13 +555,7 @@ fn handle(
         ClientFrame::Hello { .. } => Err(ErrorCode::Malformed),
 
         ClientFrame::CreateQueue => {
-            let rate = limits.queues(origin);
-            let ok = relay
-                .creations
-                .entry(origin)
-                .or_insert_with(|| Bucket::full(rate, now))
-                .take(rate, now);
-            if !ok {
+            if !created(relay, limits, origin, now) {
                 return reply(vec![error(None, ErrorCode::RateLimited)]);
             }
             let (recv_id, send_id, token) = (random()?, random()?, random()?);
@@ -646,51 +640,94 @@ fn handle(
             send_id,
             envelope,
         } => {
-            let Some(to) = db(relay.db.recv_id(&send_id))? else {
+            if let Some(to) = db(relay.db.recv_id(&send_id))? {
+                return match put(relay, limits, to, envelope, now)? {
+                    None => reply(vec![ServerFrame::Accepted { client_id }]),
+                    Some(code) => reply(vec![error(Some(client_id), code)]),
+                };
+            }
+            // ADR-027: a group's message goes to each reader's queue. One
+            // reader with a full queue does not hold up the others.
+            let Some(group) = db(relay.db.group_of(&send_id, unix_now()))? else {
                 return unknown(Some(client_id));
             };
-            let q = relay
+            let g = relay
                 .mem
-                .entry(to)
+                .entry(group)
                 .or_insert_with(|| QueueMem::new(limits, now));
-            if !q.sends.take(limits.sends_per_queue, now) {
+            if !g.sends.take(limits.sends_per_queue, now) {
                 return reply(vec![error(Some(client_id), ErrorCode::RateLimited)]);
             }
-            let size = envelope.body.len() as u64;
-            let (count, bytes) = db(relay.db.queue_stats(&to))?;
-            if count >= limits.queue_envelopes
-                || bytes + size > limits.queue_bytes as u64
-                || relay.db.total_queue_bytes() + size > limits.max_queue_bytes
-            {
-                return reply(vec![error(Some(client_id), ErrorCode::QueueFull)]);
-            }
-            let relay_id = db(relay.db.enqueue(&to, &envelope, unix_now()))?;
-            let deliver = ServerFrame::Deliver {
-                recv_id: to,
-                relay_id,
-                envelope,
-            };
-            // A full channel means the reader lags: end its connection so it
-            // reconnects and gets the whole queue (ADR-007).
-            // Not here, or asleep (ADR-012): wake it, if it asked for that.
-            let wake = match relay.online.get(&to) {
-                Some(owner) => {
-                    if owner.tx.try_send(deliver).is_err() {
-                        owner.kill.notify_one();
-                    }
-                    owner.asleep.load(Ordering::Relaxed)
-                }
-                None => true,
-            };
-            if wake
-                && let Some(q) = relay.mem.get_mut(&to)
-                && q.pushed.is_none_or(|at| now.duration_since(at) >= PUSH_GAP)
-                && let Some(url) = db(relay.db.push(&to))?
-            {
-                q.pushed = Some(now);
-                tokio::spawn(push::wake(url));
+            for reader in db(relay.db.readers(&group))? {
+                put(relay, limits, reader, envelope.clone(), now)?;
             }
             reply(vec![ServerFrame::Accepted { client_id }])
+        }
+
+        ClientFrame::CreateGroup => {
+            if !created(relay, limits, origin, now) {
+                return reply(vec![error(None, ErrorCode::RateLimited)]);
+            }
+            let (group_id, send_id, token) = (random()?, random()?, random()?);
+            db(relay
+                .db
+                .create_group(&group_id, &send_id, &token, unix_now()))?;
+            reply(vec![ServerFrame::GroupCreated {
+                group_id,
+                send_id,
+                token,
+            }])
+        }
+
+        ClientFrame::AddReader { group_id, token } => {
+            if !db(relay.db.owns_group(&group_id, &token))? {
+                return unknown(None);
+            }
+            if db(relay.db.readers(&group_id))?.len() >= MAX_GROUP_MEMBERS {
+                return reply(vec![error(None, ErrorCode::QueueFull)]);
+            }
+            if !created(relay, limits, origin, now) {
+                return reply(vec![error(None, ErrorCode::RateLimited)]);
+            }
+            let (recv_id, send_id, token) = (random()?, random()?, random()?);
+            db(relay
+                .db
+                .add_reader(&group_id, &recv_id, &send_id, &token, unix_now()))?;
+            reply(vec![ServerFrame::ReaderAdded {
+                group_id,
+                recv_id,
+                send_id,
+                token,
+            }])
+        }
+
+        ClientFrame::RemoveReader {
+            group_id,
+            token,
+            recv_id,
+        } => {
+            if !db(relay.db.owns_group(&group_id, &token))?
+                || !db(relay.db.is_reader(&group_id, &recv_id))?
+            {
+                return unknown(None);
+            }
+            db(relay.db.delete(&recv_id))?;
+            relay.mem.remove(&recv_id);
+            relay.online.remove(&recv_id);
+            reply(vec![ServerFrame::ReaderRemoved { recv_id }])
+        }
+
+        ClientFrame::DeleteGroup { group_id, token } => {
+            if !db(relay.db.owns_group(&group_id, &token))? {
+                return unknown(None);
+            }
+            for reader in db(relay.db.readers(&group_id))? {
+                relay.mem.remove(&reader);
+                relay.online.remove(&reader);
+            }
+            db(relay.db.delete_group(&group_id))?;
+            relay.mem.remove(&group_id);
+            reply(vec![ServerFrame::GroupDeleted { group_id }])
         }
 
         ClientFrame::Report {
@@ -766,6 +803,69 @@ fn journal(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     writeln!(opts.open(path)?, "{line}")
+}
+
+/// One more queue from `origin` (a queue, a group or a reader), if its budget allows.
+fn created(relay: &mut Relay, limits: &Limits, origin: Origin, now: Instant) -> bool {
+    let rate = limits.queues(origin);
+    relay
+        .creations
+        .entry(origin)
+        .or_insert_with(|| Bucket::full(rate, now))
+        .take(rate, now)
+}
+
+/// Stores `envelope` in queue `to`, hands it to the reader if connected, or
+/// wakes them. `Some(code)`: the queue refused it.
+fn put(
+    relay: &mut Relay,
+    limits: &Limits,
+    to: QueueId,
+    envelope: Envelope,
+    now: Instant,
+) -> Result<Option<ErrorCode>, ErrorCode> {
+    let q = relay
+        .mem
+        .entry(to)
+        .or_insert_with(|| QueueMem::new(limits, now));
+    if !q.sends.take(limits.sends_per_queue, now) {
+        return Ok(Some(ErrorCode::RateLimited));
+    }
+    let size = envelope.body.len() as u64;
+    let (count, bytes) = db(relay.db.queue_stats(&to))?;
+    if count >= limits.queue_envelopes
+        || bytes + size > limits.queue_bytes as u64
+        || relay.db.total_queue_bytes() + size > limits.max_queue_bytes
+    {
+        return Ok(Some(ErrorCode::QueueFull));
+    }
+    let relay_id = db(relay.db.enqueue(&to, &envelope, unix_now()))?;
+    let deliver = ServerFrame::Deliver {
+        recv_id: to,
+        relay_id,
+        envelope,
+    };
+    // A full channel means the reader lags: end its connection so it
+    // reconnects and gets the whole queue (ADR-007).
+    // Not here, or asleep (ADR-012): wake it, if it asked for that.
+    let wake = match relay.online.get(&to) {
+        Some(owner) => {
+            if owner.tx.try_send(deliver).is_err() {
+                owner.kill.notify_one();
+            }
+            owner.asleep.load(Ordering::Relaxed)
+        }
+        None => true,
+    };
+    if wake
+        && let Some(q) = relay.mem.get_mut(&to)
+        && q.pushed.is_none_or(|at| now.duration_since(at) >= PUSH_GAP)
+        && let Some(url) = db(relay.db.push(&to))?
+    {
+        q.pushed = Some(now);
+        tokio::spawn(push::wake(url));
+    }
+    Ok(None)
 }
 
 fn error(client_id: Option<u64>, code: ErrorCode) -> ServerFrame {

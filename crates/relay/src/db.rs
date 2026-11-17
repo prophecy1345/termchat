@@ -14,10 +14,18 @@ use termchat_proto::{Envelope, QueueId, QueueToken, SignedKey};
 pub type Result<T> = rusqlite::Result<T>;
 
 /// Version 3: anonymous queues (ADR-023). Older files held accounts, keys and
-/// who wrote to whom; they are erased, not migrated.
-const VERSION: i64 = 3;
+/// who wrote to whom; they are erased, not migrated. Version 4 adds groups
+/// (ADR-027) and keeps everything of version 3.
+const VERSION: i64 = 4;
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS groups (
+    id BLOB PRIMARY KEY,
+    send_id BLOB NOT NULL UNIQUE,
+    token_hash BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_seen INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS queues (
     recv_id BLOB PRIMARY KEY,
     send_id BLOB NOT NULL UNIQUE,
@@ -27,8 +35,10 @@ CREATE TABLE IF NOT EXISTS queues (
     push TEXT,
     fallback_key BLOB,
     fallback_sig BLOB,
-    fallback_used INTEGER NOT NULL DEFAULT 0
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    grp BLOB REFERENCES groups(id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS queues_grp ON queues(grp);
 CREATE TABLE IF NOT EXISTS prekeys (
     id INTEGER PRIMARY KEY,
     queue BLOB NOT NULL REFERENCES queues(recv_id) ON DELETE CASCADE,
@@ -90,12 +100,20 @@ impl Db {
             "PRAGMA auto_vacuum = INCREMENTAL; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;",
         )?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version < VERSION {
+        if version < 3 {
             // ADR-023: nothing of the account era survives, and VACUUM
             // rewrites the file so its old pages are gone too.
             conn.execute_batch(&format!(
                 "DROP TABLE IF EXISTS queue; DROP TABLE IF EXISTS prekeys; DROP TABLE IF EXISTS accounts;
                  VACUUM; PRAGMA user_version = {VERSION};"
+            ))?;
+        } else if version == 3 {
+            // ADR-027: groups join; every queue stays.
+            conn.execute_batch(&format!(
+                "CREATE TABLE groups (id BLOB PRIMARY KEY, send_id BLOB NOT NULL UNIQUE,
+                     token_hash BLOB NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+                 ALTER TABLE queues ADD COLUMN grp BLOB REFERENCES groups(id) ON DELETE CASCADE;
+                 PRAGMA user_version = {VERSION};"
             ))?;
         }
         conn.execute_batch(SCHEMA)?;
@@ -343,6 +361,96 @@ impl Db {
             .flatten())
     }
 
+    /// A group queue (ADR-027): what is sent to `send_id` goes to each of its readers.
+    pub fn create_group(
+        &self,
+        id: &QueueId,
+        send_id: &QueueId,
+        token: &QueueToken,
+        now: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO groups (id, send_id, token_hash, created_at, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![id, send_id, token_hash(token), now],
+        )?;
+        Ok(())
+    }
+
+    /// Whether `token` is the admin's for group `id`; an unknown group looks the same.
+    pub fn owns_group(&self, id: &QueueId, token: &QueueToken) -> Result<bool> {
+        let stored: Option<[u8; 32]> = self
+            .conn
+            .query_row("SELECT token_hash FROM groups WHERE id = ?", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(stored.is_some_and(|h| same(&h, &token_hash(token))))
+    }
+
+    /// The group that `send_id` writes to, touched as used.
+    pub fn group_of(&self, send_id: &QueueId, now: i64) -> Result<Option<QueueId>> {
+        let id: Option<QueueId> = self
+            .conn
+            .query_row("SELECT id FROM groups WHERE send_id = ?", [send_id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(id) = &id {
+            self.conn.execute(
+                "UPDATE groups SET last_seen = ? WHERE id = ?",
+                params![now, id],
+            )?;
+        }
+        Ok(id)
+    }
+
+    /// A reader of group `group`: an ordinary queue of its own.
+    pub fn add_reader(
+        &self,
+        group: &QueueId,
+        recv_id: &QueueId,
+        send_id: &QueueId,
+        token: &QueueToken,
+        now: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO queues (recv_id, send_id, token_hash, created_at, last_seen, grp) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            params![recv_id, send_id, token_hash(token), now, group],
+        )?;
+        Ok(())
+    }
+
+    pub fn readers(&self, group: &QueueId) -> Result<Vec<QueueId>> {
+        self.conn
+            .prepare("SELECT recv_id FROM queues WHERE grp = ?")?
+            .query_map([group], |r| r.get(0))?
+            .collect()
+    }
+
+    /// Whether `recv_id` is a reader of `group`.
+    pub fn is_reader(&self, group: &QueueId, recv_id: &QueueId) -> Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT 1 FROM queues WHERE recv_id = ? AND grp = ?",
+                params![recv_id, group],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|r| r.is_some())
+    }
+
+    /// Forgets the group and every reader with what waits for them.
+    pub fn delete_group(&mut self, id: &QueueId) -> Result<()> {
+        let freed: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(m.size), 0) FROM messages m JOIN queues q ON m.queue = q.recv_id WHERE q.grp = ?",
+            [id],
+            |r| r.get(0),
+        )?;
+        self.conn.execute("DELETE FROM groups WHERE id = ?", [id])?;
+        self.queue_bytes = self.queue_bytes.saturating_sub(freed as u64);
+        Ok(())
+    }
+
     /// Drops envelopes older than `queue_ttl` and queues unseen for `idle_ttl` (seconds),
     /// then gives the freed pages back so old ciphertext does not linger in the file.
     pub fn expire(&mut self, now: i64, queue_ttl: i64, idle_ttl: i64) -> Result<()> {
@@ -352,6 +460,12 @@ impl Db {
         )?;
         self.conn
             .execute("DELETE FROM queues WHERE last_seen < ?", [now - idle_ttl])?;
+        // A quiet group lives on while any reader still comes by.
+        self.conn.execute(
+            "DELETE FROM groups WHERE last_seen < ?1 AND NOT EXISTS
+                 (SELECT 1 FROM queues WHERE grp = groups.id AND last_seen >= ?1)",
+            [now - idle_ttl],
+        )?;
         self.conn.execute_batch("PRAGMA incremental_vacuum;")?;
         self.queue_bytes =
             self.conn
@@ -468,7 +582,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_>>()
             .unwrap();
-        assert_eq!(tables, ["messages", "prekeys", "queues"]);
+        assert_eq!(tables, ["groups", "messages", "prekeys", "queues"]);
         drop(db);
         let bytes = std::fs::read(&path).unwrap();
         assert!(
@@ -578,5 +692,61 @@ mod tests {
         db.set_push(&[1; 16], Some("https://ntfy.sh/up1")).unwrap();
         db.set_push(&[1; 16], None).unwrap();
         assert_eq!(db.push(&[1; 16]).unwrap(), None);
+    }
+
+    #[test]
+    fn a_version_3_file_keeps_its_queues_and_gains_groups() {
+        let path = std::env::temp_dir().join(format!("termchat-relay-v3-{}", std::process::id()));
+        remove(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE queues (recv_id BLOB PRIMARY KEY, send_id BLOB NOT NULL UNIQUE,
+                     token_hash BLOB NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+                     push TEXT, fallback_key BLOB, fallback_sig BLOB,
+                     fallback_used INTEGER NOT NULL DEFAULT 0);
+                 PRAGMA user_version = 3;",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO queues (recv_id, send_id, token_hash, created_at, last_seen) VALUES (?1, ?2, ?3, 0, 0)",
+                params![[1u8; 16], [101u8; 16], token_hash(&[1; 32])],
+            )
+            .unwrap();
+        }
+        let db = Db::open(Some(&path)).unwrap();
+        assert!(db.owns(&[1; 16], &[1; 32]).unwrap(), "the queue survives");
+        db.create_group(&[7; 16], &[8; 16], &[7; 32], 0).unwrap();
+        db.add_reader(&[7; 16], &[9; 16], &[10; 16], &[9; 32], 0)
+            .unwrap();
+        assert_eq!(db.readers(&[7; 16]).unwrap(), [[9; 16]]);
+        drop(db);
+        remove(&path);
+    }
+
+    #[test]
+    fn a_group_goes_with_its_readers_and_lives_while_one_comes_by() {
+        let mut db = Db::open(None).unwrap();
+        let day = 86_400;
+        db.create_group(&[7; 16], &[8; 16], &[7; 32], 0).unwrap();
+        db.add_reader(&[7; 16], &[9; 16], &[10; 16], &[9; 32], 0)
+            .unwrap();
+        db.enqueue(&[9; 16], &env(), 0).unwrap();
+        assert!(db.total_queue_bytes() > 0);
+        // No message for 91 days, but its reader came by yesterday.
+        db.touch(&[9; 16], 90 * day).unwrap();
+        db.expire(91 * day, 14 * day, 90 * day).unwrap();
+        assert!(db.owns_group(&[7; 16], &[7; 32]).unwrap());
+        assert!(
+            !db.owns_group(&[7; 16], &[9; 32]).unwrap(),
+            "a reader's token is not the admin's"
+        );
+        db.delete_group(&[7; 16]).unwrap();
+        assert!(db.readers(&[7; 16]).unwrap().is_empty());
+        assert!(
+            !db.owns(&[9; 16], &[9; 32]).unwrap(),
+            "readers go with the group"
+        );
+        assert_eq!(db.total_queue_bytes(), 0);
     }
 }

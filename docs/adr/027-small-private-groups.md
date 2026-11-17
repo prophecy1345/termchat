@@ -28,7 +28,7 @@ What has to be decided:
 A group has **one queue on a relay**, the admin's home relay. The relay protocol (ADR-023) gains readers:
 
 - `CreateGroupQueue` makes a queue with a `send_id` and no reader yet.
-- `AddReader { recv_id, token }` (admin only, with the queue's admin token) adds a reader: its own random `recv_id` and its own token hash. `RemoveReader` removes one.
+- `AddReader` (admin only, with the group's admin token) adds a reader: the relay makes it, as it makes a queue, and returns its `recv_id`, token and its own `send_id` (for key shares to that member alone, section 3). `RemoveReader` removes one. (Wording settled in the implementation, protocol.md section 5.)
 - Every message written to `send_id` is kept until **each** reader has acknowledged it, or 14 days, as now.
 - Each member subscribes with **their own** `recv_id` and token, on a connection of their own (a circuit of their own with Tor), as for a contact.
 

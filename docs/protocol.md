@@ -144,6 +144,28 @@ R -> C  PushSet                                  // or Error { Malformed } for a
   them by it.
 - A wipe sends goodbyes, then deletes every queue (ADR-009).
 
+### Group queues (ADR-027)
+
+```
+C -> R  CreateGroup                                   R -> C  GroupCreated { group_id, send_id, token }
+C -> R  AddReader { group_id, token }                 R -> C  ReaderAdded { group_id, recv_id, send_id, token }
+C -> R  RemoveReader { group_id, token, recv_id }     R -> C  ReaderRemoved { recv_id }
+C -> R  DeleteGroup { group_id, token }               R -> C  GroupDeleted { group_id }
+```
+
+- A group queue has the admin's `group_id` and token, and a `send_id` for
+  members. A `Send` to it puts a copy of the envelope into each reader's
+  queue; one full reader queue does not hold up the others.
+- A reader is an ordinary queue (`Subscribe`, `Ack`, `PublishKeys`, `SetPush`
+  as above), made by the admin for one member. Its own `send_id` reaches that
+  member alone: members share Megolm keys over Olm through it.
+- At most 32 readers. Making a group or a reader counts against the same
+  budget as `CreateQueue`. A wrong token, or a `recv_id` that is not one of
+  the group's readers, gets `UnknownQueue`.
+- `RemoveReader` deletes that reader's queue; `DeleteGroup` deletes the group
+  and every reader. A group unused for 90 days goes when none of its readers
+  has come by in that time either.
+
 ## 6. Envelope
 
 ```

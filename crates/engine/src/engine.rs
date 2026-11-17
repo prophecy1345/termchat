@@ -1480,6 +1480,11 @@ impl Engine {
             }
             ServerFrame::Reported => self.note("reported to the relay operator, and blocked"),
             ServerFrame::PushSet => {}
+            // ADR-027: groups are taken in in a later stage.
+            ServerFrame::GroupCreated { .. }
+            | ServerFrame::ReaderAdded { .. }
+            | ServerFrame::ReaderRemoved { .. }
+            | ServerFrame::GroupDeleted { .. } => {}
         }
     }
 

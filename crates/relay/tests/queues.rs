@@ -432,3 +432,183 @@ async fn a_lagging_reader_is_cut_off_and_finds_everything_queued() {
     let mut again = Ws::new(&url).await;
     assert_eq!(again.subscribe(&q).await.len(), N as usize);
 }
+
+// ADR-027: a group queue hands each message to every reader's own queue.
+
+struct Group {
+    id: QueueId,
+    send_id: QueueId,
+    token: QueueToken,
+}
+
+impl Ws {
+    async fn group(&mut self) -> Group {
+        self.send(ClientFrame::CreateGroup).await;
+        let ServerFrame::GroupCreated {
+            group_id,
+            send_id,
+            token,
+        } = self.recv().await
+        else {
+            panic!("no group");
+        };
+        Group {
+            id: group_id,
+            send_id,
+            token,
+        }
+    }
+
+    async fn reader(&mut self, g: &Group) -> Queue {
+        self.send(ClientFrame::AddReader {
+            group_id: g.id,
+            token: g.token,
+        })
+        .await;
+        let ServerFrame::ReaderAdded {
+            group_id,
+            recv_id,
+            send_id,
+            token,
+        } = self.recv().await
+        else {
+            panic!("no reader");
+        };
+        assert_eq!(group_id, g.id);
+        Queue {
+            recv_id,
+            send_id,
+            token,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_group_message_reaches_every_reader_until_each_acknowledges() {
+    let url = start(Limits::default()).await;
+    let mut admin = Ws::new(&url).await;
+    let g = admin.group().await;
+    let (r1, r2) = (admin.reader(&g).await, admin.reader(&g).await);
+
+    let mut member = Ws::new(&url).await;
+    assert_eq!(
+        member.put(1, g.send_id, 7).await,
+        ServerFrame::Accepted { client_id: 1 }
+    );
+
+    let mut one = Ws::new(&url).await;
+    let got = one.subscribe(&r1).await;
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].1, env(7));
+    one.send(ClientFrame::Ack {
+        recv_id: r1.recv_id,
+        relay_id: got[0].0,
+    })
+    .await;
+    one.quiet().await;
+    // Acknowledged by the first reader, still there for the second.
+    let mut two = Ws::new(&url).await;
+    assert_eq!(two.subscribe(&r2).await.len(), 1);
+    drop(one);
+    let mut again = Ws::new(&url).await;
+    assert!(
+        again.subscribe(&r1).await.is_empty(),
+        "acked once is gone for that reader only"
+    );
+
+    // A reader's own send_id reaches that reader alone.
+    assert_eq!(
+        member.put(2, r2.send_id, 9).await,
+        ServerFrame::Accepted { client_id: 2 }
+    );
+    let ServerFrame::Deliver { envelope, .. } = two.recv().await else {
+        panic!("no direct message");
+    };
+    assert_eq!(envelope, env(9));
+    again.quiet().await;
+}
+
+#[tokio::test]
+async fn only_the_admin_changes_readers_and_a_removed_reader_hears_nothing() {
+    let url = start(Limits::default()).await;
+    let mut admin = Ws::new(&url).await;
+    let g = admin.group().await;
+    let r = admin.reader(&g).await;
+
+    // A reader's token, or any other, does not open the group.
+    let mut other = Ws::new(&url).await;
+    other
+        .send(ClientFrame::AddReader {
+            group_id: g.id,
+            token: r.token,
+        })
+        .await;
+    assert_eq!(other.recv().await, err(None, ErrorCode::UnknownQueue));
+    other
+        .send(ClientFrame::RemoveReader {
+            group_id: g.id,
+            token: [0; 32],
+            recv_id: r.recv_id,
+        })
+        .await;
+    assert_eq!(other.recv().await, err(None, ErrorCode::UnknownQueue));
+
+    admin
+        .send(ClientFrame::RemoveReader {
+            group_id: g.id,
+            token: g.token,
+            recv_id: r.recv_id,
+        })
+        .await;
+    assert_eq!(
+        admin.recv().await,
+        ServerFrame::ReaderRemoved { recv_id: r.recv_id }
+    );
+    // Its queue is gone: subscribing gets the unknown-queue answer.
+    let mut gone = Ws::new(&url).await;
+    gone.send(ClientFrame::Subscribe {
+        recv_id: r.recv_id,
+        token: r.token,
+    })
+    .await;
+    assert_eq!(gone.recv().await, err(None, ErrorCode::UnknownQueue));
+
+    admin
+        .send(ClientFrame::DeleteGroup {
+            group_id: g.id,
+            token: g.token,
+        })
+        .await;
+    assert_eq!(
+        admin.recv().await,
+        ServerFrame::GroupDeleted { group_id: g.id }
+    );
+    assert_eq!(
+        other.put(3, g.send_id, 1).await,
+        err(Some(3), ErrorCode::UnknownQueue)
+    );
+}
+
+#[tokio::test]
+async fn a_group_holds_at_most_32_readers() {
+    let limits = Limits {
+        queues_per_ip: Rate {
+            burst: 100.0,
+            per_sec: 1.0,
+        },
+        ..Limits::default()
+    };
+    let url = start(limits).await;
+    let mut admin = Ws::new(&url).await;
+    let g = admin.group().await;
+    for _ in 0..termchat_proto::MAX_GROUP_MEMBERS {
+        admin.reader(&g).await;
+    }
+    admin
+        .send(ClientFrame::AddReader {
+            group_id: g.id,
+            token: g.token,
+        })
+        .await;
+    assert_eq!(admin.recv().await, err(None, ErrorCode::QueueFull));
+}

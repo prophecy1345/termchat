@@ -139,6 +139,22 @@ pub enum ClientFrame {
         token: QueueToken,
         endpoint: Option<String>,
     },
+    /// A group queue (ADR-027): what is sent to its `send_id` reaches every reader.
+    CreateGroup,
+    /// The group's admin adds a reader: a queue of its own for one member.
+    AddReader {
+        group_id: QueueId,
+        token: QueueToken,
+    },
+    RemoveReader {
+        group_id: QueueId,
+        token: QueueToken,
+        recv_id: QueueId,
+    },
+    DeleteGroup {
+        group_id: QueueId,
+        token: QueueToken,
+    },
 }
 
 /// Relay to client. `Error` stays variant 7, as in version 1, so an old
@@ -183,6 +199,26 @@ pub enum ServerFrame {
     },
     /// `SetPush` was stored (ADR-012).
     PushSet,
+    /// ADR-027. `group_id` and `token` are the admin's; `send_id` is for members.
+    GroupCreated {
+        group_id: QueueId,
+        send_id: QueueId,
+        token: QueueToken,
+    },
+    /// A reader's queue, for the admin to hand to one member: `recv_id` and
+    /// `token` to read, `send_id` to write to that member alone.
+    ReaderAdded {
+        group_id: QueueId,
+        recv_id: QueueId,
+        send_id: QueueId,
+        token: QueueToken,
+    },
+    ReaderRemoved {
+        recv_id: QueueId,
+    },
+    GroupDeleted {
+        group_id: QueueId,
+    },
 }
 
 /// protocol.md, section 12.
@@ -418,6 +454,9 @@ pub enum Body {
     #[serde(skip)]
     Unknown,
 }
+
+/// Readers of a group queue, the admin included (ADR-027).
+pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
 const KNOWN_KINDS: u32 = 12;
@@ -950,6 +989,42 @@ mod tests {
             token: [3; 32],
         };
         assert_eq!(ServerFrame::decode(&created.encode()).unwrap(), created);
+        // ADR-027: group frames.
+        for f in [
+            ClientFrame::CreateGroup,
+            ClientFrame::AddReader {
+                group_id: [1; 16],
+                token: [2; 32],
+            },
+            ClientFrame::RemoveReader {
+                group_id: [1; 16],
+                token: [2; 32],
+                recv_id: [3; 16],
+            },
+            ClientFrame::DeleteGroup {
+                group_id: [1; 16],
+                token: [2; 32],
+            },
+        ] {
+            assert_eq!(ClientFrame::decode(&f.encode()).unwrap(), f);
+        }
+        for f in [
+            ServerFrame::GroupCreated {
+                group_id: [1; 16],
+                send_id: [2; 16],
+                token: [3; 32],
+            },
+            ServerFrame::ReaderAdded {
+                group_id: [1; 16],
+                recv_id: [2; 16],
+                send_id: [3; 16],
+                token: [4; 32],
+            },
+            ServerFrame::ReaderRemoved { recv_id: [2; 16] },
+            ServerFrame::GroupDeleted { group_id: [1; 16] },
+        ] {
+            assert_eq!(ServerFrame::decode(&f.encode()).unwrap(), f);
+        }
         let push = ClientFrame::SetPush {
             recv_id: [1; 16],
             token: [3; 32],
