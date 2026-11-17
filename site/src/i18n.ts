@@ -62,6 +62,7 @@ const en = {
     ["Where you work", [
       ["Terminal, desktop and Android", "The same engine in a terminal, a window on macOS, Linux and Windows, and an app for your phone without Google services. Mouse, themes and UnifiedPush wake-ups if you want them."],
       ["Scripts and servers", "termchat send and recv from a shell, cron or CI: get \"backup failed\" on your phone, end to end encrypted, without a bot account or a third party reading it."],
+      ["Answers, edits and reactions", "Answer a particular message, edit or delete your own for both of you, react with one of seven pixel sprites. All inside the encryption; the relay sees an ordinary message."],
       ["Documents, offline, searchable", "Files up to 1 MiB, never opened by the app. Messages wait on the relay for up to 14 days. Search runs on your device only."],
     ]],
   ] as [string, Item[]][],
@@ -198,6 +199,7 @@ const ru: typeof en = {
     ["Там, где вы работаете", [
       ["Терминал, компьютер и Android", "Один движок в терминале, в окне на macOS, Linux и Windows и в приложении для телефона без сервисов Google. Мышь, темы и пробуждения через UnifiedPush — по желанию."],
       ["Скрипты и серверы", "termchat send и recv из shell, cron или CI: «бэкап не прошёл» приходит вам на телефон со сквозным шифрованием, без бота с аккаунтом и без третьей стороны, которая это читает."],
+      ["Ответы, правка и реакции", "Ответ на конкретное сообщение, правка и удаление своих у обоих, реакция одним из семи пиксельных спрайтов. Всё внутри шифрования; relay видит обычное сообщение."],
       ["Документы, офлайн, поиск", "Файлы до 1 МиБ, приложение их не открывает. Сообщения ждут на relay до 14 дней. Поиск работает только на вашем устройстве."],
     ]],
   ],

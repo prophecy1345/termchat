@@ -15,9 +15,9 @@ Binaries:
   https://github.com/prophecy1345/termchat/releases/download/v%v/termchat-v%v-android-arm64.apk
 
 Builds:
-  - versionName: 0.8.2
-    versionCode: 802
-    commit: d1fdcd0d9d38a836000104f43ba214c92d539dc6
+  - versionName: 0.9.0
+    versionCode: 900
+    commit: 9ce46ba73989a4585461dd87392c984e9cfc3b21
     subdir: android/app
     submodules: true
     sudo:
@@ -36,5 +36,5 @@ AllowedAPKSigningKeys: 9ffb611cdd1b3aae63303fb7120b85f7670d08bdb824d67c7c8537098
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.8.2
-CurrentVersionCode: 802
+CurrentVersion: 0.9.0
+CurrentVersionCode: 900
