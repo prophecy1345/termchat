@@ -42,7 +42,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("termchat.app")
             .with_app_id("termchat")
-            .with_icon(logo::icon())
+            .with_icon(window_icon())
             .with_inner_size([900.0, 640.0]),
         ..Default::default()
     };
@@ -405,6 +405,16 @@ fn setup(
             f.error = e;
             None
         }
+    }
+}
+
+/// The window's icon. macOS takes the Dock icon from the app bundle, rounded
+/// like every other app's there; a window icon would replace it with a
+/// square, so it gets none (eframe's empty icon sets nothing).
+fn window_icon() -> egui::IconData {
+    match cfg!(target_os = "macos") {
+        true => egui::IconData::default(),
+        false => logo::icon(),
     }
 }
 

@@ -26,13 +26,15 @@ case $target in
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$bin" "$app/Contents/MacOS/termchat-gui"
     cp "$lyrebird" "$app/Contents/MacOS/lyrebird"
+    # The Dock's shape: a rounded square of 824 in 1024 with a clear margin,
+    # drawn from docs/logo/termchat-macos.svg.
+    mac_icon=crates/desktop/assets/termchat-macos.png
     set_dir=$(mktemp -d)/termchat.iconset
     mkdir -p "$set_dir"
-    for s in 16 32 128 256; do
-        sips -z $s $s "$icon" --out "$set_dir/icon_${s}x${s}.png" >/dev/null
-        sips -z $((s * 2)) $((s * 2)) "$icon" --out "$set_dir/icon_${s}x${s}@2x.png" >/dev/null
+    for s in 16 32 128 256 512; do
+        sips -z $s $s "$mac_icon" --out "$set_dir/icon_${s}x${s}.png" >/dev/null
+        sips -z $((s * 2)) $((s * 2)) "$mac_icon" --out "$set_dir/icon_${s}x${s}@2x.png" >/dev/null
     done
-    cp "$icon" "$set_dir/icon_512x512.png"
     iconutil -c icns "$set_dir" -o "$app/Contents/Resources/termchat.icns"
     cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
