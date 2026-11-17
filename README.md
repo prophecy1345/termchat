@@ -470,6 +470,7 @@ removes the file too.
 | Ctrl+S | search this chat |
 | Ctrl+T / Ctrl+E | disappearing messages / no history |
 | Ctrl+L / Ctrl+G | send a file / save the newest received file |
+| Shift+Up or Ctrl+N | pick a message: **Enter** answer, **e** edit, **d** delete for both, **1**–**7** react (▲ ♥ ☺ ◎ ☹ ✧ ▼; again to take back) |
 | Ctrl+R / Ctrl+B / Ctrl+D / Ctrl+X | rename / block / delete or reject / report |
 | Ctrl+P | menu: **s** settings, **k** keys, **m** manual, **o** invite, **a** add, **b** backup |
 | Ctrl+K | lock |

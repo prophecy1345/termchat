@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
-use termchat_core::proto::Ed25519Key;
+use termchat_core::proto::{Ed25519Key, REACTIONS, Ref};
 
 use crate::data::{self, Contact};
 use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
@@ -119,6 +119,19 @@ pub enum Popup {
     Delete,
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
+    /// Delete our message at this index for both sides (ADR-025)?
+    Unsend(usize),
+}
+
+/// What Enter does with the typed text (ADR-025).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Compose {
+    #[default]
+    New,
+    /// An answer to this message; `theirs`: the contact's.
+    Reply(Ref),
+    /// New text for our message with this id.
+    Edit(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +180,9 @@ pub struct Main {
     /// New messages (`false`) and requests (`true`) to tell the user about.
     pub alerts: Vec<(Ed25519Key, bool)>,
     pub status: String,
+    /// The message picked with Shift+Up or Ctrl+N, by index (ADR-025).
+    pub picked: Option<usize>,
+    pub compose: Compose,
     pub idle: Idle,
     path: PathBuf,
     /// Everything was erased; the app returns to the first-run screen with this note.
@@ -538,6 +554,8 @@ impl Main {
             popup: None,
             alerts: Vec::new(),
             status: String::new(),
+            picked: None,
+            compose: Compose::New,
             idle: Idle::default(),
             path: path.to_owned(),
             wiped: None,
@@ -614,9 +632,28 @@ impl Main {
             self.on_popup_key(popup, k, settings);
             return self.absorb();
         }
+        if let Some(at) = self.picked {
+            self.on_pick_key(at, k);
+            return self.absorb();
+        }
         let key = self.current().map(|c| c.key);
         let i = self.selected;
+        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         match (ctrl, k.code) {
+            (true, KeyCode::Char('n')) | (false, KeyCode::Up)
+                if key.is_some() && (ctrl || shift) =>
+            {
+                match self.pickable().last() {
+                    Some(&at) => self.picked = Some(at),
+                    None => self.status = "no message here can be answered".into(),
+                }
+            }
+            (false, KeyCode::Esc) if self.compose != Compose::New => {
+                if matches!(self.compose, Compose::Edit(_)) {
+                    self.input = Input::default();
+                }
+                self.compose = Compose::New;
+            }
             (false, KeyCode::F(1)) => self.popup = Some(pager(Doc::Keys)),
             (false, KeyCode::Char('?')) if self.input.is_empty() => {
                 self.popup = Some(pager(Doc::Keys))
@@ -680,10 +717,86 @@ impl Main {
         self.absorb();
     }
 
+    /// Messages of the open chat that can be answered or reacted to.
+    pub fn pickable(&self) -> Vec<usize> {
+        let Some(c) = self.current() else {
+            return Vec::new();
+        };
+        (0..c.messages.len())
+            .filter(|&n| {
+                let m = &c.messages[n];
+                m.id.is_some() && !m.deleted && m.status != crate::data::Status::System
+            })
+            .collect()
+    }
+
+    /// Where the message `r` points at is now, in the open chat.
+    fn locate(&self, r: Ref) -> Option<usize> {
+        let c = self.current()?;
+        c.messages
+            .iter()
+            .position(|m| m.id == Some(r.id) && m.mine != r.theirs && !m.deleted)
+    }
+
+    /// Keys while a message is picked (ADR-025).
+    fn on_pick_key(&mut self, at: usize, k: KeyEvent) {
+        let i = self.selected;
+        let all = self.pickable();
+        let Some(pos) = all.iter().position(|&n| n == at) else {
+            self.picked = None;
+            return;
+        };
+        let Some(msg) = self.current().map(|c| &c.messages[at]) else {
+            self.picked = None;
+            return;
+        };
+        let (mine, id, reaction) = (msg.mine, msg.id, msg.my_reaction);
+        let target = id.map(|id| Ref { id, theirs: !mine });
+        let not_ours = "only your own messages can be changed";
+        match k.code {
+            KeyCode::Up => self.picked = Some(all[pos.saturating_sub(1)]),
+            KeyCode::Down => self.picked = all.get(pos + 1).copied(),
+            KeyCode::Esc => self.picked = None,
+            KeyCode::Char('r') | KeyCode::Enter => match self.engine.rich(i) {
+                true => {
+                    self.compose = target.map_or(Compose::New, Compose::Reply);
+                    self.picked = None;
+                }
+                false => self.status = engine::OLDER_APP.into(),
+            },
+            KeyCode::Char('e') if !mine => self.status = not_ours.into(),
+            KeyCode::Char('e') => match (self.engine.rich(i), id) {
+                (true, Some(id)) => {
+                    self.compose = Compose::Edit(id);
+                    let text = self.current().map(|c| c.messages[at].text.clone());
+                    self.input = Input::default();
+                    self.input.insert(&text.unwrap_or_default());
+                    self.picked = None;
+                }
+                _ => self.status = engine::OLDER_APP.into(),
+            },
+            KeyCode::Char('d') if !mine => self.status = not_ours.into(),
+            KeyCode::Char('d') => self.popup = Some(Popup::Unsend(at)),
+            KeyCode::Char(c @ '1'..='9') => {
+                let n = c as u8 - b'1';
+                if n < REACTIONS {
+                    // The same one again takes it back.
+                    let to = (reaction != Some(n)).then_some(n);
+                    if let Err(e) = self.engine.react(i, at, to) {
+                        self.status = e;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn select(&mut self, i: usize) {
         if i < self.engine.data.contacts.len() {
             self.selected = i;
             self.scroll = 0;
+            self.picked = None;
+            self.compose = Compose::New;
             self.engine.data.contacts[i].unread = 0;
         }
     }
@@ -882,9 +995,24 @@ impl Main {
         if text.trim().is_empty() && self.current().is_some() {
             return;
         }
-        if let Err(e) = self.engine.send(self.selected, &text) {
-            self.input = text;
-            self.status = e;
+        let i = self.selected;
+        let sent = match self.compose {
+            Compose::New => self.engine.send(i, &text),
+            Compose::Reply(r) => match self.locate(r) {
+                Some(at) => self.engine.reply(i, at, &text),
+                None => Err("the message you answer is gone; Esc to write without it".into()),
+            },
+            Compose::Edit(id) => match self.locate(Ref { id, theirs: false }) {
+                Some(at) => self.engine.edit_message(i, at, &text),
+                None => Err("the message is gone; Esc to stop editing".into()),
+            },
+        };
+        match sent {
+            Ok(()) => self.compose = Compose::New,
+            Err(e) => {
+                self.input = text;
+                self.status = e;
+            }
         }
     }
 
@@ -1040,6 +1168,15 @@ impl Main {
                 if k.code == KeyCode::Char('y') {
                     self.engine.report(i, text);
                 }
+                None
+            }
+            Popup::Unsend(at) => {
+                if k.code == KeyCode::Char('y')
+                    && let Err(e) = self.engine.delete_message(i, at)
+                {
+                    self.status = e;
+                }
+                self.picked = None;
                 None
             }
             Popup::Delete => {

@@ -16,7 +16,7 @@ use termchat_core::proto::Invite;
 use termchat_core::{fingerprint, safety_number};
 
 use crate::app::{
-    App, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock,
+    App, Compose, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock,
 };
 use crate::data::{Contact, Status};
 use crate::form::Form;
@@ -618,7 +618,8 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let muted = Style::new().fg(t.overlay0);
     let mut lines: Vec<Line> = Vec::new();
     let mut prev: Option<&crate::data::Msg> = None;
-    for msg in &c.messages {
+    let mut picked_line = None;
+    for (n, msg) in c.messages.iter().enumerate() {
         let text = match &msg.file {
             Some(f) if !msg.mine && f.complete() && f.data.is_some() => {
                 clean(&format!("{} · unsaved, Ctrl+G", f.label()))
@@ -646,7 +647,41 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             ]));
         }
         prev = Some(msg);
+        // ADR-025: the picked message stands out, answers show what they answer.
+        let row = match m.picked == Some(n) {
+            true => {
+                picked_line = Some(lines.len());
+                Style::new().bg(t.selection_bg)
+            }
+            false => Style::new(),
+        };
+        if let Some(r) = msg.reply_to {
+            let quoted = c
+                .messages
+                .iter()
+                .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted);
+            let quote = match quoted {
+                Some(q) => {
+                    let first = clean(&q.text).lines().next().unwrap_or("").to_string();
+                    Span::styled(fit(&first, 60), muted)
+                }
+                None => Span::styled(
+                    "message no longer here",
+                    muted.add_modifier(Modifier::ITALIC),
+                ),
+            };
+            let arrow = Span::styled("↳ ", Style::new().fg(t.accent));
+            lines.push(Line::from(vec![arrow, quote]).style(row));
+        }
+        if msg.deleted {
+            let gone = muted.add_modifier(Modifier::ITALIC);
+            lines.push(Line::styled("message deleted", gone).style(row));
+            continue;
+        }
         let mut spans = vec![Span::styled(text, Style::new().fg(t.text))];
+        if msg.edited {
+            spans.push(Span::styled(" (edited)", muted));
+        }
         match &msg.status {
             Status::Queued | Status::Sending(_) => spans.push(Span::styled(" …", muted)),
             Status::Sent => spans.push(Span::styled(" ✓", muted)),
@@ -655,16 +690,38 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             }
             _ => {}
         }
-        lines.push(Line::from(spans));
+        // Theirs, then ours; the same one twice shows once with a 2.
+        match (msg.their_reaction, msg.my_reaction) {
+            (Some(a), Some(b)) if a == b => {
+                spans.extend([Span::raw("  "), reaction(t, a), Span::styled("2", muted)]);
+            }
+            (a, b) => {
+                for r in [a, b].into_iter().flatten() {
+                    spans.extend([Span::raw("  "), reaction(t, r)]);
+                }
+            }
+        }
+        lines.push(Line::from(spans).style(row));
     }
 
     // Bottom-anchored: `scroll` counts rows up from the newest one.
     let pane = history.inner(Margin::new(1, 1));
+    let rows = |lines: &[Line<'static>]| {
+        Paragraph::new(lines.to_vec())
+            .wrap(Wrap { trim: false })
+            .line_count(pane.width)
+    };
+    // A picked message is always in view.
+    let picked_row = picked_line.map(|at| rows(&lines[..at]));
     let text = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = text.line_count(pane.width);
     let max = total.saturating_sub(usize::from(pane.height));
-    let scroll = m.scroll.min(max);
-    let top = max - scroll;
+    let mut top = max - m.scroll.min(max);
+    if let Some(row) = picked_row {
+        let height = usize::from(pane.height).max(1);
+        top = top.min(row).max((row + 2).saturating_sub(height)).min(max);
+    }
+    let scroll = max - top;
     f.render_widget(
         text.scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
         pane,
@@ -674,12 +731,31 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     if max > 0 {
         scrollbar(f, t, history.inner(Margin::new(0, 1)), max, top);
     }
-    if scroll > 0 {
+    if m.picked.is_some() {
+        let hint = " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ";
+        let hint = Span::styled(hint, Style::new().bg(t.panel_bg).fg(t.accent));
+        let row = Rect::new(pane.x, pane.bottom().saturating_sub(1), pane.width, 1);
+        f.render_widget(Paragraph::new(hint), row);
+    } else if scroll > 0 {
         let hint = Span::styled(" ↓ PgDn ", Style::new().bg(t.panel_bg).fg(t.accent));
         let row = Rect::new(pane.x, pane.bottom().saturating_sub(1), pane.width, 1);
         f.render_widget(Paragraph::new(hint).alignment(Alignment::Right), row);
     }
     input_bar(f, t, m, input, typed);
+}
+
+/// A reaction (ADR-025): one column wide, in the theme's colours.
+fn reaction(t: &Palette, r: u8) -> Span<'static> {
+    let (glyph, colour) = match r {
+        0 => ("▲", t.teal),
+        1 => ("♥", t.mauve),
+        2 => ("☺", t.yellow),
+        3 => ("◎", t.accent),
+        4 => ("☹", t.overlay1),
+        5 => ("✧", t.peach),
+        _ => ("▼", t.red),
+    };
+    Span::styled(glyph, Style::new().fg(colour).add_modifier(Modifier::BOLD))
 }
 
 fn input_bar(
@@ -691,6 +767,30 @@ fn input_bar(
 ) {
     let style = Style::new().bg(t.surface0).fg(t.text);
     f.render_widget(Block::new().style(style), area);
+    // What Enter will do, on the field's top edge (ADR-025).
+    let banner = match m.compose {
+        Compose::New => None,
+        Compose::Reply(r) => m.current().map(|c| {
+            let quoted = c
+                .messages
+                .iter()
+                .find(|q| q.id == Some(r.id) && q.mine != r.theirs)
+                .map(|q| clean(&q.text).lines().next().unwrap_or("").to_string());
+            format!("↳ answering: {}", quoted.unwrap_or_default())
+        }),
+        Compose::Edit(_) => Some("✎ editing your message".into()),
+    };
+    if let Some(banner) = banner {
+        let w = usize::from(area.width.saturating_sub(16));
+        let line = Line::from(vec![
+            Span::styled(format!(" {}", fit(&banner, w)), Style::new().fg(t.accent)),
+            Span::styled("   esc cancel", Style::new().fg(t.overlay0)),
+        ]);
+        f.render_widget(
+            Paragraph::new(line),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+    }
     let text = area.inner(Margin::new(1, 1));
     let prompt = Span::styled("› ", Style::new().fg(t.accent).add_modifier(Modifier::BOLD));
     f.render_widget(Paragraph::new(prompt), text);
@@ -1299,6 +1399,16 @@ fn popup_pane(
                 ("esc cancel", false, esc),
             ];
             window(f, t, h, "wipe everything", lines, &buttons, 60, true);
+        }
+        Popup::Unsend(_) => {
+            let lines = plain(
+                "Delete this message for both of you?\nTheir app removes it; a copy or screenshot they made stays.",
+            );
+            let buttons = [
+                ("y delete", true, key(KeyCode::Char('y'))),
+                ("esc keep", false, esc),
+            ];
+            window(f, t, h, "delete message", lines, &buttons, 64, true);
         }
         Popup::Delete => {
             let lines = plain("Delete this contact and the chat?");
