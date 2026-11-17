@@ -6,6 +6,7 @@ pub mod data;
 pub mod engine;
 pub mod notify;
 pub mod password;
+pub mod reactions;
 mod relay;
 pub mod settings;
 pub mod themes;

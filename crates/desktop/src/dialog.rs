@@ -39,6 +39,8 @@ pub enum Dialog {
     Verify,
     Rename(String),
     Delete,
+    /// Delete our message `m` of the open chat for both sides (ADR-025)?
+    DeleteMessage(usize),
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
     Settings,
@@ -338,6 +340,19 @@ impl Chat {
                     let name = name.trim();
                     let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
                     self.engine.edit(i, |c| c.petname = name);
+                    return false;
+                }
+                stay
+            }
+            Dialog::DeleteMessage(m) => {
+                let Some(i) = open else { return false };
+                ui.heading("Delete the message");
+                ui.label("Delete it for both of you? Their app removes it; a copy or screenshot they made stays.");
+                let (go, stay) = buttons(ui, p, "Delete");
+                if go {
+                    if let Err(e) = self.engine.delete_message(i, *m) {
+                        self.status = e;
+                    }
                     return false;
                 }
                 stay

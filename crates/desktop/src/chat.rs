@@ -4,11 +4,14 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
-use termchat_engine::data::{Contact, Status};
-use termchat_engine::engine::{TIMERS, age, clean_text, next_timer, span};
+use termchat_core::proto::{REACTIONS, Ref};
+use termchat_engine::data::{Contact, Msg, Status};
+use termchat_engine::engine::{
+    OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
+};
 use termchat_engine::notify::{self, SOUND_GAP};
 use termchat_engine::settings::Settings;
-use termchat_engine::{Engine, Happened, themes};
+use termchat_engine::{Engine, Happened, reactions, themes};
 
 use crate::dialog::Dialog;
 
@@ -32,6 +35,8 @@ pub struct Pal {
     /// Synthwave neon: the theme's mauve, and a pink between it and red.
     pub mauve: Color32,
     pub pink: Color32,
+    /// Each reaction's colour (ADR-025, `reactions::COLOURS`).
+    pub reactions: [Color32; 7],
 }
 
 impl Pal {
@@ -60,6 +65,7 @@ impl Pal {
             mauve: rgb(11),
             pink: crate::synth::mix(rgb(11), rgb(14), 0.5),
             warn: rgb(16),
+            reactions: reactions::COLOURS.map(rgb),
         }
     }
 
@@ -150,6 +156,28 @@ pub struct Chat {
     /// One line: the last note from the engine.
     pub(crate) status: String,
     pub(crate) dialog: Option<Dialog>,
+    /// What SEND does with the text (ADR-025).
+    compose: Compose,
+}
+
+/// What SEND does with the typed text (ADR-025).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Compose {
+    #[default]
+    New,
+    /// An answer to this message; `theirs`: the contact's.
+    Reply(Ref),
+    /// New text for our message with this id.
+    Edit(u64),
+}
+
+/// What a click in the history asks for, by message index.
+enum Act {
+    Save(usize),
+    Reply(usize),
+    Edit(usize),
+    Delete(usize),
+    React(usize, u8),
 }
 
 impl Chat {
@@ -163,6 +191,7 @@ impl Chat {
             last_tick: Instant::now(),
             status: String::new(),
             dialog: None,
+            compose: Compose::New,
         };
         chat.engine.resort();
         chat
@@ -243,6 +272,7 @@ impl Chat {
     pub(crate) fn select(&mut self, key: Key) {
         self.open = Some(key);
         self.input.clear();
+        self.compose = Compose::New;
     }
 
     /// Draws the window. True: the user asked to lock.
@@ -393,11 +423,50 @@ impl Chat {
                     .auto_shrink(false)
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        if let Some(m) = messages(ui, p, &self.engine.data.contacts[i]) {
-                            self.dialog = Some(Dialog::save_file(m));
+                        let rich = self.engine.rich(i);
+                        if let Some(act) = messages(ui, p, &self.engine.data.contacts[i], rich) {
+                            self.act(i, act);
                         }
                     });
             });
+    }
+
+    fn act(&mut self, i: usize, act: Act) {
+        let c = &self.engine.data.contacts[i];
+        let target = |n: usize| {
+            let m: &Msg = &c.messages[n];
+            m.id.map(|id| Ref {
+                id,
+                theirs: !m.mine,
+            })
+        };
+        match act {
+            Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
+            _ if !self.engine.rich(i) => self.status = OLDER_APP.into(),
+            Act::Reply(n) => self.compose = target(n).map_or(Compose::New, Compose::Reply),
+            Act::Edit(n) => {
+                if let Some(Ref { id, .. }) = target(n) {
+                    self.input = c.messages[n].text.clone();
+                    self.compose = Compose::Edit(id);
+                }
+            }
+            Act::Delete(n) => self.dialog = Some(Dialog::DeleteMessage(n)),
+            Act::React(n, r) => {
+                // The same one again takes it back.
+                let to = (c.messages[n].my_reaction != Some(r)).then_some(r);
+                if let Err(e) = self.engine.react(i, n, to) {
+                    self.status = e;
+                }
+            }
+        }
+    }
+
+    /// Where the message `r` points at is now, in chat `i`.
+    fn locate(&self, i: usize, r: Ref) -> Option<usize> {
+        self.engine.data.contacts[i]
+            .messages
+            .iter()
+            .position(|m| m.id == Some(r.id) && m.mine != r.theirs && !m.deleted)
     }
 
     fn header(&mut self, ui: &mut egui::Ui, p: &Pal, i: usize, request: bool) {
@@ -494,6 +563,33 @@ impl Chat {
         let (margin, stroke_width): (i8, f32) = (6, 1.0);
         let field_height = rows + 2.0 * (f32::from(margin) + stroke_width);
         let mut send = false;
+        let banner = match self.compose {
+            Compose::New => None,
+            Compose::Reply(r) => Some(match self.locate(i, r) {
+                Some(n) => {
+                    let text = clean_text(&self.engine.data.contacts[i].messages[n].text);
+                    let first = text.lines().next().unwrap_or_default().to_string();
+                    format!("↳ Answering: {first}")
+                }
+                None => "↳ Answering a message that is gone".into(),
+            }),
+            Compose::Edit(_) => Some("✎ Editing your message".into()),
+        };
+        if let Some(banner) = banner {
+            let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            ui.horizontal(|ui| {
+                let cancel = ui
+                    .add(egui::Button::new("✕").frame(false))
+                    .on_hover_text("Cancel (Esc)");
+                ui.add(egui::Label::new(RichText::new(banner).color(p.accent)).truncate());
+                if cancel.clicked() || esc {
+                    if matches!(self.compose, Compose::Edit(_)) {
+                        self.input.clear();
+                    }
+                    self.compose = Compose::New;
+                }
+            });
+        }
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let column = Layout::top_down(Align::Min);
@@ -573,9 +669,23 @@ impl Chat {
             return;
         }
         let text = std::mem::take(&mut self.input);
-        if let Err(e) = self.engine.send(i, &text) {
-            self.input = text;
-            self.status = e;
+        let sent = match self.compose {
+            Compose::New => self.engine.send(i, &text),
+            Compose::Reply(r) => match self.locate(i, r) {
+                Some(n) => self.engine.reply(i, n, &text),
+                None => Err("the message you answer is gone; ✕ to write without it".into()),
+            },
+            Compose::Edit(id) => match self.locate(i, Ref { id, theirs: false }) {
+                Some(n) => self.engine.edit_message(i, n, &text),
+                None => Err("the message is gone; ✕ to stop editing".into()),
+            },
+        };
+        match sent {
+            Ok(()) => self.compose = Compose::New,
+            Err(e) => {
+                self.input = text;
+                self.status = e;
+            }
         }
     }
 
@@ -693,9 +803,10 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
 }
 
 /// The chat history. `Some(m)`: Save was clicked on message `m`, a file.
-fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) -> Option<usize> {
+/// The history. `rich`: the contact's app reads answers and reactions (ADR-025).
+fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> {
     let width = ui.available_width();
-    let mut save = None;
+    let mut act = None;
     for (n, m) in c.messages.iter().enumerate() {
         let text = match &m.file {
             Some(f) => clean_text(f.label().trim_start_matches("📄 ")),
@@ -714,41 +825,133 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact) -> Option<usize> {
             ui.add_space(6.0);
             continue;
         }
-        let mark = match &m.status {
+        let mut mark = match &m.status {
             Status::Queued | Status::Sending(_) => " · sending".to_string(),
             Status::Sent => " · sent".into(),
             Status::Failed(why) => format!(" · failed: {why}"),
             _ => String::new(),
         };
+        if m.edited {
+            mark.push_str(" · edited");
+        }
         let align = if m.mine { Align::Max } else { Align::Min };
         ui.with_layout(Layout::top_down(align), |ui| {
             ui.set_max_width(width * 0.7);
-            egui::Frame::new()
+            let bubble = egui::Frame::new()
                 .fill(if m.mine { p.mine } else { p.theirs })
                 .corner_radius(4)
                 .inner_margin(egui::Margin::symmetric(10, 6))
-                .show(ui, |ui| ui.label(RichText::new(text).monospace()));
+                .show(ui, |ui| {
+                    if let Some(r) = m.reply_to {
+                        let quoted = c
+                            .messages
+                            .iter()
+                            .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted);
+                        let quote = match quoted {
+                            Some(q) => {
+                                let q = clean_text(&q.text);
+                                format!("↳ {}", q.lines().next().unwrap_or_default())
+                            }
+                            None => "↳ message no longer here".into(),
+                        };
+                        ui.add(
+                            egui::Label::new(RichText::new(quote).small().color(p.dim)).truncate(),
+                        );
+                    }
+                    match m.deleted {
+                        true => ui.label(RichText::new("message deleted").italics().color(p.dim)),
+                        false => ui.label(RichText::new(text).monospace()),
+                    }
+                })
+                .response;
+            let pointable = rich && m.id.is_some() && !m.deleted;
+            if pointable {
+                bubble
+                    .interact(egui::Sense::click())
+                    .on_hover_text("Right-click: answer, react, edit, delete")
+                    .context_menu(|ui| {
+                        ui.horizontal(|ui| {
+                            for r in 0..REACTIONS {
+                                let on = m.my_reaction == Some(r);
+                                let hint = REACTION_NAMES[usize::from(r)];
+                                if sprite(ui, p, r, 2.0, on).on_hover_text(hint).clicked() {
+                                    act = Some(Act::React(n, r));
+                                    ui.close();
+                                }
+                            }
+                        });
+                        ui.separator();
+                        if ui.button("Answer").clicked() {
+                            act = Some(Act::Reply(n));
+                            ui.close();
+                        }
+                        if m.mine && m.file.is_none() && ui.button("Edit").clicked() {
+                            act = Some(Act::Edit(n));
+                            ui.close();
+                        }
+                        if m.mine && ui.button("Delete for both…").clicked() {
+                            act = Some(Act::Delete(n));
+                            ui.close();
+                        }
+                    });
+            }
             let colour = if matches!(m.status, Status::Failed(_)) {
                 p.danger
             } else {
                 p.dim
             };
-            ui.label(
-                RichText::new(format!("{}{mark}", age(m.at)))
-                    .small()
-                    .color(colour),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{}{mark}", age(m.at)))
+                        .small()
+                        .color(colour),
+                );
+                // Theirs, then ours (ADR-025).
+                for (r, mine) in [(m.their_reaction, false), (m.my_reaction, true)] {
+                    if let Some(r) = r {
+                        let who = if mine { "you" } else { "they" };
+                        let hint = format!("{who}: {}", REACTION_NAMES[usize::from(r)]);
+                        sprite(ui, p, r, 1.5, false).on_hover_text(hint);
+                    }
+                }
+            });
             let unsaved = m
                 .file
                 .as_ref()
                 .is_some_and(|f| !m.mine && f.complete() && f.data.is_some());
             if unsaved && ui.link(RichText::new("Save…").color(p.accent)).clicked() {
-                save = Some(n);
+                act = Some(Act::Save(n));
             }
         });
         ui.add_space(4.0);
     }
-    save
+    act
+}
+
+/// Reaction `r` as its arcade sprite, `px` points a pixel, with a soft glow
+/// (ADR-025). `on`: ours, framed.
+fn sprite(ui: &mut egui::Ui, p: &Pal, r: u8, px: f32, on: bool) -> egui::Response {
+    let side = 11.0 * px + 4.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+    let name = REACTION_NAMES[usize::from(r).min(REACTION_NAMES.len() - 1)];
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    let colour = p.reactions[usize::from(r).min(6)];
+    let painter = ui.painter_at(rect.expand(2.0));
+    if on || response.hovered() {
+        painter.rect_stroke(rect, 2, Stroke::new(1.0, colour), egui::StrokeKind::Inside);
+    }
+    let origin = rect.min + egui::vec2(2.0, 2.0);
+    let cell = |x: u8, y: u8, grow: f32| {
+        let at = origin + egui::vec2(f32::from(x) * px, f32::from(y) * px);
+        egui::Rect::from_min_size(at, egui::vec2(px, px)).expand(grow)
+    };
+    for (x, y) in reactions::pixels(r) {
+        painter.rect_filled(cell(x, y, px * 0.6), 0, colour.gamma_multiply(0.18));
+    }
+    for (x, y) in reactions::pixels(r) {
+        painter.rect_filled(cell(x, y, 0.0), 0, colour);
+    }
+    response
 }
 
 /// A square with initials, like the Android app; the "·fingerprint" a
@@ -873,9 +1076,32 @@ mod tests {
                 onion_url: None,
                 send_id: [3; 16],
             }),
+            understands: termchat_core::proto::UNDERSTANDS,
             messages: vec![
-                msg(false, "hi there", Status::Received),
-                msg(true, "hello", Status::Sent),
+                {
+                    let mut m = msg(false, "hi there", Status::Received);
+                    m.id = Some(7);
+                    m.their_reaction = Some(1);
+                    m
+                },
+                {
+                    // ADR-025: an answer, edited, with our reaction.
+                    let mut m = msg(true, "hello", Status::Sent);
+                    m.id = Some(8);
+                    m.reply_to = Some(Ref {
+                        id: 7,
+                        theirs: true,
+                    });
+                    m.edited = true;
+                    m.my_reaction = Some(6);
+                    m
+                },
+                {
+                    let mut m = msg(false, "gone", Status::Received);
+                    m.id = Some(9);
+                    m.wipe();
+                    m
+                },
                 msg(false, "request accepted", Status::System),
                 {
                     let mut m = msg(false, "notes.txt", Status::Received);
@@ -926,11 +1152,17 @@ mod tests {
             "notes.txt",
             "Save…",
             "new in this version",
+            "↳ hi there",
+            "· edited",
+            "message deleted",
         ] {
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
         }
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
+        chat.act(0, Act::Reply(0));
+        let shown = texts(&frame(&mut chat));
+        assert!(shown.contains("↳ Answering: hi there"), "{shown}");
 
         // No relay here, so no invite queue: an invite made by hand to draw.
         let invite = termchat_core::proto::Invite {
@@ -946,6 +1178,7 @@ mod tests {
             (Dialog::Verify, "Safety number"),
             (Dialog::Rename(String::new()), "Rename"),
             (Dialog::Delete, "Delete the contact"),
+            (Dialog::DeleteMessage(1), "Delete the message"),
             (Dialog::Report("x".into()), "Report to the relay operator"),
             (Dialog::Settings, "Settings"),
             (Dialog::backup(), "Back up your identity"),
@@ -958,7 +1191,7 @@ mod tests {
                 "YOUR FINGERPRINT",
             ),
             (Dialog::Notice("all good".into()), "all good"),
-            (Dialog::save_file(3), "Save a file"),
+            (Dialog::save_file(4), "Save a file"),
             (
                 Dialog::SendFile {
                     path: String::new(),
