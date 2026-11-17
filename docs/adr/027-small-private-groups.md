@@ -41,6 +41,7 @@ This is how Matrix uses the same two vodozemac primitives; nothing is combined i
 - Each member has their own **outbound Megolm session** for the group (`GroupSession`) and sends with it. A Megolm message is signed with that session's Ed25519 key; others read it with an `InboundGroupSession`.
 - A member hands their session key to every other member **over Olm**, one-to-one. Members who are not each other's contacts set up an Olm session through the group queue: a pre-key message addressed to that member, with their published one-time key (section 4). The group queue carries both kinds: `Megolm` envelopes for everyone and `Olm` envelopes addressed to one member.
 - **Rotation:** a member starts a new outbound session when someone leaves or is removed, and after 100 messages or 7 days (Matrix uses similar limits). A new member gets only the current session keys: **no history from before they joined**.
+- A key is filed under the member whose Olm channel brought it, and every message names its sender inside the encryption; a message naming anyone else is refused. So a member cannot write as another. Known limit: a member who passes someone else's session key off as their own, before its owner shares it, makes that owner's messages unreadable for the receiver until the next rotation. It does not let them read or forge anything.
 - The plaintext inside Megolm is the same `Body` as in a chat (`Message`, `Edit`, `Delete`, `React`, `File`, ADR-025, ADR-017), plus the group's own kinds below.
 
 ### 4. Members

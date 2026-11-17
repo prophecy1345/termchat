@@ -484,32 +484,41 @@ struct InnerHead {
     seq: u64,
 }
 
+/// Pads to the smallest bucket (ISO/IEC 7816-4: 0x80, then zeros).
+fn pad(mut buf: Vec<u8>) -> Result<Vec<u8>, Error> {
+    let bucket = *BUCKETS
+        .iter()
+        .find(|&&b| b > buf.len())
+        .ok_or(Error::TooLarge)?;
+    buf.push(0x80);
+    buf.resize(bucket, 0);
+    Ok(buf)
+}
+
+/// The bytes before the padding.
+fn unpad(bytes: &[u8]) -> Result<&[u8], Error> {
+    if !BUCKETS.contains(&bytes.len()) {
+        return Err(Error::Malformed);
+    }
+    let end = bytes
+        .iter()
+        .rposition(|&b| b != 0)
+        .ok_or(Error::Malformed)?;
+    if bytes[end] != 0x80 {
+        return Err(Error::Malformed);
+    }
+    Ok(&bytes[..end])
+}
+
 impl Inner {
     /// Serialize and pad to the smallest bucket (ISO/IEC 7816-4: 0x80, then zeros).
     pub fn to_padded(&self) -> Result<Vec<u8>, Error> {
         self.check_limits()?;
-        let mut buf = postcard::to_allocvec(self).map_err(|_| Error::Malformed)?;
-        let bucket = *BUCKETS
-            .iter()
-            .find(|&&b| b > buf.len())
-            .ok_or(Error::TooLarge)?;
-        buf.push(0x80);
-        buf.resize(bucket, 0);
-        Ok(buf)
+        pad(postcard::to_allocvec(self).map_err(|_| Error::Malformed)?)
     }
 
     pub fn from_padded(bytes: &[u8]) -> Result<Self, Error> {
-        if !BUCKETS.contains(&bytes.len()) {
-            return Err(Error::Malformed);
-        }
-        let end = bytes
-            .iter()
-            .rposition(|&b| b != 0)
-            .ok_or(Error::Malformed)?;
-        if bytes[end] != 0x80 {
-            return Err(Error::Malformed);
-        }
-        let bytes = &bytes[..end];
+        let bytes = unpad(bytes)?;
         let inner: Self = match decode_exact(bytes) {
             Ok(inner) => inner,
             Err(e) => return Self::unknown_kind(bytes).ok_or(e),
@@ -531,44 +540,101 @@ impl Inner {
     }
 
     fn check_limits(&self) -> Result<(), Error> {
-        match &self.body {
-            Body::Text { text, .. } | Body::Message { text, .. } | Body::Edit { text, .. }
-                if text.len() > MAX_TEXT_BYTES =>
-            {
-                Err(Error::TooLarge)
-            }
-            Body::Unknown => Err(Error::Malformed),
-            Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
-                if note.len() > MAX_NOTE_BYTES =>
-            {
-                Err(Error::TooLarge)
-            }
-            Body::ContactRequest { nickname, .. }
-            | Body::ContactRequestV2 { nickname, .. }
-            | Body::ContactAccept { nickname } => check_nickname(nickname),
-            Body::QueueOffer {
-                relay_url,
-                onion_url,
-                ..
-            } => check_urls(relay_url, onion_url.as_deref()),
-            Body::File {
-                name,
-                size,
-                index,
-                data,
-                ..
-            } => {
-                check_file_name(name)?;
-                if *size == 0 || *size > MAX_FILE_BYTES {
-                    return Err(Error::TooLarge);
-                }
-                if data.len() != chunk_len(*size, *index).ok_or(Error::Malformed)? {
-                    return Err(Error::Malformed);
-                }
-                Ok(())
-            }
-            _ => Ok(()),
+        check_body(&self.body)
+    }
+}
+
+/// A group's own handle, chosen by its admin (ADR-027).
+pub type GroupId = [u8; 16];
+
+/// `Envelope::olm_type` of a group message: Megolm, not Olm (ADR-027).
+pub const OLM_TYPE_MEGOLM: u8 = 2;
+
+/// Plaintext inside a group's Megolm message (ADR-027). `sender` must be the
+/// member whose session it is; the receiver checks that.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupInner {
+    pub sender: Ed25519Key,
+    pub group: GroupId,
+    pub body: Body,
+}
+
+impl GroupInner {
+    pub fn to_padded(&self) -> Result<Vec<u8>, Error> {
+        check_body(&self.body)?;
+        pad(postcard::to_allocvec(self).map_err(|_| Error::Malformed)?)
+    }
+
+    pub fn from_padded(bytes: &[u8]) -> Result<Self, Error> {
+        let inner: Self = decode_exact(unpad(bytes)?)?;
+        check_body(&inner.body)?;
+        Ok(inner)
+    }
+}
+
+/// A group message on the wire, in `Envelope::body`: which Megolm session,
+/// and the message. Megolm messages do not name their session themselves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupCiphertext {
+    pub session_id: String,
+    pub message: Vec<u8>,
+}
+
+/// A Megolm session id: the base64 of an Ed25519 key, 43 characters.
+const MAX_SESSION_ID: usize = 64;
+
+impl GroupCiphertext {
+    pub fn encode(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).unwrap_or_default()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        let c: Self = decode_exact(bytes)?;
+        if c.session_id.len() > MAX_SESSION_ID {
+            return Err(Error::Malformed);
         }
+        Ok(c)
+    }
+}
+
+fn check_body(body: &Body) -> Result<(), Error> {
+    match body {
+        Body::Text { text, .. } | Body::Message { text, .. } | Body::Edit { text, .. }
+            if text.len() > MAX_TEXT_BYTES =>
+        {
+            Err(Error::TooLarge)
+        }
+        Body::Unknown => Err(Error::Malformed),
+        Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
+            if note.len() > MAX_NOTE_BYTES =>
+        {
+            Err(Error::TooLarge)
+        }
+        Body::ContactRequest { nickname, .. }
+        | Body::ContactRequestV2 { nickname, .. }
+        | Body::ContactAccept { nickname } => check_nickname(nickname),
+        Body::QueueOffer {
+            relay_url,
+            onion_url,
+            ..
+        } => check_urls(relay_url, onion_url.as_deref()),
+        Body::File {
+            name,
+            size,
+            index,
+            data,
+            ..
+        } => {
+            check_file_name(name)?;
+            if *size == 0 || *size > MAX_FILE_BYTES {
+                return Err(Error::TooLarge);
+            }
+            if data.len() != chunk_len(*size, *index).ok_or(Error::Malformed)? {
+                return Err(Error::Malformed);
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
 }
 

@@ -34,3 +34,7 @@ path = "fuzz_targets/server_frame.rs"
 [[bin]]
 name = "invite"
 path = "fuzz_targets/invite.rs"
+
+[[bin]]
+name = "group"
+path = "fuzz_targets/group.rs"

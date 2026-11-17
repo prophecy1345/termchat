@@ -5,6 +5,7 @@
 //! the Olm ratchet has moved and an old state breaks sessions.
 
 mod fingerprint;
+mod group;
 pub mod store;
 
 use std::collections::{BTreeSet, HashMap};
@@ -31,6 +32,8 @@ const MAX_SEEN_PER_SENDER: usize = 200;
 const MAX_SEEN: usize = 10_000;
 const ID_CONTEXT: &[u8] = b"termchat-id-v1";
 const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
+/// ADR-027: what a group admin signs.
+const ROSTER_CONTEXT: &[u8] = b"termchat-roster-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -100,6 +103,8 @@ pub struct Client {
     seen: Vec<Seen>,
     /// How many fallback keys there have been; the current one's number.
     fallback_no: u64,
+    /// Megolm sessions of our groups (ADR-027).
+    groups: group::Groups,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -487,6 +492,7 @@ impl Client {
                 .collect(),
             seen: &self.seen,
             fallback_no: self.fallback_no,
+            groups: self.groups.pickle(),
         };
         to_json(&state)
     }
@@ -529,6 +535,7 @@ impl Client {
             contacts,
             seen: state.seen,
             fallback_no: state.fallback_no,
+            groups: group::Groups::from_pickle(state.groups),
         };
         (client, Zeroizing::new(state.app))
     }
@@ -566,6 +573,8 @@ impl Client {
             // The backup holds the fallback keys, so it holds what guards them.
             seen: self.seen.clone(),
             fallback_no: self.fallback_no,
+            // Group sessions start again too: members share keys anew.
+            groups: group::Groups::default(),
         }
     }
 
@@ -589,6 +598,68 @@ impl Client {
         // nothing can build them again (ADR-019).
         self.seen.retain(|s| s.fallback >= self.fallback_no);
         self.account.forget_fallback_key()
+    }
+
+    /// A new outbound Megolm session for `group`, for a new group or a
+    /// rotation (ADR-027). Returns its key, to send each member over Olm.
+    pub fn group_start(
+        &mut self,
+        group: proto::GroupId,
+        now: u64,
+    ) -> Result<Zeroizing<Vec<u8>>, Error> {
+        let me = self.ed25519();
+        self.groups.start(group, me, now)
+    }
+
+    /// Our current session key for `group`, for a member who just joined.
+    pub fn group_key(&self, group: &proto::GroupId) -> Option<Zeroizing<Vec<u8>>> {
+        self.groups.key(group)
+    }
+
+    /// Whether our session for `group` should be replaced (ADR-027).
+    pub fn group_due(&self, group: &proto::GroupId, now: u64) -> bool {
+        self.groups.due(group, now)
+    }
+
+    /// A member's session key, as it came over Olm from that member.
+    pub fn group_member_key(
+        &mut self,
+        group: &proto::GroupId,
+        member: Ed25519Key,
+        key: &[u8],
+    ) -> Result<(), Error> {
+        self.groups.add_member_key(group, member, key)
+    }
+
+    pub fn group_forget_member(&mut self, group: &proto::GroupId, member: &Ed25519Key) {
+        self.groups.forget_member(group, member);
+    }
+
+    pub fn group_forget(&mut self, group: &proto::GroupId) {
+        self.groups.forget(group);
+    }
+
+    /// `body` for everyone in `group`: the bytes go into an envelope with
+    /// `OLM_TYPE_MEGOLM`.
+    pub fn group_encrypt(&mut self, group: proto::GroupId, body: Body) -> Result<Vec<u8>, Error> {
+        let me = self.ed25519();
+        self.groups.encrypt(group, me, body)
+    }
+
+    /// Who wrote it and what, for a group envelope's bytes.
+    pub fn group_decrypt(
+        &mut self,
+        group: &proto::GroupId,
+        bytes: &[u8],
+    ) -> Result<(Ed25519Key, Body), Error> {
+        self.groups.decrypt(group, bytes)
+    }
+
+    /// Our signature over a group's roster (ADR-027).
+    pub fn sign_roster(&self, roster: &[u8]) -> Signature {
+        self.account
+            .sign([ROSTER_CONTEXT, roster].concat())
+            .to_bytes()
     }
 
     pub fn has_session(&self, contact: &Ed25519Key) -> bool {
@@ -616,6 +687,7 @@ struct StateRef<'a> {
     contacts: Vec<ContactState>,
     seen: &'a [Seen],
     fallback_no: u64,
+    groups: Vec<group::GroupState>,
 }
 
 #[derive(Deserialize)]
@@ -628,6 +700,9 @@ struct State {
     seen: Vec<Seen>,
     #[serde(default)]
     fallback_no: u64,
+    /// Absent before ADR-027.
+    #[serde(default)]
+    groups: Vec<group::GroupState>,
 }
 
 /// JSON of `value` in a buffer that is wiped whenever it is outgrown, and when
@@ -735,6 +810,11 @@ fn open_inner(plain: &[u8], sender: &Ed25519Key, me: &Ed25519Key) -> Result<Inne
         return Err(Error::SenderMismatch);
     }
     Ok(inner)
+}
+
+/// Whether `admin` signed `roster` (ADR-027).
+pub fn verify_roster(admin: &Ed25519Key, roster: &[u8], sig: &Signature) -> Result<(), Error> {
+    verify_message(admin, &[ROSTER_CONTEXT, roster].concat(), sig)
 }
 
 fn verify_identity(id: &Identity) -> Result<(), Error> {
