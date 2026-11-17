@@ -616,6 +616,22 @@ impl Client {
         self.groups.key(group)
     }
 
+    /// The index of the next message we send in `group`: a member who joins
+    /// now gets our key from here.
+    pub fn group_index(&self, group: &proto::GroupId) -> Option<u32> {
+        self.groups.index(group)
+    }
+
+    /// Our current session's key from message `index` on.
+    pub fn group_key_at(
+        &mut self,
+        group: &proto::GroupId,
+        index: u32,
+    ) -> Option<Zeroizing<Vec<u8>>> {
+        let me = self.ed25519();
+        self.groups.key_at(group, &me, index)
+    }
+
     /// Whether our session for `group` should be replaced (ADR-027).
     pub fn group_due(&self, group: &proto::GroupId, now: u64) -> bool {
         self.groups.due(group, now)
@@ -653,6 +669,22 @@ impl Client {
         bytes: &[u8],
     ) -> Result<(Ed25519Key, Body), Error> {
         self.groups.decrypt(group, bytes)
+    }
+
+    /// A group member, known by the keys the admin signed for (ADR-027),
+    /// not by an invite; kept apart from contacts by the app.
+    pub fn add_member(&mut self, ed25519: Ed25519Key, curve25519: Curve25519Key) {
+        self.contacts.entry(ed25519).or_insert(Contact {
+            curve25519,
+            is_request: false,
+            nickname: None,
+            sessions: Vec::new(),
+        });
+    }
+
+    /// A contact's Curve25519 key, for a roster.
+    pub fn curve_of(&self, contact: &Ed25519Key) -> Option<Curve25519Key> {
+        self.contacts.get(contact).map(|c| c.curve25519)
     }
 
     /// Our signature over a group's roster (ADR-027).

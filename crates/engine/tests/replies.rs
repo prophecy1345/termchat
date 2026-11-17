@@ -156,7 +156,8 @@ async fn understands_is_said_again_to_a_contact_who_updated_later() {
 
     settle(&mut alice, &mut bob).await;
     let told = |e: &Engine| e.data.contacts[0].told;
-    assert_eq!((told(&alice), told(&bob)), (1, 1));
+    let level = termchat_core::proto::UNDERSTANDS;
+    assert_eq!((told(&alice), told(&bob)), (level, level));
     bob.send(0, "after").unwrap();
     pump(&mut alice, &mut bob, |a, _| has(a, "after")).await;
     alice.react(0, at(&alice, "after"), Some(0)).unwrap();

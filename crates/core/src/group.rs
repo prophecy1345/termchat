@@ -8,8 +8,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use serde::{Deserialize, Serialize};
 use vodozemac::megolm::{
-    GroupSession, GroupSessionPickle, InboundGroupSession, InboundGroupSessionPickle,
-    MegolmMessage, SessionConfig, SessionKey,
+    ExportedSessionKey, GroupSession, GroupSessionPickle, InboundGroupSession,
+    InboundGroupSessionPickle, MegolmMessage, SessionConfig, SessionKey,
 };
 use zeroize::Zeroizing;
 
@@ -56,10 +56,26 @@ impl Group {
         Zeroizing::new(self.outbound.session_key().to_bytes())
     }
 
+    /// Our session's key from message `index` on: a member gets it from the
+    /// message they joined at, so nothing before is theirs (ADR-027).
+    fn key_at(&mut self, me: &Ed25519Key, index: u32) -> Option<Zeroizing<Vec<u8>>> {
+        let id = self.outbound.session_id();
+        let own = self
+            .inbound
+            .iter_mut()
+            .find(|s| &s.member == me && s.session.session_id() == id)?;
+        Some(Zeroizing::new(own.session.export_at(index)?.to_bytes()))
+    }
+
     fn add(&mut self, member: Ed25519Key, key: &[u8]) -> Result<(), Error> {
-        let key = SessionKey::from_bytes(key)
-            .map_err(|_| Error::Proto(crate::proto::Error::Malformed))?;
-        let session = InboundGroupSession::new(&key, SessionConfig::version_1());
+        let malformed = || Error::Proto(crate::proto::Error::Malformed);
+        let session = match SessionKey::from_bytes(key) {
+            Ok(key) => InboundGroupSession::new(&key, SessionConfig::version_1()),
+            Err(_) => {
+                let key = ExportedSessionKey::from_bytes(key).map_err(|_| malformed())?;
+                InboundGroupSession::import(&key, SessionConfig::version_1())
+            }
+        };
         let id = session.session_id();
         if self.inbound.iter().any(|s| s.session.session_id() == id) {
             return Ok(());
@@ -104,6 +120,20 @@ impl Groups {
 
     pub(crate) fn key(&self, group: &GroupId) -> Option<Zeroizing<Vec<u8>>> {
         self.0.get(group).map(Group::key)
+    }
+
+    /// The index of the next message we send in `group`.
+    pub(crate) fn index(&self, group: &GroupId) -> Option<u32> {
+        self.0.get(group).map(|g| g.sent)
+    }
+
+    pub(crate) fn key_at(
+        &mut self,
+        group: &GroupId,
+        me: &Ed25519Key,
+        index: u32,
+    ) -> Option<Zeroizing<Vec<u8>>> {
+        self.0.get_mut(group)?.key_at(me, index)
     }
 
     /// Whether our session is due for rotation (ADR-027).

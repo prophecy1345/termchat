@@ -18,6 +18,9 @@ use tokio_tungstenite::tungstenite::http::Uri;
 use zeroize::Zeroize;
 
 use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
+
+#[path = "group.rs"]
+mod group;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 use subtle::ConstantTimeEq;
 
@@ -696,6 +699,7 @@ impl Engine {
                 want.insert(link, a.onion_url.clone());
             }
         }
+        want.extend(self.group_links());
         self.links.retain(|l, _| want.contains_key(l));
         for (link, onion) in want {
             if self.links.contains_key(&link) {
@@ -1337,6 +1341,9 @@ impl Engine {
                         }
                     }
                 }
+                if let Some(g) = self.group_of_link(&link) {
+                    self.group_connected(g);
+                }
             }
             Event::Disconnected => {
                 live.connected = false;
@@ -1350,6 +1357,9 @@ impl Engine {
     }
 
     fn on_frame(&mut self, link: &Link, frame: ServerFrame) {
+        if let Some(g) = self.group_of_link(link) {
+            return self.on_group_frame(g, frame);
+        }
         let who = link.who;
         match frame {
             ServerFrame::QueueCreated {
@@ -1852,6 +1862,22 @@ impl Engine {
                 }
                 return self.persist();
             }
+            // ADR-027: invites, joins and keys come over a chat; a stranger's
+            // wait for acceptance like their texts.
+            Body::GroupInvite { .. }
+            | Body::GroupJoin { .. }
+            | Body::GroupKey { .. }
+            | Body::GroupRoster { .. }
+            | Body::GroupLeave { .. }
+                if got.request =>
+            {
+                return self.persist();
+            }
+            body @ (Body::GroupInvite { .. } | Body::GroupJoin { .. } | Body::GroupKey { .. }) => {
+                self.group_from_contact(i, body);
+                return self.persist();
+            }
+            Body::GroupRoster { .. } | Body::GroupLeave { .. } => return self.persist(),
             // Pointing at messages waits for the request to be accepted.
             Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } if got.request => {
                 return self.persist();
@@ -1927,6 +1953,11 @@ impl Engine {
     pub fn tick(&mut self) {
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
+            for g in 0..self.data.groups.len() {
+                if !self.data.groups[g].left {
+                    self.share_key(g);
+                }
+            }
             for i in 0..self.data.contacts.len() {
                 let c = &self.data.contacts[i];
                 let owed = c.request_pending || c.offer_pending || c.accept_pending;

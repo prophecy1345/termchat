@@ -448,6 +448,32 @@ pub enum Body {
     Understands {
         level: u16,
     },
+    /// The admin asks a contact into a group (ADR-027), one to one: the roster
+    /// and the contact's own reader of the group queue.
+    GroupInvite {
+        roster: Roster,
+        relay_url: String,
+        onion_url: Option<String>,
+        send_id: QueueId,
+        reader: ReaderGrant,
+    },
+    /// The contact took the invite; the admin puts them on the roster.
+    GroupJoin {
+        group: GroupId,
+    },
+    /// A member's Megolm session key, sent to one member over Olm.
+    GroupKey {
+        group: GroupId,
+        key: SecretBytes,
+    },
+    /// A new roster, from the admin, inside the group.
+    GroupRoster {
+        roster: Roster,
+    },
+    /// The sender leaves the group, inside the group.
+    GroupLeave {
+        group: GroupId,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -459,10 +485,89 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 12;
+const KNOWN_KINDS: u32 = 17;
 
-/// What `Understands` says this version reads: 1 = ADR-025.
-pub const UNDERSTANDS: u16 = 1;
+/// What `Understands` says this version reads: 1 = ADR-025, 2 = groups (ADR-027).
+pub const UNDERSTANDS: u16 = 2;
+
+/// A group's name, like a nickname.
+pub const MAX_GROUP_NAME_BYTES: usize = 64;
+/// A Megolm session key: 229 bytes; room to spare, no more.
+const MAX_GROUP_KEY_BYTES: usize = 512;
+
+/// Bytes that must not show in logs: `Debug` prints their length only.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretBytes(pub Vec<u8>);
+
+impl std::fmt::Debug for SecretBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SecretBytes({} bytes)", self.0.len())
+    }
+}
+
+/// One member's reader of a group queue (ADR-027): what the relay's
+/// `ReaderAdded` gave the admin. `Debug` hides the token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReaderGrant {
+    pub recv_id: QueueId,
+    pub send_id: QueueId,
+    pub token: QueueToken,
+}
+
+impl std::fmt::Debug for ReaderGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReaderGrant").finish_non_exhaustive()
+    }
+}
+
+/// Who is in a group, numbered and signed by its admin (ADR-027).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Roster {
+    pub group: GroupId,
+    pub no: u64,
+    pub admin: Ed25519Key,
+    pub name: String,
+    pub members: Vec<RosterMember>,
+    #[serde(with = "serde_big_array")]
+    pub signature: Signature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterMember {
+    pub ed25519: Ed25519Key,
+    pub curve25519: Curve25519Key,
+    pub nickname: String,
+    /// Their reader's `send_id`: to share a session key with them alone.
+    pub reader: QueueId,
+}
+
+impl Roster {
+    /// What the admin signs: everything but the signature.
+    pub fn signed_bytes(&self) -> Vec<u8> {
+        postcard::to_allocvec(&(self.group, self.no, self.admin, &self.name, &self.members))
+            .unwrap_or_default()
+    }
+
+    fn check(&self) -> Result<(), Error> {
+        check_group_name(&self.name)?;
+        if self.members.len() > MAX_GROUP_MEMBERS {
+            return Err(Error::TooLarge);
+        }
+        self.members
+            .iter()
+            .try_for_each(|m| check_nickname(&m.nickname))
+    }
+}
+
+pub fn check_group_name(name: &str) -> Result<(), Error> {
+    if name.len() > MAX_GROUP_NAME_BYTES {
+        return Err(Error::TooLarge);
+    }
+    if name.trim().is_empty() || name.chars().any(char::is_control) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
 
 /// Reactions are indices into a fixed set the apps draw (ADR-025):
 /// like, love, laugh, wow, sad, thanks, dislike.
@@ -605,6 +710,17 @@ fn check_body(body: &Body) -> Result<(), Error> {
             Err(Error::TooLarge)
         }
         Body::Unknown => Err(Error::Malformed),
+        Body::GroupInvite {
+            roster,
+            relay_url,
+            onion_url,
+            ..
+        } => {
+            roster.check()?;
+            check_urls(relay_url, onion_url.as_deref())
+        }
+        Body::GroupRoster { roster } => roster.check(),
+        Body::GroupKey { key, .. } if key.0.len() > MAX_GROUP_KEY_BYTES => Err(Error::TooLarge),
         Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
             if note.len() > MAX_NOTE_BYTES =>
         {
@@ -806,7 +922,7 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::Understands { level: 1 })).unwrap();
+        let raw = postcard::to_allocvec(&with(Body::GroupLeave { group: [0; 16] })).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
     }

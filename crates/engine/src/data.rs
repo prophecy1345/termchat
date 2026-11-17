@@ -9,7 +9,10 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
-use termchat_proto::{Body, Ed25519Key, InviteCode, QueueId, QueueToken, Ref};
+use termchat_proto::{
+    Body, Ed25519Key, GroupId, InviteCode, QueueId, QueueToken, ReaderGrant, Ref, Roster,
+    RosterMember,
+};
 use zeroize::{Zeroize, Zeroizing};
 
 /// One of our queues on a relay (ADR-023). The token opens it, so no `Debug`.
@@ -85,6 +88,68 @@ pub struct Data {
     /// Which Arti folder is current: a new one for each change of bridges.
     pub tor_generation: u32,
     pub understands_resent: bool,
+    /// Small private groups (ADR-027).
+    pub groups: Vec<Group>,
+    /// Invites into groups, waiting for an answer.
+    pub group_invites: Vec<GroupInvite>,
+}
+
+/// A group (ADR-027). The roster is the last one whose signature checked.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Group {
+    pub id: GroupId,
+    pub roster: Option<Roster>,
+    pub relay_url: String,
+    pub onion_url: Option<String>,
+    /// Where members write; zero until the relay made the group.
+    pub send_id: QueueId,
+    /// Our reader of the group queue.
+    pub reader: Option<ReaderGrant>,
+    /// The admin's handle and token for the group queue; only the admin has them.
+    pub admin: Option<(QueueId, QueueToken)>,
+    pub messages: Vec<Msg>,
+    pub unread: usize,
+    pub expires_in: Option<u32>,
+    pub next_client_id: u64,
+    /// Members who hold our current Megolm session key.
+    pub shared: Vec<Ed25519Key>,
+    /// The index of our session each member joined at: their key starts there.
+    pub since: Vec<(Ed25519Key, u32)>,
+    /// Admin: readers asked of the relay, in order, for these (our own key
+    /// for our own reader).
+    pub asking: Vec<Ed25519Key>,
+    /// Admin: contacts invited, with the reader made for them.
+    pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// Group messages that came before their sender's key, to read later.
+    pub early: Vec<Vec<u8>>,
+    /// We left, or were removed: read-only.
+    pub left: bool,
+}
+
+/// An invite into a group, from the contact who is its admin.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GroupInvite {
+    pub from: Ed25519Key,
+    pub roster: Roster,
+    pub relay_url: String,
+    pub onion_url: Option<String>,
+    pub send_id: QueueId,
+    pub reader: ReaderGrant,
+}
+
+impl Group {
+    pub fn name(&self) -> &str {
+        self.roster.as_ref().map_or("", |r| r.name.as_str())
+    }
+
+    pub fn is_admin(&self) -> bool {
+        self.admin.is_some()
+    }
+
+    pub fn members(&self) -> &[RosterMember] {
+        self.roster.as_ref().map_or(&[], |r| r.members.as_slice())
+    }
 }
 
 /// An identity of its own, used with one contact only (ADR-014).
@@ -201,6 +266,9 @@ pub struct Msg {
     /// Absent in older files: everything there counts as taken.
     #[serde(default)]
     pub unfetched: bool,
+    /// Who wrote it, in a group (ADR-027); a chat has two sides and no need.
+    #[serde(default)]
+    pub author: Option<Ed25519Key>,
     /// The message's name on the wire (ADR-025), chosen by its author.
     /// `None`: older, a file or a system line; it cannot be pointed at.
     #[serde(default)]
@@ -502,7 +570,7 @@ impl Data {
         }
         if !data.understands_resent {
             data.understands_resent = true;
-            let heard = |c: &&mut Contact| c.understands >= termchat_proto::UNDERSTANDS;
+            let heard = |c: &&mut Contact| c.understands >= 1;
             data.contacts
                 .iter_mut()
                 .filter(heard)
