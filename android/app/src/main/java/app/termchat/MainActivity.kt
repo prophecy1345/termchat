@@ -59,6 +59,7 @@ private fun Root(m: Model) {
             Screen.Start -> Start(m)
             Screen.Chats -> Chats(m)
             is Screen.Chat -> Chat(m, s.index)
+            is Screen.Group -> Group(m, s.index)
             Screen.Invite -> Invite(m)
             Screen.Add -> Add(m)
             Screen.Settings -> Settings(m)

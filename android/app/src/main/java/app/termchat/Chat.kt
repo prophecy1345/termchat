@@ -40,7 +40,7 @@ import app.termchat.engine.reactions
 private const val MAX_FILE = 1 shl 20
 
 /** ADR-025: the seven reactions as arcade sprites, from the Rust core. */
-private val REACTIONS = reactions()
+internal val REACTIONS = reactions()
 
 /** What Send does (ADR-025): answer message `at`, or put new text in our message `at`. */
 private data class Compose(val at: UInt, val edit: Boolean, val label: String)
@@ -131,14 +131,7 @@ fun Chat(m: Model, index: UInt) {
                         "answer" -> compose = Compose(at, false, msg.text.lineSequence().first())
                         "edit" -> { compose = Compose(at, true, ""); text = msg.text }
                         "delete" -> unsend = at
-                        "copy" -> {
-                            val clip = ClipData.newPlainText("message", msg.text)
-                            // Keyboards and clipboard previews keep it out of sight.
-                            clip.description.extras = android.os.PersistableBundle().apply {
-                                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-                            }
-                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
-                        }
+                        "copy" -> copySensitive(context, msg.text)
                         else -> {
                             // A reaction; the same one again takes it back.
                             val r = what.toUByte()
@@ -156,6 +149,21 @@ fun Chat(m: Model, index: UInt) {
                         runCatching { a.forgetFile(index, at) }
                         m.changed()
                     }
+                }
+            }
+        }
+        // ADR-027: their group invites, answered here.
+        if (!c.request) a.groupInvites().filter { it.from == index }.forEach { inv ->
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Text("Invites you to the group \"${inv.name}\"", style = Tc.mono.copy(color = Tc.warn))
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Flat("Join") {
+                        runCatching { a.acceptGroup(inv.index) }
+                            .onSuccess { m.screen = Screen.Group(it) }
+                            .onFailure { m.note = it.message ?: "$it" }
+                        m.changed()
+                    }
+                    Flat("Decline", color = Tc.dim) { a.declineGroup(inv.index); m.changed() }
                 }
             }
         }
@@ -242,9 +250,18 @@ fun Chat(m: Model, index: UInt) {
     }
 }
 
+/** To the clipboard, marked sensitive: keyboards and clipboard previews keep it out of sight. */
+internal fun copySensitive(context: android.content.Context, text: String) {
+    val clip = ClipData.newPlainText("message", text)
+    clip.description.extras = android.os.PersistableBundle().apply {
+        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+    }
+    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+}
+
 /** Reaction `r` as its arcade sprite with a soft glow (ADR-025). */
 @Composable
-private fun Sprite(r: Int, size: Dp) {
+internal fun Sprite(r: Int, size: Dp) {
     val sprite = REACTIONS.getOrNull(r) ?: return
     val color = Tc.slots.getOrNull(sprite.slot.toInt()) ?: Tc.lime
     Canvas(Modifier.size(size)) {
@@ -302,7 +319,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-private fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
@@ -316,6 +333,8 @@ private fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, file:
     var menu by remember { mutableStateOf(false) }
     val gone = Tc.mono.copy(color = Tc.dim, fontStyle = FontStyle.Italic)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (msg.mine) Alignment.End else Alignment.Start) {
+        // ADR-027: in a group, who wrote it.
+        msg.author?.let { Text(it, style = Tc.small.copy(color = Tc.slots.getOrNull(11) ?: Tc.lime), modifier = Modifier.padding(start = 2.dp, bottom = 2.dp)) }
         Box {
             Column(
                 Modifier
@@ -349,7 +368,7 @@ private fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, file:
                 if (msg.fileName == null) item("Copy", "copy")
                 if (rich && msg.pointable && msg.mine) {
                     item("Edit", "edit")
-                    item("Delete for both…", "delete")
+                    item(if (group) "Delete for everyone…" else "Delete for both…", "delete")
                 }
             }
         }
@@ -367,8 +386,16 @@ private fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, file:
         } + if (msg.edited) " · edited" else ""
         Row(Modifier.padding(top = 3.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(meta, style = Tc.small.copy(color = if (failed) Tc.danger else Tc.dim))
-            // Theirs, then ours.
-            listOfNotNull(msg.theirReaction, msg.myReaction).forEach { Sprite(it.toInt(), 18.dp) }
+            if (msg.counts.isNotEmpty()) {
+                // In a group: each reaction once, with how many chose it.
+                msg.counts.forEach {
+                    Sprite(it.reaction.toInt(), 18.dp)
+                    if (it.count > 1u) Text("${it.count}", style = Tc.small)
+                }
+            } else {
+                // Theirs, then ours.
+                listOfNotNull(msg.theirReaction, msg.myReaction).forEach { Sprite(it.toInt(), 18.dp) }
+            }
         }
     }
 }

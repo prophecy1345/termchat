@@ -24,6 +24,7 @@ sealed interface Screen {
     data object Start : Screen
     data object Chats : Screen
     data class Chat(val index: UInt) : Screen
+    data class Group(val index: UInt) : Screen
     data object Invite : Screen
     data object Add : Screen
     data object Settings : Screen
@@ -155,6 +156,7 @@ class Model(private val context: Context) : Listener {
             is Event.WipeAnyway -> { leaving = false; wipeAnyway = event.why }
             is Event.Wiped -> wiped(event.note)
             is Event.Alert -> alert(event.index)
+            is Event.GroupAlert -> alert(null, event.index)
             is Event.Invite -> { readyInvite = event.text; syncPush() }
         }
     }.let {}
@@ -181,9 +183,11 @@ class Model(private val context: Context) : Listener {
     }
 
     /** "New message", nothing else, and only when the chat is not in front of the user. */
-    private fun alert(index: UInt?) {
+    private fun alert(index: UInt?, group: UInt? = null) {
         val open = (screen as? Screen.Chat)?.index
-        if (!notify || (visible && open != null && open == index)) return
+        val openGroup = (screen as? Screen.Group)?.index
+        val inFront = if (group != null) openGroup == group else open != null && open == index
+        if (!notify || (visible && inFront)) return
         context.getSystemService(android.app.NotificationManager::class.java)
             .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
     }
