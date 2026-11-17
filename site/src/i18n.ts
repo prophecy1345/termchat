@@ -54,6 +54,7 @@ const en = {
       ["Invites, not a directory", "Nobody can find you: people join with an invite you give them, one-time or public, and wait as a request until you accept. Block, reject or report."],
       ["Safety numbers", "Compare 60 digits with a friend once and rule out anyone in the middle."],
       ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Your contacts cannot link you to each other."],
+      ["Small private groups", "Up to 32 people, by the admin's invitation only, and nobody can find the group. Megolm from the same vodozemac; new members do not read the old history, removed ones not the new."],
     ]],
     ["If your device is in the wrong hands", [
       ["Duress password", "A second password that silently erases everything and shows a fresh install."],
@@ -191,6 +192,7 @@ const ru: typeof en = {
       ["Приглашения вместо каталога", "Найти вас нельзя: люди приходят по приглашению, которое вы дали, одноразовому или публичному, и ждут как запрос, пока вы не примете. Блокировка, отказ, жалоба."],
       ["Номер безопасности", "Один раз сверьте 60 цифр с другом и исключите посредника."],
       ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут связать вас между собой."],
+      ["Маленькие приватные группы", "До 32 человек, только по приглашению администратора, найти группу нельзя. Megolm из той же vodozemac; новые участники не читают старую историю, исключённые — новую."],
     ]],
     ["Если устройство попало в чужие руки", [
       ["Пароль под принуждением", "Второй пароль, который молча стирает всё и показывает чистую установку."],

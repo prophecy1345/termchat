@@ -81,6 +81,14 @@ that (ADR-023).
     come and go together at unlock.
   **Incognito contacts** (ADR-014) still give one contact an identity of its
   own, so contacts cannot link you to each other by key or fingerprint.
+- **Groups** (ADR-027). The relay sees a group queue, how many readers it
+  has, and when each message is written and read by each reader: a group's
+  size is visible to its operator. Key shares come in bursts when someone
+  joins or leaves, which shows membership changes. It cannot read the name,
+  the member list or the messages, and does not know who the admin is.
+  Members who are not each other's contacts trust the admin's signed list
+  for who the others are, until they compare safety numbers. A new member
+  reads nothing from before they joined; a removed one nothing after.
 - **An identity on a server** (scriptable mode, ADR-024). Its password sits
   next to its state file, so whoever gets root there reads that identity's
   messages and can write as it. It is a separate key with separate queues,

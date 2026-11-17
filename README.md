@@ -4,7 +4,7 @@
 
 По-русски: [README.ru.md](README.ru.md).
 
-A private messenger for the terminal: text, and documents up to 1 MiB. End-to-end encrypted with
+A private messenger for the terminal: text, documents up to 1 MiB, and small private groups. End-to-end encrypted with
 [vodozemac](https://github.com/matrix-org/vodozemac) (Olm: X3DH-style handshake and
 Double Ratchet, the design behind Signal and Matrix). Optional Tor. No accounts,
 phone numbers, emails or names: you are a key pair and a nickname you choose.
