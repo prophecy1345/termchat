@@ -81,7 +81,7 @@ Body::React { target: Ref, reaction: Option<u8> }
 Body::Understands { level: u16 }    // 1 = this ADR
 ```
 
-- An updated client sends `Understands { level: 1 }` once to every contact: on the first connection after the update, and to a new contact right after `ContactRequest` / `ContactAccept`. The level is stored per contact.
+- An updated client sends `Understands { level: 1 }` once to every contact: on the first connection after the update, and to a new contact right after `ContactRequest` / `ContactAccept`. The level is stored per contact. ("Once" was not enough when the two sides update at different times: [ADR-026](026-understands-again.md).) ("Once" was not enough when the two sides update at different times: [ADR-026](026-understands-again.md).)
 - To a contact that has not said level 1, the client sends only `Text`, and the app does not offer reply, edit, delete or react for that chat. It says why, once: "their app is older; replies and reactions come after they update".
 - **The cost:** a contact on 0.8 or older gets one status-bar line "a message could not be decrypted (malformed)" and one "1 message lost" line in the chat, when `Understands` arrives. Nothing is lost in fact. This is said in the release notes.
 
