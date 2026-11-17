@@ -40,6 +40,7 @@ description: "The termchat.app terminal client: what is on the screen, what the 
 | `×` | blocked |
 | `-` | the contact deleted their account |
 | `↻` | needs a new invite (from before anonymous queues) |
+| `#` | a group; the number on the right counts its members |
 | `alice·36335` | name plus the start of the fingerprint: for unverified contacts, and whenever two names look the same |
 | `…` `✓` `✗` | your message: sending, on the relay, failed |
 | `▲ ♥ ☺ ◎ ☹ ✧ ▼` | reactions: like, love, laugh, wow, sad, thanks, dislike |
@@ -64,13 +65,26 @@ description: "The termchat.app terminal client: what is on the screen, what the 
 | **Ctrl+B** | block / unblock |
 | **Ctrl+D** | delete the contact, or reject a request |
 | **Ctrl+X** | report to the relay operator |
-| **Ctrl+P** | menu: **s** settings, **k** keys, **m** manual, **n** what's new, **o** invite, **a** add, **b** backup |
+| **Ctrl+P** | menu: **s** settings, **k** keys, **m** manual, **n** what's new, **o** invite, **a** add, **b** backup, **g** new group |
 | **Ctrl+K** | lock now |
 | **Ctrl+Q** or **Ctrl+C** | quit |
 | **?** or **F1** | the list of keys |
 | **Esc** | close a window, cancel an answer or edit |
 
 Editing what you type: **←/→**, **Home/End**, **Alt+←/→** (by word), **Ctrl+W** (delete a word), **Ctrl+U** (delete to the start).
+
+## Groups
+
+A small private group of up to 32 people, by invitation only ([ADR-027](https://github.com/prophecy1345/termsage/blob/main/docs/adr/027-small-private-groups.md)).
+
+- **New group:** **Ctrl+P**, then **g**, and a name. You are its admin.
+- **Invite:** in the group, **Ctrl+R** opens the members, **a** lists contacts you can invite. Only your own contacts, on a version that knows groups.
+- **Join:** the invite comes in your chat with the admin; **Ctrl+Y** there joins.
+- **In the group:** answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (**Ctrl+T**).
+- **Remove:** **Ctrl+R**, pick the member, **x**. The group moves to a new queue; they read nothing from then on.
+- **Leave:** **Ctrl+D**. The others are told; the chat stays with you, read-only.
+
+A new member does not see what was said before they joined.
 
 ## Mouse
 
