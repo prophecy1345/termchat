@@ -90,6 +90,24 @@ impl Engine {
 
     /// The admin asks contact `i` into group `g` (ADR-027): a reader first,
     /// the invite once the relay made it.
+    /// Contacts the admin of group `g` could invite: main identity, accepted,
+    /// not in the group yet. Older apps stay listed; inviting says why not.
+    pub fn invitable(&self, g: usize) -> Vec<usize> {
+        let Some(group) = self.data.groups.get(g) else {
+            return Vec::new();
+        };
+        (0..self.data.contacts.len())
+            .filter(|&i| {
+                let c = &self.data.contacts[i];
+                c.profile.is_none()
+                    && !c.left
+                    && !c.blocked
+                    && !self.is_request(&c.key)
+                    && !group.members().iter().any(|m| m.ed25519 == c.key)
+            })
+            .collect()
+    }
+
     pub fn invite_to_group(&mut self, g: usize, i: usize) -> Result<(), String> {
         let c = self.writable(i)?;
         if c.profile.is_some() {
@@ -120,6 +138,14 @@ impl Engine {
             self.group_send(g, ClientFrame::AddReader { group_id, token });
         }
         Ok(())
+    }
+
+    /// Drops invite `n` unanswered; the admin is not told.
+    pub fn decline_group(&mut self, n: usize) {
+        if n < self.data.group_invites.len() {
+            self.data.group_invites.remove(n);
+            self.persist();
+        }
     }
 
     /// Takes invite `n`: we join the group, share our key, tell the admin.
@@ -153,6 +179,10 @@ impl Engine {
             ..Default::default()
         });
         let g = self.data.groups.len() - 1;
+        self.group_system(
+            g,
+            "you joined: messages from before are not shared with new members".into(),
+        );
         self.know_members(g);
         if let Err(e) = self.transmit(&inv.from, Body::GroupJoin { group: id }) {
             self.note(e);

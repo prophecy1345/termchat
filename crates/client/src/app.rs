@@ -781,22 +781,6 @@ impl Main {
         self.absorb();
     }
 
-    /// Contacts the admin of group `g` can invite: main identity, not in
-    /// the group yet, an app that reads groups.
-    pub fn invitable(&self, g: usize) -> Vec<usize> {
-        let group = &self.engine.data.groups[g];
-        (0..self.engine.data.contacts.len())
-            .filter(|&i| {
-                let c = &self.engine.data.contacts[i];
-                c.profile.is_none()
-                    && !c.left
-                    && !c.blocked
-                    && !self.engine.is_request(&c.key)
-                    && !group.members().iter().any(|m| m.ed25519 == c.key)
-            })
-            .collect()
-    }
-
     /// The open group, if a group is open (ADR-027): groups follow the
     /// contacts in the list.
     pub fn group_index(&self) -> Option<usize> {
@@ -1371,7 +1355,7 @@ impl Main {
             }
             Popup::InviteToGroup(at) => {
                 let Some(g) = self.group_index() else { return };
-                let rows = self.invitable(g);
+                let rows = self.engine.invitable(g);
                 match k.code {
                     KeyCode::Up => Some(Popup::InviteToGroup(at.saturating_sub(1))),
                     KeyCode::Down => Some(Popup::InviteToGroup(

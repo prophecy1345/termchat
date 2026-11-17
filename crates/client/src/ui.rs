@@ -1543,6 +1543,7 @@ fn popup_pane(
         Popup::InviteToGroup(at) => {
             let Some(gi) = m.group_index() else { return };
             let rows: Vec<(char, String)> = m
+                .engine
                 .invitable(gi)
                 .iter()
                 .map(|&i| ('·', name(m, &m.engine.data.contacts[i])))

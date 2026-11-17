@@ -168,6 +168,22 @@ impl Group {
 
     /// A new roster; the names of those who left stay for their old messages.
     pub fn set_roster(&mut self, roster: Roster) {
+        // Who came in since the last roster, as a line in the history.
+        if let Some(old) = &self.roster {
+            for m in &roster.members {
+                if !old.members.iter().any(|x| x.ed25519 == m.ed25519) {
+                    self.messages.push(Msg {
+                        mine: false,
+                        text: format!("{} joined the group", m.nickname),
+                        at: crate::engine::now(),
+                        expires_at: None,
+                        status: Status::System,
+                        file: None,
+                        ..Default::default()
+                    });
+                }
+            }
+        }
         if let Some(old) = self.roster.take() {
             for m in old.members {
                 if !roster.members.iter().any(|x| x.ed25519 == m.ed25519) {
