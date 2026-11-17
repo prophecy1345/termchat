@@ -161,6 +161,67 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
             .all(|m| m.text == "hi from bob")
     );
 
+    // Answers, reactions, edits and deletes, as in a chat; a member changes
+    // only their own messages.
+    let at = |e: &Engine, text: &str| {
+        e.data.groups[0]
+            .messages
+            .iter()
+            .position(|m| m.text == text)
+            .unwrap()
+    };
+    let m = at(&e[1], "hi from carol");
+    e[1].reply_group(0, m, "welcome, carol").unwrap();
+    e[0].react_group(0, at(&e[0], "hi from carol"), Some(1))
+        .unwrap();
+    assert!(
+        e[1].edit_group_message(0, at(&e[1], "hi from carol"), "mine now")
+            .is_err()
+    );
+    pump(&mut e, |e| {
+        let g = &e[2].data.groups[0];
+        let carols = g
+            .messages
+            .iter()
+            .find(|m| m.text == "hi from carol")
+            .and_then(|m| m.id);
+        said(&e[2], 0, "welcome, carol") && carols.is_some_and(|id| g.reactions_to(id).count() == 1)
+    })
+    .await;
+    let g = &e[2].data.groups[0];
+    let answer = g
+        .messages
+        .iter()
+        .find(|m| m.text == "welcome, carol")
+        .unwrap();
+    let carols = g
+        .messages
+        .iter()
+        .find(|m| m.text == "hi from carol")
+        .unwrap();
+    assert_eq!(answer.reply_to.map(|r| r.id), carols.id);
+    e[2].edit_group_message(0, at(&e[2], "hi from carol"), "hi from carol!")
+        .unwrap();
+    pump(&mut e, |e| {
+        said(&e[0], 0, "hi from carol!") && said(&e[1], 0, "hi from carol!")
+    })
+    .await;
+    e[2].delete_group_message(0, at(&e[2], "hi from carol!"))
+        .unwrap();
+    pump(&mut e, |e| {
+        e[..2].iter().all(|x| {
+            x.data.groups[0]
+                .messages
+                .iter()
+                .any(|m| m.deleted && m.author == Some(e[2].me()))
+        })
+    })
+    .await;
+    assert!(
+        e[0].data.groups[0].reactions.is_empty(),
+        "reactions go with the message"
+    );
+
     // Alice removes Carol: the group moves, Carol hears so and reads nothing more.
     let carol = e[2].me();
     e[0].remove_from_group(0, &carol).unwrap();

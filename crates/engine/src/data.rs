@@ -121,6 +121,10 @@ pub struct Group {
     pub asking: Vec<Ed25519Key>,
     /// Admin: contacts invited, with the reader made for them.
     pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// Our edits, deletes and reactions, waiting for the link.
+    pub outbox: Vec<Body>,
+    /// Each member's reaction to a message: (message id, member, reaction).
+    pub reactions: Vec<(u64, Ed25519Key, u8)>,
     /// Admin: each member's reader of the current queue, to move the group.
     pub readers: Vec<(Ed25519Key, QueueId)>,
     /// Admin: a move to a new queue under way (ADR-027).
@@ -159,6 +163,22 @@ impl Group {
 
     pub fn is_admin(&self) -> bool {
         self.admin.is_some()
+    }
+
+    /// The reactions to the message with `id`, one per member.
+    pub fn reactions_to(&self, id: u64) -> impl Iterator<Item = (Ed25519Key, u8)> + '_ {
+        self.reactions
+            .iter()
+            .filter(move |(m, _, _)| *m == id)
+            .map(|(_, k, r)| (*k, *r))
+    }
+
+    /// Sets `who`'s reaction to message `id`, or takes it back.
+    pub fn set_reaction(&mut self, id: u64, who: Ed25519Key, reaction: Option<u8>) {
+        self.reactions.retain(|(m, k, _)| !(*m == id && *k == who));
+        if let Some(r) = reaction {
+            self.reactions.push((id, who, r));
+        }
     }
 
     pub fn members(&self) -> &[RosterMember] {

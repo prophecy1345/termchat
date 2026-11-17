@@ -5,7 +5,7 @@
 use super::*;
 use crate::data::{Group, GroupInvite, GroupMoving};
 use termchat_core::proto::{
-    Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Roster, RosterMember, SecretBytes,
+    Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Ref, Roster, RosterMember, SecretBytes,
 };
 use zeroize::Zeroizing;
 
@@ -161,6 +161,15 @@ impl Engine {
 
     /// Writes `text` to group `g`.
     pub fn send_group(&mut self, g: usize, text: &str) -> Result<(), String> {
+        self.send_group_with(g, text, None)
+    }
+
+    fn send_group_with(
+        &mut self,
+        g: usize,
+        text: &str,
+        reply_to: Option<Ref>,
+    ) -> Result<(), String> {
         if text.len() > proto::MAX_TEXT_BYTES {
             return Err("message too long".into());
         }
@@ -179,8 +188,92 @@ impl Engine {
             status: Status::Queued,
             file: None,
             id: Some(id),
+            reply_to,
             ..Default::default()
         });
+        self.persist();
+        self.flush_group(g);
+        Ok(())
+    }
+
+    /// `text` in group `g` as an answer to message `m`.
+    pub fn reply_group(&mut self, g: usize, m: usize, text: &str) -> Result<(), String> {
+        let target = self.group_target(g, m)?;
+        self.send_group_with(g, text, Some(target))
+    }
+
+    /// Message `m` of group `g` as something to point at.
+    fn group_target(&self, g: usize, m: usize) -> Result<Ref, String> {
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if group.left {
+            return Err("you are not in this group any more".into());
+        }
+        let msg = group.messages.get(m).ok_or("no such message")?;
+        match msg.id {
+            Some(id) if !msg.deleted && msg.status != Status::System => Ok(Ref {
+                id,
+                theirs: !msg.mine,
+            }),
+            _ => Err("this message cannot be pointed at".into()),
+        }
+    }
+
+    /// New text for our message `m` of group `g`.
+    pub fn edit_group_message(&mut self, g: usize, m: usize, text: &str) -> Result<(), String> {
+        if text.trim().is_empty() || text.len() > proto::MAX_TEXT_BYTES {
+            return Err("an edit is 1 to 16 000 bytes".into());
+        }
+        let target = self.group_target(g, m)?;
+        let msg = &mut self.data.groups[g].messages[m];
+        if !msg.mine {
+            return Err("only your own messages can be changed".into());
+        }
+        if msg.status != Status::Queued {
+            self.data.groups[g].outbox.push(Body::Edit {
+                id: target.id,
+                text: text.to_string(),
+            });
+        }
+        let msg = &mut self.data.groups[g].messages[m];
+        msg.edited = msg.status != Status::Queued;
+        msg.replace_text(text.to_string());
+        self.persist();
+        self.flush_group(g);
+        Ok(())
+    }
+
+    /// Deletes our message `m` of group `g` for everyone.
+    pub fn delete_group_message(&mut self, g: usize, m: usize) -> Result<(), String> {
+        let target = self.group_target(g, m)?;
+        let messages = &mut self.data.groups[g].messages;
+        if !messages[m].mine {
+            return Err("only your own messages can be changed".into());
+        }
+        match messages[m].status {
+            Status::Queued => drop(messages.remove(m)),
+            _ => {
+                messages[m].wipe();
+                let group = &mut self.data.groups[g];
+                group.reactions.retain(|(id, _, _)| *id != target.id);
+                group.outbox.push(Body::Delete { id: target.id });
+            }
+        }
+        self.persist();
+        self.flush_group(g);
+        Ok(())
+    }
+
+    /// Our reaction to message `m` of group `g`, or none.
+    pub fn react_group(&mut self, g: usize, m: usize, reaction: Option<u8>) -> Result<(), String> {
+        if reaction.is_some_and(|r| r >= proto::REACTIONS) {
+            return Err("no such reaction".into());
+        }
+        let target = self.group_target(g, m)?;
+        let me = self.me();
+        self.data.groups[g].set_reaction(target.id, me, reaction);
+        self.data.groups[g]
+            .outbox
+            .push(Body::React { target, reaction });
         self.persist();
         self.flush_group(g);
         Ok(())
@@ -229,7 +322,23 @@ impl Engine {
                 self.data.groups[g].messages[m].status = Status::Sending(client_id);
             }
         }
+        // Edits, deletes and reactions, in the order they were made.
+        while self.group_link_up(g)
+            && let Some(body) = self.data.groups[g].outbox.first().cloned()
+        {
+            self.send_group_body(g, body);
+            self.data.groups[g].outbox.remove(0);
+        }
         self.persist();
+    }
+
+    fn group_link_up(&self, g: usize) -> bool {
+        let group = &self.data.groups[g];
+        let link = Link {
+            who: link_who(&group.id),
+            relay: group.relay_url.clone(),
+        };
+        self.links.get(&link).is_some_and(|l| l.connected) && group.send_id != [0; 16]
     }
 
     /// A new Megolm session for group `g`, shared with every member again.
@@ -604,6 +713,40 @@ impl Engine {
                 group.unread += 1;
             }
             Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
+            // Edits and deletes reach only the sender's own messages.
+            Body::Edit { id, text } => {
+                if let Some(m) = self.data.groups[g]
+                    .messages
+                    .iter_mut()
+                    .find(|m| m.id == Some(id) && m.author == Some(sender) && !m.deleted)
+                {
+                    m.replace_text(text);
+                    m.edited = true;
+                }
+            }
+            Body::Delete { id } => {
+                if let Some(m) = self.data.groups[g]
+                    .messages
+                    .iter_mut()
+                    .find(|m| m.id == Some(id) && m.author == Some(sender) && !m.deleted)
+                {
+                    m.wipe();
+                    self.data.groups[g].reactions.retain(|(x, _, _)| *x != id);
+                }
+            }
+            Body::React { target, reaction } => {
+                if reaction.is_some_and(|r| r >= proto::REACTIONS) {
+                    return;
+                }
+                let group = &mut self.data.groups[g];
+                if group
+                    .messages
+                    .iter()
+                    .any(|m| m.id == Some(target.id) && !m.deleted)
+                {
+                    group.set_reaction(target.id, sender, reaction);
+                }
+            }
             Body::GroupLeave { .. } => {
                 let name = self.member_name(g, &sender);
                 self.group_system(g, format!("{name} left the group"));
