@@ -3,6 +3,7 @@ import "../styles/site.css";
 import { REPO, type Lang } from "../i18n";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
+import Backdrop from "./Backdrop.astro";
 
 // The privacy policy Google Play asks for. Keep in step with
 // docs/threat-model.md: it must not promise more than the threat model does.
@@ -103,6 +104,7 @@ const t = Astro.props.lang === "en" ? en : ru;
     <Head lang={Astro.props.lang} title={t.title} description={t.description} en="/privacy/" ru="/ru/privacy/" />
   </head>
   <body>
+    <Backdrop />
     <header class="top">
       <a class="brand" href={url(t.home)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
     </header>

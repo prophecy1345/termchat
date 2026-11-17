@@ -4,6 +4,7 @@ import "../styles/site.css";
 import { REPO, type Lang } from "../i18n";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
+import Backdrop from "./Backdrop.astro";
 import { posts } from "../releases";
 
 interface Props {
@@ -36,6 +37,7 @@ const install = lang === "en" ? "Install termchat.app" : "Установить t
     <Head lang={lang} title={title} description={description} en={en} ru={ru} ld={ld} />
   </head>
   <body>
+    <Backdrop />
     <header class="top">
       <a class="brand" href={url(`${p}/`)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
       <nav>
