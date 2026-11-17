@@ -3,6 +3,31 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.10.0
+
+Small private groups (ADR-027).
+
+- Up to 32 people. The one who makes a group is its admin: only they
+  invite their own contacts and remove members. There are no links that
+  anyone can use and no search: nobody can find a group.
+- Megolm from vodozemac, the group ratchet Matrix uses, with keys shared
+  over Olm one to one. A new member reads nothing said before they
+  joined; a removed one nothing after: the group moves to a new queue and
+  everyone starts a new session.
+- Answers, edits, deletes and reactions as in a chat; reactions show how
+  many chose each one. The admin sets the disappearing timer for all.
+- Members who are not each other's contacts can still read each other:
+  the admin signs the member list. Compare safety numbers to be sure.
+- The relay sees a group queue and how many read it: a group's size is
+  visible to its operator. It cannot read the name, the members or the
+  messages.
+- Terminal: Ctrl+P, g for a new group; in a group Ctrl+R shows the
+  members. Desktop: + New above the groups; double-click a message to
+  answer it. Android: New group in the menu.
+- Groups carry text only for now, no documents.
+- Desktop: text fields in dialogs were invisible against the window;
+  they show now.
+
 ## 0.9.2
 
 - Documentation: a user guide at termchat.app/docs, in English and

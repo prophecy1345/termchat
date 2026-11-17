@@ -1,0 +1,1 @@
+Small private groups: up to 32 people, by the admin's invitation only, end to end encrypted with Megolm. Answers, edits, reactions and a disappearing timer work in groups too. New members do not see older messages; removed ones see nothing new.
