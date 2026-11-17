@@ -32,7 +32,8 @@ impl Engine {
         self.data
             .groups
             .iter()
-            .filter(|g| !g.left)
+            // A group we left keeps its link until its goodbye is out.
+            .filter(|g| !g.left || !g.outbox.is_empty())
             .map(|g| {
                 let link = Link {
                     who: link_who(&g.id),
@@ -52,6 +53,66 @@ impl Engine {
         match self.links.get(&link) {
             Some(l) if l.connected => l.relay.send(frame).is_ok(),
             _ => false,
+        }
+    }
+
+    /// Reads our reader of group `g`, and asks the relay to wake us for it
+    /// when a push endpoint is set (ADR-012): a reader is a queue like any.
+    fn subscribe_group(&self, g: usize) {
+        let group = &self.data.groups[g];
+        let Some(r) = group.reader.clone() else {
+            return;
+        };
+        let push = group.push.clone();
+        self.group_send(
+            g,
+            ClientFrame::Subscribe {
+                recv_id: r.recv_id,
+                token: r.token,
+            },
+        );
+        if push.is_some() {
+            self.group_send(
+                g,
+                ClientFrame::SetPush {
+                    recv_id: r.recv_id,
+                    token: r.token,
+                    endpoint: push,
+                },
+            );
+        }
+    }
+
+    /// The UnifiedPush endpoint for group `id`'s reader, or none (ADR-012).
+    pub fn set_group_push(&mut self, id: &GroupId, endpoint: Option<String>) {
+        let Some(g) = self.data.groups.iter().position(|g| g.id == *id) else {
+            return;
+        };
+        self.data.groups[g].push = endpoint.clone();
+        self.persist();
+        if let Some(r) = self.data.groups[g].reader.clone() {
+            self.group_send(
+                g,
+                ClientFrame::SetPush {
+                    recv_id: r.recv_id,
+                    token: r.token,
+                    endpoint,
+                },
+            );
+        }
+    }
+
+    /// A push for group `id`: its link checks itself.
+    pub fn woken_group(&self, id: &GroupId) {
+        let Some(group) = self.data.groups.iter().find(|g| g.id == *id) else {
+            return;
+        };
+        let link = Link {
+            who: link_who(&group.id),
+            relay: group.relay_url.clone(),
+        };
+        if let Some(l) = self.links.get(&link) {
+            l.relay.check();
         }
     }
 
@@ -165,6 +226,8 @@ impl Engine {
         if self.data.groups.iter().any(|g| g.id == id && !g.left) {
             return Err("already in this group".into());
         }
+        // Invited back after leaving: the old read-only copy goes, one entry per group.
+        self.data.groups.retain(|g| g.id != id);
         self.core()
             .group_start(id, now())
             .map_err(|e| e.to_string())?;
@@ -316,6 +379,20 @@ impl Engine {
     /// Sends what waits in group `g`, when its link is up.
     pub(super) fn flush_group(&mut self, g: usize) {
         let gid = self.data.groups[g].id;
+        if self.data.groups[g].left {
+            // Only the goodbye is left to send; then the keys go.
+            while self.group_link_up(g)
+                && let Some(body) = self.data.groups[g].outbox.first().cloned()
+            {
+                self.send_group_body(g, body);
+                self.data.groups[g].outbox.remove(0);
+            }
+            if self.data.groups[g].outbox.is_empty() {
+                self.core().group_forget(&gid);
+            }
+            self.persist();
+            return;
+        }
         if self.core().group_due(&gid, now()) {
             self.rotate_group(g);
         }
@@ -457,6 +534,9 @@ impl Engine {
 
     /// The link of group `g` is up: what the relay should know or do now.
     pub(super) fn group_connected(&mut self, g: usize) {
+        if self.data.groups[g].left {
+            return self.flush_group(g);
+        }
         let group = &self.data.groups[g];
         match group.admin {
             None if group.is_admin_to_be() => {
@@ -469,15 +549,7 @@ impl Engine {
             }
             None => {}
         }
-        if let Some(r) = self.data.groups[g].reader.clone() {
-            self.group_send(
-                g,
-                ClientFrame::Subscribe {
-                    recv_id: r.recv_id,
-                    token: r.token,
-                },
-            );
-        }
+        self.subscribe_group(g);
         self.share_key(g);
         self.flush_group(g);
     }
@@ -531,7 +603,7 @@ impl Engine {
                 if who == self.me() {
                     self.data.groups[g].reader = Some(grant.clone());
                     self.add_to_roster(g, who, grant.send_id);
-                    self.group_send(g, ClientFrame::Subscribe { recv_id, token });
+                    self.subscribe_group(g);
                     self.persist();
                     self.flush_group(g);
                 } else {
@@ -744,7 +816,11 @@ impl Engine {
                     unfetched: true,
                     ..Default::default()
                 });
-                group.unread += 1;
+                if self.open_group != Some(group.id) {
+                    group.unread += 1;
+                }
+                let id = group.id;
+                self.happened.push(Happened::GroupAlert { group: id });
             }
             Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
             // Edits and deletes reach only the sender's own messages.
@@ -804,7 +880,8 @@ impl Engine {
         {
             return;
         }
-        self.data.groups[g].set_roster(roster);
+        let me = self.me();
+        self.data.groups[g].set_roster(roster, &me);
         self.know_members(g);
         self.share_key(g);
     }
@@ -859,6 +936,11 @@ impl Engine {
                 self.group_send(g, ClientFrame::CreateGroup);
             }
         }
+        let name = self.data.groups[g]
+            .name_of(who)
+            .unwrap_or("someone")
+            .to_string();
+        self.group_system(g, format!("you removed {name}"));
         self.persist();
         Ok(())
     }
@@ -896,7 +978,7 @@ impl Engine {
         roster.no += 1;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         let group = &mut self.data.groups[g];
-        group.set_roster(roster.clone());
+        group.set_roster(roster.clone(), &me);
         if let Some(mine) = reader_of(&me) {
             group.reader = Some(mine);
         }
@@ -941,15 +1023,7 @@ impl Engine {
         if let Some((group_id, token)) = moving.old {
             self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
         }
-        if let Some(r) = self.data.groups[g].reader.clone() {
-            self.group_send(
-                g,
-                ClientFrame::Subscribe {
-                    recv_id: r.recv_id,
-                    token: r.token,
-                },
-            );
-        }
+        self.subscribe_group(g);
         self.after_members_left(g, &moving.removed);
     }
 
@@ -1004,7 +1078,8 @@ impl Engine {
         roster.expires_in = expires_in;
         roster.no += 1;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
-        self.data.groups[g].set_roster(roster.clone());
+        let me = self.me();
+        self.data.groups[g].set_roster(roster.clone(), &me);
         self.persist();
         if roster.members.len() > 1 {
             self.send_group_body(g, Body::GroupRoster { roster });
@@ -1021,9 +1096,8 @@ impl Engine {
         let gid = group.id;
         self.send_group_body(g, Body::GroupLeave { group: gid });
         self.data.groups[g].left = true;
-        self.core().group_forget(&gid);
-        // The link stays until the next restart, so the goodbye goes out.
-        self.persist();
+        // The keys go once the goodbye is out (`flush_group`).
+        self.flush_group(g);
         Ok(())
     }
 
@@ -1045,14 +1119,18 @@ impl Engine {
         let Some(roster) = group.roster.as_mut() else {
             return;
         };
+        let new = !roster.members.iter().any(|m| m.ed25519 == who);
         roster.members.retain(|m| m.ed25519 != who);
         roster.members.push(RosterMember {
             ed25519: who,
             curve25519,
-            nickname,
+            nickname: nickname.clone(),
             reader,
         });
         roster.no += 1;
+        if new && who != me {
+            self.group_system(g, format!("{nickname} joined the group"));
+        }
         let bytes = self.data.groups[g]
             .roster
             .as_ref()
@@ -1076,7 +1154,14 @@ impl Engine {
     }
 
     /// A body for everyone in group `g` that is not a message one sees.
+    /// Sends `body` to the group now, or keeps it in the group's outbox
+    /// until the link is up: right after a start it is not yet.
     fn send_group_body(&mut self, g: usize, body: Body) {
+        if !self.group_link_up(g) {
+            self.data.groups[g].outbox.push(body);
+            self.persist();
+            return;
+        }
         let gid = self.data.groups[g].id;
         let Ok(bytes) = self.core().group_encrypt(gid, body) else {
             return;
@@ -1173,17 +1258,12 @@ impl Engine {
                     .map(|m| m.ed25519)
                     .filter(|k| !roster.members.iter().any(|m| m.ed25519 == *k))
                     .collect();
+                let me = self.me();
                 let group = &mut self.data.groups[g];
-                group.set_roster(roster);
+                group.set_roster(roster, &me);
                 group.send_id = send_id;
                 group.reader = Some(reader.clone());
-                self.group_send(
-                    g,
-                    ClientFrame::Subscribe {
-                        recv_id: reader.recv_id,
-                        token: reader.token,
-                    },
-                );
+                self.subscribe_group(g);
                 self.after_members_left(g, &gone);
             }
             // From the admin, over our chat: we were removed.

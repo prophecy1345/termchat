@@ -150,6 +150,8 @@ impl Pal {
 
 struct Toast {
     key: Key,
+    /// A group's card opens the group instead (ADR-027).
+    group: Option<[u8; 16]>,
     text: String,
     until: Instant,
 }
@@ -214,6 +216,7 @@ impl Chat {
     /// Takes in relay events and timers. `Some(note)`: everything was erased.
     pub fn step(&mut self, focused: bool, sound: bool) -> Option<String> {
         self.engine.open = self.open;
+        self.engine.open_group = self.group;
         let mut moved = false;
         while let Ok(ev) = self.engine.events.try_recv() {
             self.engine.on_relay(ev);
@@ -242,6 +245,7 @@ impl Chat {
                 Happened::Alert { key, request } => self.alert(key, request, focused, sound),
                 Happened::Note(n) => self.status = n,
                 Happened::Notice(n) => self.dialog = Some(Dialog::Notice(n)),
+                Happened::GroupAlert { group } => self.group_alert(group, focused, sound),
                 Happened::Wiped(n) => return Some(n),
                 Happened::WipeAnyway(why) => self.dialog = Some(Dialog::WipeAnyway(why)),
                 Happened::Invite(text) => {
@@ -276,7 +280,32 @@ impl Chat {
         }
         self.toasts.push(Toast {
             key,
+            group: None,
             text: format!("{what} · {}", self.engine.name(c)),
+            until: Instant::now() + TOAST_FOR,
+        });
+        let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
+        if sound && !quiet {
+            self.last_sound = Some(Instant::now());
+            notify::sound();
+        }
+    }
+
+    /// A card and a sound for a group, with its name, never the text.
+    fn group_alert(&mut self, id: [u8; 16], focused: bool, sound: bool) {
+        if focused && self.group == Some(id) {
+            return;
+        }
+        let Some(g) = self.engine.data.groups.iter().find(|g| g.id == id) else {
+            return;
+        };
+        if self.toasts.len() >= MAX_TOASTS {
+            self.toasts.remove(0);
+        }
+        self.toasts.push(Toast {
+            key: [0; 32],
+            group: Some(id),
+            text: format!("new message · # {}", termchat_engine::clean(g.name())),
             until: Instant::now() + TOAST_FOR,
         });
         let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
@@ -1008,13 +1037,20 @@ impl Chat {
                         .response
                         .interact(egui::Sense::click());
                     if r.clicked() {
-                        picked = Some(t.key);
+                        picked = Some(n);
                     }
                 });
         }
-        if let Some(k) = picked {
-            self.toasts.retain(|t| t.key != k);
-            self.select(k);
+        if let Some(n) = picked {
+            let t = self.toasts.remove(n);
+            match t.group {
+                Some(id) => {
+                    if let Some(g) = self.engine.data.groups.iter().position(|g| g.id == id) {
+                        self.select_group(g);
+                    }
+                }
+                None => self.select(t.key),
+            }
         }
     }
 }

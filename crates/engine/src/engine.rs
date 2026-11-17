@@ -133,6 +133,10 @@ pub enum Happened {
     WipeAnyway(String),
     /// An invite asked for earlier is ready: its queue exists now (ADR-023).
     Invite(String),
+    /// A new message in a group (ADR-027).
+    GroupAlert {
+        group: termchat_core::proto::GroupId,
+    },
 }
 
 /// Everything the first-run form asks.
@@ -173,6 +177,8 @@ pub struct Engine {
     pub update: Option<String>,
     /// The chat on screen: its messages do not count as unread.
     pub open: Option<Ed25519Key>,
+    /// The group on screen, likewise.
+    pub open_group: Option<termchat_core::proto::GroupId>,
     pub happened: Vec<Happened>,
     path: PathBuf,
     leaving: Option<Leaving>,
@@ -524,6 +530,7 @@ impl Engine {
             connected: false,
             update: None,
             open: None,
+            open_group: None,
             happened,
             path,
             leaving: None,

@@ -309,5 +309,15 @@ async fn the_admins_timer_holds_for_all_and_a_pending_invite_survives_a_move() {
         .find(|m| m.text == "for an hour")
         .unwrap();
     assert!(m.expires_at.is_some());
+
+    // After a restart the group still talks, and a goodbye right away arrives.
+    e[2].persist();
+    let state = dir.join("carol");
+    e[2] = match Engine::unlock(&state, PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(x) => x,
+        _ => panic!("carol's state"),
+    };
+    e[2].leave_group(0).unwrap();
+    pump(&mut e, |e| said(&e[0], 0, "carol left the group")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }

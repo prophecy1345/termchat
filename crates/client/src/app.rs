@@ -595,6 +595,7 @@ impl Main {
     /// Takes in what the engine reported since the last call.
     fn absorb(&mut self) {
         // An open group is read as it comes.
+        self.engine.open_group = self.current_group().map(|g| g.id);
         if let Some(g) = self.group_index() {
             self.engine.data.groups[g].unread = 0;
         }
@@ -603,6 +604,8 @@ impl Main {
                 Happened::Alert { key, request } => self.alerts.push((key, request)),
                 Happened::Note(n) => self.status = n,
                 Happened::Notice(n) => self.popup = Some(Popup::Notice(n)),
+                // The list shows a group's unread count; no bell for groups yet.
+                Happened::GroupAlert { .. } => {}
                 Happened::Wiped(n) => self.wiped = Some(n),
                 Happened::WipeAnyway(why) => self.popup = Some(Popup::WipeAnyway(why)),
                 Happened::Invite(text) => {

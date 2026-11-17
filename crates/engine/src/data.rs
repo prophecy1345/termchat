@@ -120,6 +120,9 @@ pub struct Group {
     pub asking: Vec<Ed25519Key>,
     /// Admin: contacts invited, with the reader made for them.
     pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// UnifiedPush endpoint for our reader (ADR-012).
+    #[serde(default)]
+    pub push: Option<String>,
     /// Names of members who left, for what they wrote before.
     #[serde(default)]
     pub former: Vec<(Ed25519Key, String)>,
@@ -167,11 +170,12 @@ impl Group {
     }
 
     /// A new roster; the names of those who left stay for their old messages.
-    pub fn set_roster(&mut self, roster: Roster) {
-        // Who came in since the last roster, as a line in the history.
+    pub fn set_roster(&mut self, roster: Roster, me: &Ed25519Key) {
+        // Who came in since the last roster, as a line in the history; we
+        // have a line of our own for that.
         if let Some(old) = &self.roster {
             for m in &roster.members {
-                if !old.members.iter().any(|x| x.ed25519 == m.ed25519) {
+                if m.ed25519 != *me && !old.members.iter().any(|x| x.ed25519 == m.ed25519) {
                     self.messages.push(Msg {
                         mine: false,
                         text: format!("{} joined the group", m.nickname),
