@@ -38,6 +38,8 @@ object Tc {
     var warn by mutableStateOf(Color(0xFFF2A65A)); private set
     var danger by mutableStateOf(Color(0xFFE5675F)); private set
     var send by mutableStateOf(Color(0xFF2A2B2F)); private set
+    /** All 17 colours of the theme, for reactions (ADR-025). */
+    var slots by mutableStateOf(listOf<Color>()); private set
 
     val mono get() = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 15.sp, color = text)
     val small get() = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = dim)
@@ -55,6 +57,7 @@ object Tc {
         theme = t.name
         lime = c[0]; bg = c[1]; surface = c[2]; mine = c[3]; theirs = c[4]; send = c[4]
         line = c[5]; dim = c[8]; text = c[9]; danger = c[14]; warn = c[16]
+        slots = c
     }
 }
 

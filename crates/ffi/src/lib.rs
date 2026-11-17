@@ -94,6 +94,8 @@ pub struct ContactView {
     pub incognito: Option<String>,
     /// From before anonymous queues: only a new invite brings them back (ADR-023).
     pub needs_invite: bool,
+    /// Their app reads answers, edits, deletes and reactions (ADR-025).
+    pub rich: bool,
 }
 
 #[derive(uniffi::Record)]
@@ -108,6 +110,37 @@ pub struct MessageView {
     pub file_name: Option<String>,
     /// A received document still waiting to be saved or discarded.
     pub file_unsaved: bool,
+    /// It can be answered and reacted to (ADR-025).
+    pub pointable: bool,
+    pub edited: bool,
+    pub deleted: bool,
+    /// What it answers: the first line of that message, or a note that it is gone.
+    pub quote: Option<String>,
+    /// Indices into `reactions()`.
+    pub their_reaction: Option<u8>,
+    pub my_reaction: Option<u8>,
+}
+
+/// How a reaction is drawn (ADR-025): lit pixels as x, y pairs in an 11×11
+/// square, and its colour as an index into a theme's 17 colours.
+#[derive(uniffi::Record)]
+pub struct Reaction {
+    pub name: String,
+    pub pixels: Vec<u8>,
+    pub slot: u32,
+}
+
+#[uniffi::export]
+pub fn reactions() -> Vec<Reaction> {
+    (0..termchat_core::proto::REACTIONS)
+        .map(|r| Reaction {
+            name: engine::REACTION_NAMES[usize::from(r)].into(),
+            pixels: termchat_engine::reactions::pixels(r)
+                .flat_map(|(x, y)| [x, y])
+                .collect(),
+            slot: termchat_engine::reactions::COLOURS[usize::from(r)] as u32,
+        })
+        .collect()
 }
 
 #[uniffi::export]
@@ -312,6 +345,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         no_history: c.no_history,
         last_at: c.last_at(),
         needs_invite: e.needs_invite(c),
+        rich: e.rich(i),
     }
 }
 
@@ -425,6 +459,23 @@ impl Account {
                         && m.file
                             .as_ref()
                             .is_some_and(|f| f.complete() && f.data.is_some()),
+                    pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
+                    edited: m.edited,
+                    deleted: m.deleted,
+                    quote: m.reply_to.map(|r| {
+                        let all = &e.data.contacts[i].messages;
+                        all.iter()
+                            .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted)
+                            .map_or_else(
+                                || "message no longer here".into(),
+                                |q| {
+                                    let text = engine::clean_text(&q.text);
+                                    text.lines().next().unwrap_or_default().to_string()
+                                },
+                            )
+                    }),
+                    their_reaction: m.their_reaction,
+                    my_reaction: m.my_reaction,
                 })
                 .collect()
         })
@@ -443,6 +494,26 @@ impl Account {
 
     pub fn send(&self, index: u32, text: String) -> Result<()> {
         Ok(self.with(index, |e, i| e.send(i, &text))??)
+    }
+
+    /// `text` as an answer to message `msg` (ADR-025).
+    pub fn reply(&self, index: u32, msg: u32, text: String) -> Result<()> {
+        Ok(self.with(index, |e, i| e.reply(i, msg as usize, &text))??)
+    }
+
+    /// New text for our message `msg` (ADR-025).
+    pub fn edit_message(&self, index: u32, msg: u32, text: String) -> Result<()> {
+        Ok(self.with(index, |e, i| e.edit_message(i, msg as usize, &text))??)
+    }
+
+    /// Deletes our message `msg` for both sides (ADR-025).
+    pub fn delete_message(&self, index: u32, msg: u32) -> Result<()> {
+        Ok(self.with(index, |e, i| e.delete_message(i, msg as usize))??)
+    }
+
+    /// Our reaction to message `msg`, an index into `reactions()`, or none (ADR-025).
+    pub fn react(&self, index: u32, msg: u32, reaction: Option<u8>) -> Result<()> {
+        Ok(self.with(index, |e, i| e.react(i, msg as usize, reaction))??)
     }
 
     /// Queues a document of at most 1 MiB (ADR-017).

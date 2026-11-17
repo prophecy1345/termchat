@@ -16,6 +16,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -67,9 +73,15 @@ fun Field(
     secret: Boolean = false,
     singleLine: Boolean = true,
 ) {
+    // Text put in from outside (an edit, a clear) gets the cursor at its end.
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    if (field.text != value) field = TextFieldValue(value, TextRange(value.length))
     BasicTextField(
-        value = value,
-        onValueChange = onChange,
+        value = field,
+        onValueChange = {
+            field = it
+            if (it.text != value) onChange(it.text)
+        },
         singleLine = singleLine,
         textStyle = Tc.mono,
         cursorBrush = SolidColor(Tc.lime),

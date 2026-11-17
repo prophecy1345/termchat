@@ -1,15 +1,18 @@
 package app.termchat
 
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -19,15 +22,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
+import app.termchat.engine.reactions
 
 /** ADR-017: the largest document, as in the Rust core. */
 private const val MAX_FILE = 1 shl 20
+
+/** ADR-025: the seven reactions as arcade sprites, from the Rust core. */
+private val REACTIONS = reactions()
+
+/** What Send does (ADR-025): answer message `at`, or put new text in our message `at`. */
+private data class Compose(val at: UInt, val edit: Boolean, val label: String)
 
 /** One chat (ADR-011, section 5). */
 @Composable
@@ -38,6 +54,9 @@ fun Chat(m: Model, index: UInt) {
     val messages = runCatching { a.messages(index) }.getOrDefault(emptyList())
     var text by remember { mutableStateOf("") }
     var dialog by remember { mutableStateOf<String?>(null) }
+    // ponytail: by index, so a message that expires meanwhile shifts it; ids if that bites.
+    var compose by remember(index) { mutableStateOf<Compose?>(null) }
+    var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     // Search runs here, over what is already on the phone; `null` is off.
     var query by remember(index) { mutableStateOf<String?>(null) }
     DisposableEffect(index) {
@@ -106,8 +125,30 @@ fun Chat(m: Model, index: UInt) {
             contentPadding = PaddingValues(vertical = 12.dp),
         ) {
             items(shown.asReversed()) { (i, msg) ->
-                Bubble(msg) { keep ->
-                    val at = i.toUInt()
+                val at = i.toUInt()
+                val act: (String) -> Unit = { what ->
+                    when (what) {
+                        "answer" -> compose = Compose(at, false, msg.text.lineSequence().first())
+                        "edit" -> { compose = Compose(at, true, ""); text = msg.text }
+                        "delete" -> unsend = at
+                        "copy" -> {
+                            val clip = ClipData.newPlainText("message", msg.text)
+                            // Keyboards and clipboard previews keep it out of sight.
+                            clip.description.extras = android.os.PersistableBundle().apply {
+                                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                            }
+                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+                        }
+                        else -> {
+                            // A reaction; the same one again takes it back.
+                            val r = what.toUByte()
+                            runCatching { a.react(index, at, if (msg.myReaction == r) null else r) }
+                                .onFailure { m.note = it.message ?: "$it" }
+                            m.changed()
+                        }
+                    }
+                }
+                Bubble(msg, c.rich, act) { keep ->
                     if (keep) {
                         saving = at
                         save.launch(msg.fileName ?: "file")
@@ -125,6 +166,21 @@ fun Chat(m: Model, index: UInt) {
             }
         }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
+        compose?.let { cm ->
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (cm.edit) "✎ Editing your message" else "↳ Answering: ${cm.label}",
+                    style = Tc.mono.copy(color = Tc.lime),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("×", style = Tc.name, modifier = Modifier.clickable {
+                    if (cm.edit) text = ""
+                    compose = null
+                }.padding(horizontal = 12.dp))
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // The drop cycles the disappearing timer, like Ctrl+T.
             Column(
@@ -152,14 +208,59 @@ fun Chat(m: Model, index: UInt) {
                 },
                 Modifier.weight(1f), singleLine = false,
             )
-            Flat("Send", enabled = text.isNotBlank() && !closed, color = Tc.lime) {
-                runCatching { a.send(index, text) }
-                    .onSuccess { text = ""; m.note = ""; m.changed() }
+            Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime) {
+                runCatching {
+                    val cm = compose
+                    when {
+                        cm == null -> a.send(index, text)
+                        cm.edit -> a.editMessage(index, cm.at, text)
+                        else -> a.reply(index, cm.at, text)
+                    }
+                }
+                    .onSuccess { text = ""; compose = null; m.note = ""; m.changed() }
                     .onFailure { m.note = it.message ?: "$it" }
             }
         }
     }
     dialog?.let { ContactDialog(m, c, it) { dialog = null } }
+    unsend?.let { at ->
+        AlertDialog(
+            onDismissRequest = { unsend = null },
+            containerColor = Tc.surface,
+            shape = corner,
+            title = { Text("Delete the message?", style = Tc.name) },
+            text = { Text("It goes for both of you. Their app removes it; a copy or screenshot they made stays.", style = Tc.mono) },
+            confirmButton = {
+                Flat("Delete", color = Tc.danger) {
+                    runCatching { a.deleteMessage(index, at) }.onFailure { m.note = it.message ?: "$it" }
+                    unsend = null
+                    m.changed()
+                }
+            },
+            dismissButton = { Flat("Cancel", color = Tc.dim) { unsend = null } },
+        )
+    }
+}
+
+/** Reaction `r` as its arcade sprite with a soft glow (ADR-025). */
+@Composable
+private fun Sprite(r: Int, size: Dp) {
+    val sprite = REACTIONS.getOrNull(r) ?: return
+    val color = Tc.slots.getOrNull(sprite.slot.toInt()) ?: Tc.lime
+    Canvas(Modifier.size(size)) {
+        val px = this.size.width / 13f
+        val p = sprite.pixels
+        for (pass in 0..1) {
+            for (k in 0 until p.size / 2) {
+                val x = (p[2 * k].toInt() + 1) * px
+                val y = (p[2 * k + 1].toInt() + 1) * px
+                when (pass) {
+                    0 -> drawRect(color.copy(alpha = 0.2f), Offset(x - px * 0.6f, y - px * 0.6f), Size(px * 2.2f, px * 2.2f))
+                    else -> drawRect(color, Offset(x, y), Size(px, px))
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -201,7 +302,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-private fun Bubble(msg: MessageView, file: (save: Boolean) -> Unit) {
+private fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
@@ -212,16 +313,45 @@ private fun Bubble(msg: MessageView, file: (save: Boolean) -> Unit) {
         }
         return
     }
+    var menu by remember { mutableStateOf(false) }
+    val gone = Tc.mono.copy(color = Tc.dim, fontStyle = FontStyle.Italic)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (msg.mine) Alignment.End else Alignment.Start) {
-        SelectionContainer {
-            Text(
-                msg.text,
-                style = Tc.mono,
-                modifier = Modifier
+        Box {
+            Column(
+                Modifier
                     .widthIn(max = 300.dp)
                     .background(if (msg.mine) Tc.mine else Tc.theirs, corner)
+                    // ADR-025: a long press for answers, reactions, edits and deletes.
+                    .pointerInput(msg.pointable) { detectTapGestures(onLongPress = { if (!msg.deleted && msg.fileName == null) menu = true }) }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+            ) {
+                msg.quote?.let { Text("↳ $it", style = gone, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                if (msg.deleted) Text("message deleted", style = gone) else Text(msg.text, style = Tc.mono)
+            }
+            DropdownMenu(menu, { menu = false }, containerColor = Tc.surface) {
+                val item = @Composable { label: String, what: String ->
+                    DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; act(what) })
+                }
+                if (rich && msg.pointable) {
+                    Row(Modifier.padding(horizontal = 8.dp)) {
+                        REACTIONS.indices.forEach { r ->
+                            val on = msg.myReaction?.toInt() == r
+                            Box(
+                                Modifier.size(38.dp)
+                                    .border(1.dp, if (on) Tc.lime else Tc.surface, corner)
+                                    .clickable { menu = false; act("$r") },
+                                contentAlignment = Alignment.Center,
+                            ) { Sprite(r, 28.dp) }
+                        }
+                    }
+                    item("Answer", "answer")
+                }
+                if (msg.fileName == null) item("Copy", "copy")
+                if (rich && msg.pointable && msg.mine) {
+                    item("Edit", "edit")
+                    item("Delete for both…", "delete")
+                }
+            }
         }
         if (msg.fileUnsaved) {
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -234,8 +364,12 @@ private fun Bubble(msg: MessageView, file: (save: Boolean) -> Unit) {
             failed -> "failed: ${msg.status}"
             msg.mine && msg.status != "sent" -> msg.status
             else -> age(msg.at)
+        } + if (msg.edited) " · edited" else ""
+        Row(Modifier.padding(top = 3.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(meta, style = Tc.small.copy(color = if (failed) Tc.danger else Tc.dim))
+            // Theirs, then ours.
+            listOfNotNull(msg.theirReaction, msg.myReaction).forEach { Sprite(it.toInt(), 18.dp) }
         }
-        Text(meta, style = Tc.small.copy(color = if (failed) Tc.danger else Tc.dim), modifier = Modifier.padding(top = 3.dp, start = 2.dp, end = 2.dp))
     }
 }
 
