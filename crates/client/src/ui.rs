@@ -731,8 +731,12 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     if max > 0 {
         scrollbar(f, t, history.inner(Margin::new(0, 1)), max, top);
     }
-    if m.picked.is_some() {
-        let hint = " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ";
+    if let Some(at) = m.picked {
+        // Only one's own messages can be edited or deleted.
+        let hint = match c.messages.get(at).is_some_and(|p| p.mine) {
+            true => " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ",
+            false => " ↵ answer · 1–7 react · ↑↓ · esc ",
+        };
         let hint = Span::styled(hint, Style::new().bg(t.panel_bg).fg(t.accent));
         let row = Rect::new(pane.x, pane.bottom().saturating_sub(1), pane.width, 1);
         f.render_widget(Paragraph::new(hint), row);

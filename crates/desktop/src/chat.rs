@@ -854,9 +854,8 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
                             }
                             None => "↳ message no longer here".into(),
                         };
-                        ui.add(
-                            egui::Label::new(RichText::new(quote).small().color(p.dim)).truncate(),
-                        );
+                        let quote = RichText::new(quote).monospace().italics().color(p.dim);
+                        ui.add(egui::Label::new(quote).truncate());
                     }
                     match m.deleted {
                         true => ui.label(RichText::new("message deleted").italics().color(p.dim)),
@@ -868,7 +867,10 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
             if pointable {
                 bubble
                     .interact(egui::Sense::click())
-                    .on_hover_text("Right-click: answer, react, edit, delete")
+                    .on_hover_text(match m.mine {
+                        true => "Right-click: answer, react, edit, delete",
+                        false => "Right-click: answer, react",
+                    })
                     .context_menu(|ui| {
                         ui.horizontal(|ui| {
                             for r in 0..REACTIONS {
