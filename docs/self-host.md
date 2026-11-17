@@ -111,6 +111,19 @@ Users enter `ws://xxxx.onion/` as the onion URL and answer "y" to "Use Tor?".
 Connections on the onion port share one budget (ADR-004), so per-IP limits do
 not lock out Tor users.
 
+## Your relay and the public one
+
+People on different relays talk to each other: an invite carries its relay's
+address, and the app connects to whichever relays its contacts use. Your queues
+stay on your relay; a friend on the public relay keeps theirs there, and your
+app writes to it.
+
+So no single server sees both sides of the conversation. Your relay sees when
+your queues are written to and read; the public one sees the same for your
+friend's. Matching the two by timing would take both operators, or someone
+who watches both servers. If your friends set your relay as theirs instead,
+both sides are on one server again: yours.
+
 ## Running it well
 
 - **Backups.** Losing the database loses undelivered messages and prekeys

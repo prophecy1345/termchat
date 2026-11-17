@@ -68,7 +68,9 @@ that (ADR-023).
 - **Metadata.** The relay knows queues, not people (ADR-023), but it still sees:
   - **timing**: when a queue is written to and when it is read, so a message
     into one queue followed by a read from another can link them. Only a
-    mixnet with cover traffic hides this (see "Not protected");
+    mixnet with cover traffic hides this (see "Not protected"). When the two
+    people use different relays, each relay holds one side only, and linking
+    the two takes both operators;
   - **links by connection or IP**: each contact has its own connection and,
     with Tor, its own circuit. Without Tor, the shared IP address shows which
     queues are one person's, and so does the "one connection for all
