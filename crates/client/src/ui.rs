@@ -45,8 +45,11 @@ Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
 Ctrl+L       send a file (up to 1 MiB)
 Ctrl+G       save the newest received file
+Ctrl+S       search this chat (on this device only)
+Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
+             1-7 react; Esc back to typing
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe
-Ctrl+K       lock now (also after 5 min idle)
+Ctrl+K       lock now (also after the idle time in settings)
 Ctrl+Q       quit
 ? / F1       this help
 
