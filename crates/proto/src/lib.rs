@@ -385,6 +385,64 @@ pub enum Body {
         onion_url: Option<String>,
         send_id: QueueId,
     },
+    /// A text that can be replied to, edited, deleted and reacted to
+    /// (ADR-025). `id` is random and names the message among the sender's own.
+    Message {
+        id: u64,
+        sent_at: u64,
+        expires_in: Option<u32>,
+        reply_to: Option<Ref>,
+        text: String,
+    },
+    /// New text for the sender's own `Message` `id` (ADR-025).
+    Edit {
+        id: u64,
+        text: String,
+    },
+    /// The sender's own `Message` `id` is to be wiped (ADR-025).
+    Delete {
+        id: u64,
+    },
+    /// One of `REACTIONS`, or `None` to take one's reaction back (ADR-025).
+    React {
+        target: Ref,
+        reaction: Option<u8>,
+    },
+    /// The kinds of message the sender reads: `UNDERSTANDS` (ADR-025).
+    Understands {
+        level: u16,
+    },
+    /// A kind this version does not know, from a newer client (ADR-025): its
+    /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
+    /// put new kinds above it.
+    #[serde(skip)]
+    Unknown,
+}
+
+/// Kinds of `Body` on the wire: every variant but `Unknown`.
+const KNOWN_KINDS: u32 = 12;
+
+/// What `Understands` says this version reads: 1 = ADR-025.
+pub const UNDERSTANDS: u16 = 1;
+
+/// Reactions are indices into a fixed set the apps draw (ADR-025):
+/// like, love, laugh, wow, sad, thanks, dislike.
+pub const REACTIONS: u8 = 7;
+
+/// A message in a chat, seen from whoever sends the `Ref`: `theirs` is
+/// false for their own message, true for the recipient's (ADR-025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ref {
+    pub id: u64,
+    pub theirs: bool,
+}
+
+/// The part of `Inner` before the body, to read past a body of unknown kind.
+#[derive(Deserialize)]
+struct InnerHead {
+    sender: Ed25519Key,
+    recipient: Ed25519Key,
+    seq: u64,
 }
 
 impl Inner {
@@ -412,14 +470,35 @@ impl Inner {
         if bytes[end] != 0x80 {
             return Err(Error::Malformed);
         }
-        let inner: Self = decode_exact(&bytes[..end])?;
+        let bytes = &bytes[..end];
+        let inner: Self = match decode_exact(bytes) {
+            Ok(inner) => inner,
+            Err(e) => return Self::unknown_kind(bytes).ok_or(e),
+        };
         inner.check_limits()?;
         Ok(inner)
     }
 
+    /// A body of a kind newer than this version, after a valid head.
+    fn unknown_kind(bytes: &[u8]) -> Option<Self> {
+        let (head, rest) = postcard::take_from_bytes::<InnerHead>(bytes).ok()?;
+        let (kind, _) = postcard::take_from_bytes::<u32>(rest).ok()?;
+        (kind >= KNOWN_KINDS).then_some(Self {
+            sender: head.sender,
+            recipient: head.recipient,
+            seq: head.seq,
+            body: Body::Unknown,
+        })
+    }
+
     fn check_limits(&self) -> Result<(), Error> {
         match &self.body {
-            Body::Text { text, .. } if text.len() > MAX_TEXT_BYTES => Err(Error::TooLarge),
+            Body::Text { text, .. } | Body::Message { text, .. } | Body::Edit { text, .. }
+                if text.len() > MAX_TEXT_BYTES =>
+            {
+                Err(Error::TooLarge)
+            }
+            Body::Unknown => Err(Error::Malformed),
             Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
                 if note.len() > MAX_NOTE_BYTES =>
             {
@@ -544,6 +623,122 @@ mod tests {
                 text: "a".repeat(len),
             },
         }
+    }
+
+    fn with(body: Body) -> Inner {
+        Inner {
+            sender: [1; 32],
+            recipient: [2; 32],
+            seq: 7,
+            body,
+        }
+    }
+
+    /// Pads raw `Inner` bytes the way `to_padded` does.
+    fn pad(mut buf: Vec<u8>) -> Vec<u8> {
+        let bucket = *BUCKETS.iter().find(|&&b| b > buf.len()).unwrap();
+        buf.push(0x80);
+        buf.resize(bucket, 0);
+        buf
+    }
+
+    #[test]
+    fn adr_025_kinds_roundtrip() {
+        let target = Ref {
+            id: u64::MAX,
+            theirs: true,
+        };
+        for body in [
+            Body::Message {
+                id: u64::MAX,
+                sent_at: u64::MAX,
+                expires_in: Some(u32::MAX),
+                reply_to: Some(target),
+                text: "a".repeat(MAX_TEXT_BYTES),
+            },
+            Body::Edit {
+                id: 3,
+                text: "fixed".into(),
+            },
+            Body::Delete { id: 3 },
+            Body::React {
+                target,
+                reaction: Some(REACTIONS - 1),
+            },
+            Body::React {
+                target,
+                reaction: None,
+            },
+            Body::Understands { level: UNDERSTANDS },
+        ] {
+            let inner = with(body);
+            assert_eq!(
+                Inner::from_padded(&inner.to_padded().unwrap()).unwrap(),
+                inner
+            );
+        }
+    }
+
+    #[test]
+    fn adr_025_texts_keep_the_limit() {
+        for body in [
+            Body::Message {
+                id: 1,
+                sent_at: 0,
+                expires_in: None,
+                reply_to: None,
+                text: "a".repeat(MAX_TEXT_BYTES + 1),
+            },
+            Body::Edit {
+                id: 1,
+                text: "a".repeat(MAX_TEXT_BYTES + 1),
+            },
+        ] {
+            assert!(matches!(with(body).to_padded(), Err(Error::TooLarge)));
+        }
+    }
+
+    #[test]
+    fn known_kinds_counts_every_kind_on_the_wire() {
+        // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
+        let raw = postcard::to_allocvec(&with(Body::Understands { level: 1 })).unwrap();
+        let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
+        assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
+    }
+
+    #[test]
+    fn a_newer_kind_is_unknown_with_its_seq() {
+        let mut raw = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
+        raw.extend(postcard::to_allocvec(&KNOWN_KINDS).unwrap());
+        raw.extend(b"whatever a newer version puts here");
+        assert_eq!(
+            Inner::from_padded(&pad(raw.clone())).unwrap(),
+            with(Body::Unknown)
+        );
+        // A kind number past one byte as well.
+        raw.truncate(73);
+        raw.extend(postcard::to_allocvec(&100_000u32).unwrap());
+        assert_eq!(Inner::from_padded(&pad(raw)).unwrap(), with(Body::Unknown));
+    }
+
+    #[test]
+    fn a_broken_known_kind_stays_malformed() {
+        let mut raw = postcard::to_allocvec(&with(Body::Delete { id: 1 })).unwrap();
+        raw.extend(b"trailing");
+        assert!(matches!(
+            Inner::from_padded(&pad(raw)),
+            Err(Error::Malformed)
+        ));
+        // A head cut short is no unknown kind either.
+        assert!(matches!(
+            Inner::from_padded(&pad(vec![1; 40])),
+            Err(Error::Malformed)
+        ));
+    }
+
+    #[test]
+    fn unknown_never_goes_on_the_wire() {
+        assert!(with(Body::Unknown).to_padded().is_err());
     }
 
     #[test]

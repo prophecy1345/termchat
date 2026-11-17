@@ -1777,6 +1777,14 @@ impl Engine {
                 }
                 self.happened.push(alert(false));
             }
+            // ADR-025: a kind from a newer client; its `seq` counted.
+            Body::Unknown => return self.persist(),
+            // ADR-025 kinds; the engine takes them in its own stage.
+            Body::Message { .. }
+            | Body::Edit { .. }
+            | Body::Delete { .. }
+            | Body::React { .. }
+            | Body::Understands { .. } => return self.persist(),
             Body::Goodbye if got.request => {}
             Body::Goodbye => {
                 self.system(i, "deleted their account; this chat is read-only now");
