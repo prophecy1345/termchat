@@ -48,7 +48,10 @@ Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
 Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
              1-7 react; Esc back to typing
-Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe
+Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe,
+             g new group
+In a group   Ctrl+R members (admin: a invite, x remove), Ctrl+T timer
+             (admin), Ctrl+D leave; join from the admin's chat: Ctrl+Y
 Ctrl+K       lock now (also after the idle time in settings)
 Ctrl+Q       quit
 ? / F1       this help
@@ -487,6 +490,32 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             ]))
         })
         .collect();
+    // ADR-027: groups follow the contacts, marked #, with their size.
+    let n = m.engine.data.contacts.len();
+    let mut items = items;
+    items.extend(m.engine.data.groups.iter().enumerate().map(|(gi, g)| {
+        let colour = match (g.left, g.unread > 0) {
+            (true, _) => t.overlay0,
+            (false, true) => t.accent,
+            (false, false) => t.mauve,
+        };
+        let badge = match g.unread {
+            0 => format!("{}", g.members().len()),
+            u => format!("{}·{u}", g.members().len()),
+        };
+        let label = fit(&clean(g.name()), width.saturating_sub(5 + badge.len()));
+        let pad = width.saturating_sub(4 + Span::raw(&label).width() + badge.len());
+        let style = match n + gi == m.selected {
+            true => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
+            false => Style::new().fg(t.subtext0),
+        };
+        ListItem::new(Line::from(vec![
+            Span::styled(" # ", Style::new().fg(colour)),
+            Span::styled(label, style),
+            Span::raw(" ".repeat(pad)),
+            Span::styled(badge, Style::new().fg(t.overlay1)),
+        ]))
+    }));
     if items.is_empty() {
         f.render_widget(
             Paragraph::new(Line::styled(" no contacts yet", muted)),
@@ -559,7 +588,9 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let bar = Style::new().bg(t.panel_bg).fg(t.text);
     let bold = Style::new().fg(t.text).add_modifier(Modifier::BOLD);
 
-    let Some(c) = m.current() else {
+    let group = m.current_group();
+    let chat = m.current();
+    if chat.is_none() && group.is_none() {
         f.render_widget(
             Paragraph::new(Line::styled(" termchat.app", bold)).style(bar),
             head,
@@ -585,36 +616,73 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         .areas(history);
         f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), mid);
         return input_bar(f, t, m, input, typed);
-    };
+    }
 
-    let them = name(m, c);
-    let mut title = vec![Span::styled(format!(" {them}"), bold)];
+    let them = chat.map(|c| name(m, c)).unwrap_or_default();
+    let mut title = Vec::new();
     let mut flag = |text: String, colour: Color| {
         title.push(Span::styled(format!("   {text}"), Style::new().fg(colour)));
     };
-    if let Some(p) = m.engine.profile_of(c) {
-        flag(format!("incognito as {}", clean(&p.nickname)), t.mauve);
-    }
-    if m.engine.is_request(&c.key) {
-        flag("request: Ctrl+Y accept, Ctrl+D reject".into(), t.peach);
-    }
-    if !c.verified {
-        flag("! not verified (Ctrl+F)".into(), t.peach);
-    }
-    if let Some(s) = c.expires_in {
-        flag(format!("⏱ {}", span(u64::from(s))), t.teal);
-    }
-    if c.no_history {
-        flag("no history".into(), t.mauve);
-    }
-    let waiting = c.hidden.len() + c.held_back as usize;
-    if waiting > 0 {
+    // ADR-027: a group's title, its size, its timer, and whether we lead it.
+    if let Some(g) = group {
+        let n = g.members().len();
         flag(
-            format!("{waiting} hidden until you accept (Ctrl+Y)"),
-            t.yellow,
+            format!("{n} member{}", if n == 1 { "" } else { "s" }),
+            t.overlay1,
         );
+        if let Some(s) = g.timer() {
+            flag(format!("⏱ {}", span(u64::from(s))), t.teal);
+        }
+        if g.is_admin() {
+            flag("admin".into(), t.mauve);
+        }
+        if g.left {
+            flag("you are no longer in this group".into(), t.overlay0);
+        }
+        flag("Ctrl+R members".into(), t.overlay0);
     }
+    if let Some(c) = chat {
+        if let Some(p) = m.engine.profile_of(c) {
+            flag(format!("incognito as {}", clean(&p.nickname)), t.mauve);
+        }
+        if m.engine.is_request(&c.key) {
+            flag("request: Ctrl+Y accept, Ctrl+D reject".into(), t.peach);
+        }
+        if !c.verified {
+            flag("! not verified (Ctrl+F)".into(), t.peach);
+        }
+        if let Some(s) = c.expires_in {
+            flag(format!("⏱ {}", span(u64::from(s))), t.teal);
+        }
+        if c.no_history {
+            flag("no history".into(), t.mauve);
+        }
+        let waiting = c.hidden.len() + c.held_back as usize;
+        if waiting > 0 {
+            flag(
+                format!("{waiting} hidden until you accept (Ctrl+Y)"),
+                t.yellow,
+            );
+        }
+        if m.engine.data.group_invites.iter().any(|i| i.from == c.key) {
+            flag("group invite: Ctrl+Y join".into(), t.yellow);
+        }
+    }
+    let head_name = match group {
+        Some(g) => format!(" # {}", clean(g.name())),
+        None => format!(" {them}"),
+    };
+    title.insert(0, Span::styled(head_name, bold));
     f.render_widget(Paragraph::new(Line::from(title)).style(bar), head);
+    let msgs: &[crate::data::Msg] = match (chat, group) {
+        (Some(c), _) => &c.messages,
+        (None, Some(g)) => &g.messages,
+        _ => &[],
+    };
+    let author = |msg: &crate::data::Msg| match (group, msg.author) {
+        (Some(g), Some(who)) => g.name_of(&who).map_or_else(|| "someone".into(), clean),
+        _ => them.clone(),
+    };
 
     // Messages in groups, like most chat apps: name and age over a run of
     // messages from one side, so wrapped text stays flush left.
@@ -622,7 +690,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let mut prev: Option<&crate::data::Msg> = None;
     let mut picked_line = None;
-    for (n, msg) in c.messages.iter().enumerate() {
+    for (n, msg) in msgs.iter().enumerate() {
         let text = match &msg.file {
             Some(f) if !msg.mine && f.complete() && f.data.is_some() => {
                 clean(&format!("{} · unsaved, Ctrl+G", f.label()))
@@ -635,14 +703,16 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             prev = None;
             continue;
         }
-        let same = prev.is_some_and(|p| p.mine == msg.mine && msg.at.saturating_sub(p.at) < 300);
+        let same = prev.is_some_and(|p| {
+            p.mine == msg.mine && p.author == msg.author && msg.at.saturating_sub(p.at) < 300
+        });
         if !same {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
             let (who, colour) = match msg.mine {
                 true => ("you".to_string(), t.accent),
-                false => (them.clone(), t.mauve),
+                false => (author(msg), t.mauve),
             };
             lines.push(Line::from(vec![
                 Span::styled(who, Style::new().fg(colour).add_modifier(Modifier::BOLD)),
@@ -659,10 +729,10 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             false => Style::new(),
         };
         if let Some(r) = msg.reply_to {
-            let quoted = c
-                .messages
-                .iter()
-                .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted);
+            // In a group ids are enough: each is random, and names no side.
+            let quoted = msgs.iter().find(|q| {
+                q.id == Some(r.id) && (group.is_some() || q.mine != r.theirs) && !q.deleted
+            });
             let quote = match quoted {
                 Some(q) => {
                     let first = crate::engine::clean_text(&q.text)
@@ -702,6 +772,22 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 spans.push(Span::styled(format!(" ✗ {why}"), Style::new().fg(t.red)))
             }
             _ => {}
+        }
+        // In a group: each reaction once, with how many chose it.
+        if let (Some(g), Some(id)) = (group, msg.id) {
+            let mut counts: Vec<(u8, usize)> = Vec::new();
+            for (_, r) in g.reactions_to(id) {
+                match counts.iter_mut().find(|(x, _)| *x == r) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((r, 1)),
+                }
+            }
+            for (r, n) in counts {
+                spans.extend([Span::raw("  "), reaction(t, r)]);
+                if n > 1 {
+                    spans.push(Span::styled(n.to_string(), muted));
+                }
+            }
         }
         // Theirs, then ours; the same one twice shows once with a 2.
         match (msg.their_reaction, msg.my_reaction) {
@@ -746,7 +832,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     }
     if let Some(at) = m.picked {
         // Only one's own messages can be edited or deleted.
-        let hint = match c.messages.get(at).is_some_and(|p| p.mine) {
+        let hint = match msgs.get(at).is_some_and(|p| p.mine) {
             true => " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ",
             false => " ↵ answer · 1–7 react · ↑↓ · esc ",
         };
@@ -824,9 +910,10 @@ fn input_bar(
         text.height,
     );
     if m.input.is_empty() {
-        let hint = match m.current() {
-            Some(_) => "message",
-            None => "add a contact first (Ctrl+A)",
+        let hint = match (m.current(), m.current_group()) {
+            (_, Some(g)) if g.left => "you are no longer in this group",
+            (Some(_), _) | (_, Some(_)) => "message",
+            _ => "add a contact first (Ctrl+A)",
         };
         f.render_widget(
             Paragraph::new(Span::styled(hint, Style::new().fg(t.overlay0))),
@@ -1406,6 +1493,91 @@ fn popup_pane(
                 ("esc close", false, esc),
             ];
             window(f, t, h, "safety number", lines, &buttons, 64, false);
+        }
+        Popup::NewGroup(s) => {
+            let lines = vec![
+                Line::from("A small private group, by invitation only (up to 32)."),
+                Line::from("Its name, seen only by its members:"),
+                Line::from(""),
+                field(t, s, Some(s.cursor_chars()), 46),
+            ];
+            let buttons = [("↵ create", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "new group", lines, &buttons, 56, false);
+        }
+        Popup::Members(at) => {
+            let Some(g) = m.current_group() else { return };
+            let me = m.engine.me();
+            let rows: Vec<(char, String)> = g
+                .members()
+                .iter()
+                .map(|x| {
+                    let mut label = clean(&x.nickname);
+                    if x.ed25519 == me {
+                        label.push_str("  (you)");
+                    }
+                    if g.roster.as_ref().is_some_and(|r| r.admin == x.ed25519) {
+                        label.push_str("  admin");
+                    }
+                    ('·', format!("{label}  {}", &fingerprint(&x.ed25519)[..11]))
+                })
+                .collect();
+            let mut lines = menu_rows(t, &rows, *at, 52);
+            let mut buttons: Vec<Button> = Vec::new();
+            if g.is_admin() {
+                lines.push(Line::from(""));
+                buttons.push(("a invite a contact", false, key(KeyCode::Char('a'))));
+                buttons.push(("x remove", false, key(KeyCode::Char('x'))));
+            }
+            buttons.push(("esc close", false, esc));
+            window(
+                f,
+                t,
+                h,
+                &format!("{} · members", clean(g.name())),
+                lines,
+                &buttons,
+                56,
+                false,
+            );
+        }
+        Popup::InviteToGroup(at) => {
+            let Some(gi) = m.group_index() else { return };
+            let rows: Vec<(char, String)> = m
+                .invitable(gi)
+                .iter()
+                .map(|&i| ('·', name(m, &m.engine.data.contacts[i])))
+                .collect();
+            let lines = match rows.is_empty() {
+                true => {
+                    plain("No contact to invite: everyone is in, or none of your contacts can be.")
+                }
+                false => menu_rows(t, &rows, *at, 52),
+            };
+            let buttons = [("↵ invite", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "invite to the group", lines, &buttons, 56, false);
+        }
+        Popup::RemoveMember(who) => {
+            let name = m
+                .current_group()
+                .and_then(|g| g.members().iter().find(|x| x.ed25519 == *who))
+                .map_or_else(String::new, |x| clean(&x.nickname));
+            let lines = plain(&format!(
+                "Remove {name} from the group?\nThe group moves to a new queue; they read nothing from now on."
+            ));
+            let buttons = [
+                ("y remove", true, key(KeyCode::Char('y'))),
+                ("esc keep", false, esc),
+            ];
+            window(f, t, h, "remove from the group", lines, &buttons, 64, true);
+        }
+        Popup::LeaveGroup => {
+            let lines =
+                plain("Leave this group?\nThe others are told; the chat stays here, read-only.");
+            let buttons = [
+                ("y leave", true, key(KeyCode::Char('y'))),
+                ("esc stay", false, esc),
+            ];
+            window(f, t, h, "leave the group", lines, &buttons, 60, true);
         }
         Popup::Rename(s) => {
             let lines = vec![

@@ -774,7 +774,7 @@ impl Engine {
         {
             return;
         }
-        self.data.groups[g].roster = Some(roster);
+        self.data.groups[g].set_roster(roster);
         self.know_members(g);
         self.share_key(g);
     }
@@ -866,7 +866,7 @@ impl Engine {
         roster.no += 1;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         let group = &mut self.data.groups[g];
-        group.roster = Some(roster.clone());
+        group.set_roster(roster.clone());
         if let Some(mine) = reader_of(&me) {
             group.reader = Some(mine);
         }
@@ -974,7 +974,7 @@ impl Engine {
         roster.expires_in = expires_in;
         roster.no += 1;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
-        self.data.groups[g].roster = Some(roster.clone());
+        self.data.groups[g].set_roster(roster.clone());
         self.persist();
         if roster.members.len() > 1 {
             self.send_group_body(g, Body::GroupRoster { roster });
@@ -1144,7 +1144,7 @@ impl Engine {
                     .filter(|k| !roster.members.iter().any(|m| m.ed25519 == *k))
                     .collect();
                 let group = &mut self.data.groups[g];
-                group.roster = Some(roster);
+                group.set_roster(roster);
                 group.send_id = send_id;
                 group.reader = Some(reader.clone());
                 self.group_send(

@@ -120,6 +120,9 @@ pub struct Group {
     pub asking: Vec<Ed25519Key>,
     /// Admin: contacts invited, with the reader made for them.
     pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// Names of members who left, for what they wrote before.
+    #[serde(default)]
+    pub former: Vec<(Ed25519Key, String)>,
     /// Our edits, deletes and reactions, waiting for the link.
     pub outbox: Vec<Body>,
     /// Each member's reaction to a message: (message id, member, reaction).
@@ -161,6 +164,30 @@ pub struct GroupInvite {
 impl Group {
     pub fn name(&self) -> &str {
         self.roster.as_ref().map_or("", |r| r.name.as_str())
+    }
+
+    /// A new roster; the names of those who left stay for their old messages.
+    pub fn set_roster(&mut self, roster: Roster) {
+        if let Some(old) = self.roster.take() {
+            for m in old.members {
+                if !roster.members.iter().any(|x| x.ed25519 == m.ed25519) {
+                    self.former.retain(|(k, _)| *k != m.ed25519);
+                    self.former.push((m.ed25519, m.nickname));
+                }
+            }
+        }
+        self.roster = Some(roster);
+    }
+
+    /// The name of member `who`, present or past.
+    pub fn name_of(&self, who: &Ed25519Key) -> Option<&str> {
+        let now = self.members().iter().find(|m| m.ed25519 == *who);
+        now.map(|m| m.nickname.as_str()).or_else(|| {
+            self.former
+                .iter()
+                .find(|(k, _)| k == who)
+                .map(|(_, n)| n.as_str())
+        })
     }
 
     /// The disappearing timer the admin set, seconds.

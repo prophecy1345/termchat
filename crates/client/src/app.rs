@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::layout::Position;
 use termchat_core::proto::{Ed25519Key, REACTIONS, Ref};
 
-use crate::data::{self, Contact};
+use crate::data::{self, Contact, Group, Msg};
 use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
@@ -121,6 +121,16 @@ pub enum Popup {
     Report(String),
     /// Delete our message at this index for both sides (ADR-025)?
     Unsend(usize),
+    /// ADR-027: the name of a new group.
+    NewGroup(Input),
+    /// The open group's members, with the highlighted row.
+    Members(usize),
+    /// Contacts the admin can invite, with the highlighted row.
+    InviteToGroup(usize),
+    /// Remove this member from the open group?
+    RemoveMember(Ed25519Key),
+    /// Leave the open group?
+    LeaveGroup,
 }
 
 /// What Enter does with the typed text (ADR-025).
@@ -470,7 +480,11 @@ impl App {
             Screen::Main(m) => {
                 match &mut m.popup {
                     Some(
-                        Popup::Add(s) | Popup::Rename(s) | Popup::Incognito(s) | Popup::Search(s),
+                        Popup::Add(s)
+                        | Popup::Rename(s)
+                        | Popup::Incognito(s)
+                        | Popup::Search(s)
+                        | Popup::NewGroup(s),
                     ) => s.insert(&plain),
                     // One bridge per pasted line; terminals often paste `\r` for a newline.
                     Some(Popup::Bridges { lines, .. }) => lines.extend(
@@ -580,6 +594,10 @@ impl Main {
 
     /// Takes in what the engine reported since the last call.
     fn absorb(&mut self) {
+        // An open group is read as it comes.
+        if let Some(g) = self.group_index() {
+            self.engine.data.groups[g].unread = 0;
+        }
         for h in std::mem::take(&mut self.engine.happened) {
             match h {
                 Happened::Alert { key, request } => self.alerts.push((key, request)),
@@ -600,9 +618,16 @@ impl Main {
     /// Most recent first; the open chat stays open while rows move.
     fn resort(&mut self) {
         let open = self.current().map(|c| c.key);
+        let group = self.current_group().map(|g| g.id);
         self.engine.resort();
         if let Some(i) = open.and_then(|k| self.engine.index(&k)) {
             self.selected = i;
+        }
+        // A new contact pushes the groups down; the open one stays open.
+        if let Some(g) =
+            group.and_then(|id| self.engine.data.groups.iter().position(|g| g.id == id))
+        {
+            self.selected = self.engine.data.contacts.len() + g;
         }
     }
 
@@ -641,12 +666,33 @@ impl Main {
         let shift = k.modifiers.contains(KeyModifiers::SHIFT);
         match (ctrl, k.code) {
             (true, KeyCode::Char('n')) | (false, KeyCode::Up)
-                if key.is_some() && (ctrl || shift) =>
+                if (key.is_some() || self.group_index().is_some()) && (ctrl || shift) =>
             {
                 match self.pickable().last() {
                     Some(&at) => self.picked = Some(at),
                     None => self.status = "no message here can be answered".into(),
                 }
+            }
+            // ADR-027: in a group, these keys mean the group's own actions.
+            (true, KeyCode::Char('t')) if self.group_index().is_some() => {
+                if let Some(g) = self.group_index() {
+                    let next = next_timer(self.engine.data.groups[g].timer());
+                    if let Err(e) = self.engine.set_group_timer(g, next) {
+                        self.status = e;
+                    }
+                }
+            }
+            (true, KeyCode::Char('d')) if self.group_index().is_some() => {
+                self.popup = Some(Popup::LeaveGroup)
+            }
+            (true, KeyCode::Char('r')) if self.group_index().is_some() => {
+                self.popup = Some(Popup::Members(0))
+            }
+            (true, KeyCode::Char('e' | 'b' | 'x' | 'f' | 'l' | 'g' | 'y' | 's'))
+                if self.group_index().is_some() =>
+            {
+                self.status =
+                    "not in a group: Ctrl+R for members, Ctrl+T timer, Ctrl+D leave".into()
             }
             (false, KeyCode::Esc) if self.compose != Compose::New => {
                 if matches!(self.compose, Compose::Edit(_)) {
@@ -680,8 +726,26 @@ impl Main {
             }
             (true, KeyCode::Char('d')) if key.is_some() => self.popup = Some(Popup::Delete),
             (true, KeyCode::Char('y')) => {
-                if key.is_some() {
-                    self.engine.accept(i);
+                let invite = key.and_then(|k| {
+                    self.engine
+                        .data
+                        .group_invites
+                        .iter()
+                        .position(|x| x.from == k)
+                });
+                match invite {
+                    // Not a request but a group invite from this contact.
+                    Some(n) if key.is_some_and(|k| !self.engine.is_request(&k)) => {
+                        match self.engine.accept_group(n) {
+                            Ok(g) => {
+                                let at = self.engine.data.contacts.len() + g;
+                                self.select(at);
+                            }
+                            Err(e) => self.status = e,
+                        }
+                    }
+                    _ if key.is_some() => self.engine.accept(i),
+                    _ => {}
                 }
             }
             (true, KeyCode::Char('t')) => self
@@ -717,25 +781,60 @@ impl Main {
         self.absorb();
     }
 
+    /// Contacts the admin of group `g` can invite: main identity, not in
+    /// the group yet, an app that reads groups.
+    pub fn invitable(&self, g: usize) -> Vec<usize> {
+        let group = &self.engine.data.groups[g];
+        (0..self.engine.data.contacts.len())
+            .filter(|&i| {
+                let c = &self.engine.data.contacts[i];
+                c.profile.is_none()
+                    && !c.left
+                    && !c.blocked
+                    && !self.engine.is_request(&c.key)
+                    && !group.members().iter().any(|m| m.ed25519 == c.key)
+            })
+            .collect()
+    }
+
+    /// The open group, if a group is open (ADR-027): groups follow the
+    /// contacts in the list.
+    pub fn group_index(&self) -> Option<usize> {
+        let g = self.selected.checked_sub(self.engine.data.contacts.len())?;
+        (g < self.engine.data.groups.len()).then_some(g)
+    }
+
+    pub fn current_group(&self) -> Option<&Group> {
+        self.engine.data.groups.get(self.group_index()?)
+    }
+
+    /// The messages of the open chat or group.
+    fn messages(&self) -> &[Msg] {
+        match (self.current(), self.current_group()) {
+            (Some(c), _) => &c.messages,
+            (None, Some(g)) => &g.messages,
+            _ => &[],
+        }
+    }
+
     /// Messages of the open chat that can be answered or reacted to.
     pub fn pickable(&self) -> Vec<usize> {
-        let Some(c) = self.current() else {
-            return Vec::new();
-        };
-        (0..c.messages.len())
+        let all = self.messages();
+        (0..all.len())
             .filter(|&n| {
-                let m = &c.messages[n];
+                let m = &all[n];
                 m.id.is_some() && !m.deleted && m.status != crate::data::Status::System
             })
             .collect()
     }
 
-    /// Where the message `r` points at is now, in the open chat.
+    /// Where the message `r` points at is now, in the open chat. In a group
+    /// the id alone names it.
     fn locate(&self, r: Ref) -> Option<usize> {
-        let c = self.current()?;
-        c.messages
+        let group = self.group_index().is_some();
+        self.messages()
             .iter()
-            .position(|m| m.id == Some(r.id) && m.mine != r.theirs && !m.deleted)
+            .position(|m| m.id == Some(r.id) && (group || m.mine != r.theirs) && !m.deleted)
     }
 
     /// Keys while a message is picked (ADR-025).
@@ -746,18 +845,28 @@ impl Main {
             self.picked = None;
             return;
         };
-        let Some(msg) = self.current().map(|c| &c.messages[at]) else {
+        let group = self.group_index();
+        let Some(msg) = self.messages().get(at) else {
             self.picked = None;
             return;
         };
-        let (mine, id, reaction) = (msg.mine, msg.id, msg.my_reaction);
+        let (mine, id) = (msg.mine, msg.id);
+        let reaction = match (self.current_group(), id) {
+            (Some(g), Some(id)) => {
+                let me = self.engine.me();
+                g.reactions_to(id).find(|(k, _)| *k == me).map(|(_, r)| r)
+            }
+            _ => msg.my_reaction,
+        };
+        // Every member of a group reads answers and reactions (ADR-027).
+        let rich = group.is_some() || self.engine.rich(i);
         let target = id.map(|id| Ref { id, theirs: !mine });
         let not_ours = "only your own messages can be changed";
         match k.code {
             KeyCode::Up => self.picked = Some(all[pos.saturating_sub(1)]),
             KeyCode::Down => self.picked = all.get(pos + 1).copied(),
             KeyCode::Esc => self.picked = None,
-            KeyCode::Char('r') | KeyCode::Enter => match self.engine.rich(i) {
+            KeyCode::Char('r') | KeyCode::Enter => match rich {
                 true => {
                     self.compose = target.map_or(Compose::New, Compose::Reply);
                     self.picked = None;
@@ -765,10 +874,10 @@ impl Main {
                 false => self.status = engine::OLDER_APP.into(),
             },
             KeyCode::Char('e') if !mine => self.status = not_ours.into(),
-            KeyCode::Char('e') => match (self.engine.rich(i), id) {
+            KeyCode::Char('e') => match (rich, id) {
                 (true, Some(id)) => {
                     self.compose = Compose::Edit(id);
-                    let text = self.current().map(|c| c.messages[at].text.clone());
+                    let text = self.messages().get(at).map(|m| m.text.clone());
                     self.input = Input::default();
                     self.input.insert(&text.unwrap_or_default());
                     self.picked = None;
@@ -782,7 +891,11 @@ impl Main {
                 if n < REACTIONS {
                     // The same one again takes it back.
                     let to = (reaction != Some(n)).then_some(n);
-                    if let Err(e) = self.engine.react(i, at, to) {
+                    let done = match group {
+                        Some(g) => self.engine.react_group(g, at, to),
+                        None => self.engine.react(i, at, to),
+                    };
+                    if let Err(e) = done {
                         self.status = e;
                     }
                 }
@@ -792,7 +905,16 @@ impl Main {
     }
 
     fn select(&mut self, i: usize) {
-        if i < self.engine.data.contacts.len() {
+        let n = self.engine.data.contacts.len();
+        if i >= n && i < n + self.engine.data.groups.len() {
+            self.selected = i;
+            self.scroll = 0;
+            self.picked = None;
+            self.compose = Compose::New;
+            self.engine.data.groups[i - n].unread = 0;
+            return;
+        }
+        if i < n {
             self.selected = i;
             self.scroll = 0;
             self.picked = None;
@@ -836,6 +958,7 @@ impl Main {
             ('o', "your invite".into()),
             ('a', "add contact".into()),
             ('b', format!("back up your identity{nag}")),
+            ('g', "new group".into()),
         ]
     }
 
@@ -992,19 +1115,24 @@ impl Main {
     fn send(&mut self) {
         self.scroll = 0;
         let text = std::mem::take(&mut self.input);
-        if text.trim().is_empty() && self.current().is_some() {
+        if text.trim().is_empty() && (self.current().is_some() || self.group_index().is_some()) {
             return;
         }
         let i = self.selected;
-        let sent = match self.compose {
-            Compose::New => self.engine.send(i, &text),
-            Compose::Reply(r) => match self.locate(r) {
-                Some(at) => self.engine.reply(i, at, &text),
-                None => Err("the message you answer is gone; Esc to write without it".into()),
+        let group = self.group_index();
+        let gone = "the message you answer is gone; Esc to write without it";
+        let sent = match (self.compose, group) {
+            (Compose::New, Some(g)) => self.engine.send_group(g, &text),
+            (Compose::New, None) => self.engine.send(i, &text),
+            (Compose::Reply(r), g) => match (self.locate(r), g) {
+                (Some(at), Some(g)) => self.engine.reply_group(g, at, &text),
+                (Some(at), None) => self.engine.reply(i, at, &text),
+                (None, _) => Err(gone.into()),
             },
-            Compose::Edit(id) => match self.locate(Ref { id, theirs: false }) {
-                Some(at) => self.engine.edit_message(i, at, &text),
-                None => Err("the message is gone; Esc to stop editing".into()),
+            (Compose::Edit(id), g) => match (self.locate(Ref { id, theirs: false }), g) {
+                (Some(at), Some(g)) => self.engine.edit_group_message(g, at, &text),
+                (Some(at), None) => self.engine.edit_message(i, at, &text),
+                (None, _) => Err("the message is gone; Esc to stop editing".into()),
             },
         };
         match sent {
@@ -1053,6 +1181,7 @@ impl Main {
                     Some(pager(Doc::News))
                 }
                 Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
+                Ok(Some('g')) => Some(Popup::NewGroup(Input::default())),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1206,6 +1335,80 @@ impl Main {
                 }
                 false => Some(Popup::Add(s)),
             },
+            Popup::NewGroup(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
+                true => match self.engine.create_group(&s) {
+                    Ok(g) => {
+                        let at = self.engine.data.contacts.len() + g;
+                        self.select(at);
+                        None
+                    }
+                    Err(e) => {
+                        self.status = e;
+                        Some(Popup::NewGroup(s))
+                    }
+                },
+                false => Some(Popup::NewGroup(s)),
+            },
+            Popup::Members(at) => {
+                let Some(g) = self.group_index() else { return };
+                let n = self.engine.data.groups[g].members().len();
+                let admin = self.engine.data.groups[g].is_admin();
+                match k.code {
+                    KeyCode::Up => Some(Popup::Members(at.saturating_sub(1))),
+                    KeyCode::Down => Some(Popup::Members((at + 1).min(n.saturating_sub(1)))),
+                    KeyCode::Char('a') if admin => Some(Popup::InviteToGroup(0)),
+                    KeyCode::Char('x') if admin => {
+                        let who = self.engine.data.groups[g]
+                            .members()
+                            .get(at)
+                            .map(|m| m.ed25519);
+                        who.filter(|k| *k != self.engine.me())
+                            .map(Popup::RemoveMember)
+                    }
+                    KeyCode::Esc => None,
+                    _ => Some(Popup::Members(at)),
+                }
+            }
+            Popup::InviteToGroup(at) => {
+                let Some(g) = self.group_index() else { return };
+                let rows = self.invitable(g);
+                match k.code {
+                    KeyCode::Up => Some(Popup::InviteToGroup(at.saturating_sub(1))),
+                    KeyCode::Down => Some(Popup::InviteToGroup(
+                        (at + 1).min(rows.len().saturating_sub(1)),
+                    )),
+                    KeyCode::Enter => {
+                        if let Some(&i) = rows.get(at)
+                            && let Err(e) = self.engine.invite_to_group(g, i)
+                        {
+                            self.status = e;
+                        } else if !rows.is_empty() {
+                            self.status = "invited: they join from their chat with you".into();
+                        }
+                        None
+                    }
+                    KeyCode::Esc => None,
+                    _ => Some(Popup::InviteToGroup(at)),
+                }
+            }
+            Popup::RemoveMember(who) => {
+                if k.code == KeyCode::Char('y')
+                    && let Some(g) = self.group_index()
+                    && let Err(e) = self.engine.remove_from_group(g, &who)
+                {
+                    self.status = e;
+                }
+                None
+            }
+            Popup::LeaveGroup => {
+                if k.code == KeyCode::Char('y')
+                    && let Some(g) = self.group_index()
+                    && let Err(e) = self.engine.leave_group(g)
+                {
+                    self.status = e;
+                }
+                None
+            }
             Popup::Rename(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => {
                     let name = s.trim();
@@ -1216,6 +1419,7 @@ impl Main {
                 false => Some(Popup::Rename(s)),
             },
             Popup::Add(_)
+            | Popup::NewGroup(_)
             | Popup::Rename(_)
             | Popup::Incognito(_)
             | Popup::Search(_)
