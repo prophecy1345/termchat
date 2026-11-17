@@ -1,14 +1,23 @@
 termchat.app is a private text messenger. There is no account: you are a pair of keys and a nickname you chose. No phone number, no email, no contact book.
 
+<b>How it connects</b>
+
+Messages travel through a relay: a small server that passes along encrypted envelopes. The app comes set up with the project's public relay (relay.termchat.app, also reachable as a Tor onion address), so it works right away and there is nothing to set up.
+
+Running your own relay is optional. It is one small program, or a Docker container, on any server: https://termchat.app/docs/relay/ . You type its address when you first start the app. People on different relays still talk to each other: each person's messages wait on their own relay, so no single server sees both sides of a conversation.
+
+A relay never sees message contents, nicknames or contact lists, and it does not know who talks to whom: it holds anonymous queues and ciphertext for 14 days at most. It does see when a queue is written to and read, and your IP address unless Tor is on.
+
 <ul>
-<li><b>End-to-end encrypted</b> with the Olm double ratchet (vodozemac, the library behind Matrix). The relay sees only ciphertext and who writes to whom, and keeps undelivered messages for 14 days at most.</li>
+<li><b>End-to-end encrypted</b> with the Olm double ratchet (vodozemac, the library behind Matrix).</li>
 <li><b>Add contacts by invite</b>: show a QR code or send the text. Compare the safety number to be sure.</li>
-<li><b>Tor built in</b>: connect only through Tor, so the relay does not see your IP.</li>
+<li><b>Answer, edit, delete and react</b> to messages, all inside the encryption.</li>
+<li><b>Tor built in</b>, with bridges where Tor is blocked, so the relay does not see your IP.</li>
 <li><b>Disappearing messages</b>, chats without history, block and report.</li>
 <li><b>A duress password</b> that erases everything when typed at unlock.</li>
 <li><b>Backups</b> of your identity, and a clean way to move to another device.</li>
 <li><b>No Google services.</b> Optional wake-ups through UnifiedPush and a push server of your choice; notifications never show names or text.</li>
-<li>The same engine as the terminal client, and the same colour themes.</li>
+<li>The same account works in the terminal client and the desktop app on macOS, Linux and Windows.</li>
 </ul>
 
-termchat.app is a free, non-commercial hobby project, licensed AGPL-3.0. It is not audited. Read the threat model before trusting it with your life: https://github.com/prophecy1345/termchat/blob/main/docs/threat-model.md
+termchat.app is a free, non-commercial hobby project, licensed AGPL-3.0. It has not had an independent audit yet; its encryption library has. Documentation: https://termchat.app/docs/ . Threat model: https://termchat.app/threat-model/
