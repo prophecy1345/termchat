@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use termchat_core::proto::{Ed25519Key, Invite};
-use termchat_engine::data::{Contact, Status};
+use termchat_engine::data::{Contact, Group, Msg, Status};
 use termchat_engine::engine::{self, Setup, next_timer};
 use termchat_engine::{Engine, Happened, Unlocked};
 use tokio::runtime::Runtime;
@@ -59,6 +59,8 @@ pub enum Event {
     WipeAnyway { why: String },
     /// An incognito invite asked for earlier is ready (ADR-023).
     Invite { text: String },
+    /// A new message in group `index` (ADR-027).
+    GroupAlert { index: Option<u32> },
 }
 
 #[uniffi::export(with_foreign)]
@@ -119,6 +121,57 @@ pub struct MessageView {
     /// Indices into `reactions()`.
     pub their_reaction: Option<u8>,
     pub my_reaction: Option<u8>,
+    /// In a group: who wrote it, when not us (ADR-027).
+    pub author: Option<String>,
+    /// In a group: each reaction once, with how many chose it.
+    pub counts: Vec<ReactionCount>,
+}
+
+#[derive(uniffi::Record)]
+pub struct ReactionCount {
+    pub reaction: u8,
+    pub count: u32,
+    /// Who chose it: names, "you" for us.
+    pub names: Vec<String>,
+}
+
+/// A small private group (ADR-027).
+#[derive(uniffi::Record)]
+pub struct GroupView {
+    pub index: u32,
+    pub name: String,
+    pub members: u32,
+    pub unread: u32,
+    pub admin: bool,
+    /// We left or were removed: read-only.
+    pub left: bool,
+    /// The admin's disappearing timer, seconds.
+    pub expires_in: Option<u32>,
+    pub last_at: u64,
+}
+
+#[derive(uniffi::Record)]
+pub struct MemberView {
+    pub name: String,
+    pub fingerprint: String,
+    pub admin: bool,
+    pub me: bool,
+}
+
+/// A group invite from contact `from`, to join or decline.
+#[derive(uniffi::Record)]
+pub struct GroupInviteView {
+    pub index: u32,
+    pub from: u32,
+    pub name: String,
+}
+
+/// A contact the admin can invite, and whether they are invited already.
+#[derive(uniffi::Record)]
+pub struct InvitableView {
+    pub index: u32,
+    pub name: String,
+    pub invited: bool,
 }
 
 /// How a reaction is drawn (ADR-025): lit pixels as x, y pairs in an 11×11
@@ -301,6 +354,17 @@ impl Account {
         self.engine.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Runs `f` on group `index`, if it exists.
+    fn with_group<T>(&self, index: u32, f: impl FnOnce(&mut Engine, usize) -> T) -> Result<T> {
+        let _rt = runtime().enter();
+        let mut e = self.lock();
+        let g = usize::try_from(index).unwrap_or(usize::MAX);
+        if g >= e.data.groups.len() {
+            return Err(String::from("no such group").into());
+        }
+        Ok(f(&mut e, g))
+    }
+
     /// Runs `f` on contact `index`, if it exists.
     fn with<T>(&self, index: u32, f: impl FnOnce(&mut Engine, usize) -> T) -> Result<T> {
         // Accepting, deleting, blocking or writing can start a relay link,
@@ -316,6 +380,88 @@ impl Account {
     }
 }
 
+/// One message for the app; `group` when it is a group's (ADR-027).
+fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> MessageView {
+    let mut counts: Vec<ReactionCount> = Vec::new();
+    let mut my_reaction = m.my_reaction;
+    if let (Some(g), Some(id)) = (group, m.id) {
+        my_reaction = None;
+        for (k, r) in g.reactions_to(id) {
+            let who = match k == me {
+                true => {
+                    my_reaction = Some(r);
+                    "you".to_string()
+                }
+                false => engine::clean(g.name_of(&k).unwrap_or("someone")),
+            };
+            match counts.iter_mut().find(|c| c.reaction == r) {
+                Some(c) => {
+                    c.count += 1;
+                    c.names.push(who);
+                }
+                None => counts.push(ReactionCount {
+                    reaction: r,
+                    count: 1,
+                    names: vec![who],
+                }),
+            }
+        }
+    }
+    MessageView {
+        mine: m.mine,
+        text: engine::clean_text(
+            &m.file
+                .as_ref()
+                .map_or_else(|| m.text.clone(), |f| f.label()),
+        ),
+        at: m.at,
+        system: m.status == Status::System,
+        status: match &m.status {
+            Status::Queued => "queued".into(),
+            Status::Sending(_) => "sending".into(),
+            Status::Sent => "sent".into(),
+            Status::Received => "received".into(),
+            Status::System => "system".into(),
+            Status::Failed(why) => why.clone(),
+        },
+        file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
+        file_unsaved: !m.mine
+            && m.file
+                .as_ref()
+                .is_some_and(|f| f.complete() && f.data.is_some()),
+        pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
+        edited: m.edited,
+        deleted: m.deleted,
+        quote: m.reply_to.map(|r| {
+            // In a group the id alone names it.
+            all.iter()
+                .find(|q| {
+                    q.id == Some(r.id) && (group.is_some() || q.mine != r.theirs) && !q.deleted
+                })
+                .map_or_else(
+                    || "message no longer here".into(),
+                    |q| {
+                        let text = engine::clean_text(&q.text);
+                        text.lines().next().unwrap_or_default().to_string()
+                    },
+                )
+        }),
+        their_reaction: if group.is_some() {
+            None
+        } else {
+            m.their_reaction
+        },
+        my_reaction,
+        author: match (group, m.author) {
+            (Some(g), Some(k)) if !m.mine => {
+                Some(engine::clean(g.name_of(&k).unwrap_or("someone")))
+            }
+            _ => None,
+        },
+        counts,
+    }
+}
+
 fn event(e: &Engine, h: Happened) -> Event {
     match h {
         Happened::Alert { key, request } => Event::Alert {
@@ -327,6 +473,14 @@ fn event(e: &Engine, h: Happened) -> Event {
         Happened::Wiped(note) => Event::Wiped { note },
         Happened::WipeAnyway(why) => Event::WipeAnyway { why },
         Happened::Invite(text) => Event::Invite { text },
+        Happened::GroupAlert { group } => Event::GroupAlert {
+            index: e
+                .data
+                .groups
+                .iter()
+                .position(|g| g.id == group)
+                .map(|g| g as u32),
+        },
     }
 }
 
@@ -434,51 +588,167 @@ impl Account {
 
     pub fn messages(&self, index: u32) -> Result<Vec<MessageView>> {
         self.with(index, |e, i| {
-            e.data.contacts[i]
-                .messages
+            let all = &e.data.contacts[i].messages;
+            all.iter().map(|m| msg_view(m, all, None, e.me())).collect()
+        })
+    }
+
+    /// Groups in a stable order, like `contacts()`.
+    pub fn groups(&self) -> Vec<GroupView> {
+        let e = self.lock();
+        e.data
+            .groups
+            .iter()
+            .enumerate()
+            .map(|(g, x)| GroupView {
+                index: g as u32,
+                name: engine::clean(x.name()),
+                members: x.members().len() as u32,
+                unread: u32::try_from(x.unread).unwrap_or(u32::MAX),
+                admin: x.is_admin(),
+                left: x.left,
+                expires_in: x.timer(),
+                last_at: x.messages.last().map_or(0, |m| m.at),
+            })
+            .collect()
+    }
+
+    pub fn group_messages(&self, group: u32) -> Result<Vec<MessageView>> {
+        self.with_group(group, |e, g| {
+            let x = &e.data.groups[g];
+            let me = e.me();
+            x.messages
                 .iter()
-                .map(|m| MessageView {
-                    mine: m.mine,
-                    text: engine::clean_text(
-                        &m.file
-                            .as_ref()
-                            .map_or_else(|| m.text.clone(), |f| f.label()),
-                    ),
-                    at: m.at,
-                    system: m.status == Status::System,
-                    status: match &m.status {
-                        Status::Queued => "queued".into(),
-                        Status::Sending(_) => "sending".into(),
-                        Status::Sent => "sent".into(),
-                        Status::Received => "received".into(),
-                        Status::System => "system".into(),
-                        Status::Failed(why) => why.clone(),
-                    },
-                    file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
-                    file_unsaved: !m.mine
-                        && m.file
-                            .as_ref()
-                            .is_some_and(|f| f.complete() && f.data.is_some()),
-                    pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
-                    edited: m.edited,
-                    deleted: m.deleted,
-                    quote: m.reply_to.map(|r| {
-                        let all = &e.data.contacts[i].messages;
-                        all.iter()
-                            .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted)
-                            .map_or_else(
-                                || "message no longer here".into(),
-                                |q| {
-                                    let text = engine::clean_text(&q.text);
-                                    text.lines().next().unwrap_or_default().to_string()
-                                },
-                            )
-                    }),
-                    their_reaction: m.their_reaction,
-                    my_reaction: m.my_reaction,
+                .map(|m| msg_view(m, &x.messages, Some(x), me))
+                .collect()
+        })
+    }
+
+    pub fn group_members(&self, group: u32) -> Result<Vec<MemberView>> {
+        self.with_group(group, |e, g| {
+            let x = &e.data.groups[g];
+            let admin = x.roster.as_ref().map(|r| r.admin);
+            x.members()
+                .iter()
+                .map(|m| MemberView {
+                    name: engine::clean(&m.nickname),
+                    fingerprint: termchat_core::fingerprint(&m.ed25519),
+                    admin: admin == Some(m.ed25519),
+                    me: m.ed25519 == e.me(),
                 })
                 .collect()
         })
+    }
+
+    pub fn group_invites(&self) -> Vec<GroupInviteView> {
+        let e = self.lock();
+        e.data
+            .group_invites
+            .iter()
+            .enumerate()
+            .filter_map(|(n, inv)| {
+                Some(GroupInviteView {
+                    index: n as u32,
+                    from: e.index(&inv.from)? as u32,
+                    name: engine::clean(&inv.roster.name),
+                })
+            })
+            .collect()
+    }
+
+    pub fn invitable(&self, group: u32) -> Result<Vec<InvitableView>> {
+        self.with_group(group, |e, g| {
+            let x = &e.data.groups[g];
+            e.invitable(g)
+                .into_iter()
+                .map(|i| {
+                    let c = &e.data.contacts[i];
+                    InvitableView {
+                        index: i as u32,
+                        name: e.name(c),
+                        invited: x.asking.contains(&c.key)
+                            || x.invited.iter().any(|(k, _)| *k == c.key),
+                    }
+                })
+                .collect()
+        })
+    }
+
+    /// Its index; the name is checked by the engine.
+    pub fn create_group(&self, name: String) -> Result<u32> {
+        let _rt = runtime().enter();
+        Ok(self.lock().create_group(&name)? as u32)
+    }
+
+    pub fn invite_to_group(&self, group: u32, contact: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.invite_to_group(g, contact as usize))??)
+    }
+
+    /// Joins with invite `invite`; the group's index.
+    pub fn accept_group(&self, invite: u32) -> Result<u32> {
+        let _rt = runtime().enter();
+        Ok(self.lock().accept_group(invite as usize)? as u32)
+    }
+
+    pub fn decline_group(&self, invite: u32) {
+        self.lock().decline_group(invite as usize);
+    }
+
+    pub fn send_group(&self, group: u32, text: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.send_group(g, &text))??)
+    }
+
+    pub fn reply_group(&self, group: u32, msg: u32, text: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.reply_group(g, msg as usize, &text))??)
+    }
+
+    pub fn edit_group_message(&self, group: u32, msg: u32, text: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.edit_group_message(g, msg as usize, &text))??)
+    }
+
+    pub fn delete_group_message(&self, group: u32, msg: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.delete_group_message(g, msg as usize))??)
+    }
+
+    pub fn react_group(&self, group: u32, msg: u32, reaction: Option<u8>) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.react_group(g, msg as usize, reaction))??)
+    }
+
+    /// The admin moves the group's timer on: off, 5m, 1h, 1d, 1w.
+    pub fn next_group_timer(&self, group: u32) -> Result<Option<u32>> {
+        self.with_group(group, |e, g| {
+            let next = next_timer(e.data.groups[g].timer());
+            e.set_group_timer(g, next).map(|()| next)
+        })?
+        .map_err(Into::into)
+    }
+
+    /// The admin removes the member with this fingerprint.
+    pub fn remove_from_group(&self, group: u32, fingerprint: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| {
+            let who = e.data.groups[g]
+                .members()
+                .iter()
+                .find(|m| termchat_core::fingerprint(&m.ed25519) == fingerprint)
+                .map(|m| m.ed25519)
+                .ok_or_else(|| String::from("not in this group"))?;
+            e.remove_from_group(g, &who)
+        })??)
+    }
+
+    pub fn leave_group(&self, group: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.leave_group(g))??)
+    }
+
+    /// The group on screen (`None`: none): its messages are read as they come.
+    pub fn open_group(&self, group: Option<u32>) {
+        let mut e = self.lock();
+        let g = group.and_then(|g| usize::try_from(g).ok());
+        let id = g.and_then(|g| e.data.groups.get(g)).map(|x| x.id);
+        if let Some(g) = g.filter(|_| id.is_some()) {
+            e.data.groups[g].unread = 0;
+        }
+        e.open_group = id;
     }
 
     /// The chat on screen (`None`: none): its messages are read as they come.
@@ -649,12 +919,22 @@ impl Account {
         let me = e.me();
         let mut all = vec![MAIN_INSTANCE.to_string()];
         all.extend(e.push_owners().iter().filter(|k| **k != me).map(hex));
+        // Each group's reader is a queue of its own (ADR-027).
+        let readers = e
+            .data
+            .groups
+            .iter()
+            .filter(|g| g.reader.is_some() && !g.left);
+        all.extend(readers.map(|g| group_instance(&g.id)));
         all
     }
 
     /// The UnifiedPush endpoint of `instance`, or `None` to stop its wake-ups (ADR-012).
     pub fn set_push(&self, instance: String, endpoint: Option<String>) {
         let mut e = self.lock();
+        if let Some(id) = group_of_instance(&e, &instance) {
+            return e.set_group_push(&id, endpoint);
+        }
         if let Some(who) = identity_of(&e, &instance) {
             e.set_push(&who, endpoint);
         }
@@ -663,6 +943,9 @@ impl Account {
     /// A push for `instance`: that queue's link checks itself (ADR-012).
     pub fn woken(&self, instance: String) {
         let e = self.lock();
+        if let Some(id) = group_of_instance(&e, &instance) {
+            return e.woken_group(&id);
+        }
         if let Some(who) = identity_of(&e, &instance) {
             e.woken(&who);
         }
@@ -675,6 +958,22 @@ impl Account {
     pub fn news_seen(&self) {
         self.lock().news_seen();
     }
+}
+
+/// A group reader's UnifiedPush instance: "g" and the group id in hex,
+/// apart from the 64 hex digits of a contact's.
+fn group_instance(id: &[u8; 16]) -> String {
+    let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+    format!("g{hex}")
+}
+
+fn group_of_instance(e: &Engine, instance: &str) -> Option<[u8; 16]> {
+    instance.strip_prefix('g')?;
+    e.data
+        .groups
+        .iter()
+        .map(|g| g.id)
+        .find(|id| group_instance(id) == instance)
 }
 
 /// Whose queue a UnifiedPush instance name is: an identity's or a contact's.
@@ -717,6 +1016,17 @@ mod tests {
         assert!(a.contacts().is_empty() && a.add("nonsense".into(), false).is_err());
         a.incognito_invite("ghost".into()).unwrap();
         assert_eq!(a.push_instances().len(), 2);
+        // ADR-027: a group waits for its queue offline, but is there.
+        let g = a.create_group("team".into()).unwrap();
+        assert_eq!(a.groups()[0].name, "team");
+        assert!(a.groups()[0].admin || a.groups()[0].members == 0);
+        assert!(a.group_messages(g).unwrap().is_empty());
+        assert!(a.group_messages(9).is_err() && a.create_group(String::new()).is_err());
+        assert_eq!(
+            a.push_instances().len(),
+            2,
+            "no reader yet, no push instance"
+        );
         let me = a.fingerprint();
         drop(a);
         assert!(state_exists(dir.clone()));
