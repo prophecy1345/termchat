@@ -11,10 +11,23 @@ The Android app needs Android 8.0 or newer and no Google services. [Install](ins
 
 ## The screens
 
-- **Chats:** your contacts, newest on top. ⋮ holds **Your invite**, **Add contact**, **Settings**, **What's new** and **Lock**; **+** also adds a contact.
+- **Chats:** your contacts, newest on top, then your groups. ⋮ holds **Your invite**, **Add contact**, **New group**, **Settings**, **What's new** and **Lock**; **+** also adds a contact.
 - **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the timer (the drop), 📎 for a file, the field and **Send**.
 - **Long press** a message to answer, react, copy it, and edit or delete your own; see [Messages](messages.md).
 - **Your invite** shows a QR code for another phone or the desktop app to scan; **Add contact** has **Scan QR code**. See [Contacts](contacts.md).
+
+## Groups
+
+A small private group of up to 32 people, by invitation only. Nobody can find it.
+
+- **Create:** ⋮ → **New group**, then a name. You are its admin.
+- **Invite:** ⋮ → **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
+- **Join:** the contact shows **GROUP INVITE** in the list; their chat has **Join** and **Decline**.
+- **In the group:** each message shows who wrote it; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (⋮ → **Disappearing**).
+- **Members:** tap the group's name, or ⋮ → **Members**. The admin removes people there (**Remove**): the group moves to a new queue, and they read nothing from then on.
+- **Leave:** ⋮ → **Leave**. The others are told; the chat stays, read-only.
+
+A new member does not see what was said before they joined. Groups carry no files yet.
 
 ## Messages while the app is closed
 
