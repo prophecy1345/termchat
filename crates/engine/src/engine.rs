@@ -2003,6 +2003,13 @@ impl Engine {
             c.messages.retain(|m| m.expires_at.is_none_or(|e| e > t));
             changed |= c.messages.len() != before;
         }
+        for g in &mut self.data.groups {
+            let before = g.messages.len();
+            g.messages.retain(|m| m.expires_at.is_none_or(|e| e > t));
+            let ids: Vec<u64> = g.messages.iter().filter_map(|m| m.id).collect();
+            g.reactions.retain(|(id, _, _)| ids.contains(id));
+            changed |= g.messages.len() != before;
+        }
         if changed {
             self.persist();
         }

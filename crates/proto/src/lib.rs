@@ -536,6 +536,8 @@ pub struct Roster {
     pub admin: Ed25519Key,
     pub name: String,
     pub members: Vec<RosterMember>,
+    /// The group's disappearing timer, seconds; the admin sets it.
+    pub expires_in: Option<u32>,
     #[serde(with = "serde_big_array")]
     pub signature: Signature,
 }
@@ -552,8 +554,15 @@ pub struct RosterMember {
 impl Roster {
     /// What the admin signs: everything but the signature.
     pub fn signed_bytes(&self) -> Vec<u8> {
-        postcard::to_allocvec(&(self.group, self.no, self.admin, &self.name, &self.members))
-            .unwrap_or_default()
+        let fields = (
+            self.group,
+            self.no,
+            self.admin,
+            &self.name,
+            &self.members,
+            self.expires_in,
+        );
+        postcard::to_allocvec(&fields).unwrap_or_default()
     }
 
     fn check(&self) -> Result<(), Error> {
@@ -937,6 +946,7 @@ mod tests {
                 admin: [0; 32],
                 name: "g".into(),
                 members: Vec::new(),
+                expires_in: None,
                 signature: [0; 64],
             },
             send_id: [0; 16],

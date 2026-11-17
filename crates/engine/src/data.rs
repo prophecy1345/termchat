@@ -110,7 +110,6 @@ pub struct Group {
     pub admin: Option<(QueueId, QueueToken)>,
     pub messages: Vec<Msg>,
     pub unread: usize,
-    pub expires_in: Option<u32>,
     pub next_client_id: u64,
     /// Members who hold our current Megolm session key.
     pub shared: Vec<Ed25519Key>,
@@ -143,6 +142,9 @@ pub struct GroupMoving {
     pub removed: Vec<Ed25519Key>,
     pub grants: Vec<(Ed25519Key, ReaderGrant)>,
     pub old: Option<(QueueId, QueueToken)>,
+    /// Contacts invited but not joined yet: invited again to the new queue.
+    #[serde(default)]
+    pub reinvite: Vec<Ed25519Key>,
 }
 
 /// An invite into a group, from the contact who is its admin.
@@ -159,6 +161,11 @@ pub struct GroupInvite {
 impl Group {
     pub fn name(&self) -> &str {
         self.roster.as_ref().map_or("", |r| r.name.as_str())
+    }
+
+    /// The disappearing timer the admin set, seconds.
+    pub fn timer(&self) -> Option<u32> {
+        self.roster.as_ref().and_then(|r| r.expires_in)
     }
 
     pub fn is_admin(&self) -> bool {

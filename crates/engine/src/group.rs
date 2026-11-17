@@ -74,6 +74,7 @@ impl Engine {
                 admin: me,
                 name: name.to_string(),
                 members: Vec::new(),
+                expires_in: None,
                 signature: [0; 64],
             }),
             relay_url: self.home(),
@@ -101,6 +102,9 @@ impl Engine {
         let group = &self.data.groups[g];
         if !group.is_admin() {
             return Err("only the group's admin adds members".into());
+        }
+        if group.moving.is_some() {
+            return Err("the group is moving to a new queue; try again in a moment".into());
         }
         if group.members().iter().any(|m| m.ed25519 == key) || group.asking.contains(&key) {
             return Err("already in the group or invited".into());
@@ -179,7 +183,7 @@ impl Engine {
         }
         let id = getrandom::u64().map_err(|e| e.to_string())?;
         let at = now();
-        let expires_in = group.expires_in;
+        let expires_in = group.timer();
         self.data.groups[g].messages.push(Msg {
             mine: true,
             text: text.to_string(),
@@ -285,7 +289,7 @@ impl Engine {
         if self.core().group_due(&gid, now()) {
             self.rotate_group(g);
         }
-        let expires_in = self.data.groups[g].expires_in;
+        let expires_in = self.data.groups[g].timer();
         for m in 0..self.data.groups[g].messages.len() {
             let msg = &self.data.groups[g].messages[m];
             if msg.status != Status::Queued || self.data.groups[g].send_id == [0; 16] {
@@ -802,15 +806,26 @@ impl Engine {
             .collect();
         let group = &mut self.data.groups[g];
         match group.moving.as_mut() {
-            Some(m) => m.removed.push(*who),
+            // Removed while moving: out of the move too.
+            Some(m) => {
+                m.removed.push(*who);
+                m.stay.retain(|k| k != who);
+                group.asking.retain(|k| k != who);
+            }
             None => {
+                // Invites not answered yet point at the old queue: they are
+                // made again for the new one.
+                let reinvite: Vec<Ed25519Key> = group.invited.drain(..).map(|(k, _)| k).collect();
+                let mut asking = stay.clone();
+                asking.extend(&reinvite);
                 group.moving = Some(GroupMoving {
-                    stay: stay.clone(),
+                    stay,
                     removed: vec![*who],
                     grants: Vec::new(),
                     old: None,
+                    reinvite,
                 });
-                group.asking = stay;
+                group.asking = asking;
                 self.group_send(g, ClientFrame::CreateGroup);
             }
         }
@@ -858,13 +873,30 @@ impl Engine {
         let send_id = group.send_id;
         self.persist();
         for (who, grant) in &moving.grants {
-            if *who == me {
+            if *who == me || moving.removed.contains(who) || moving.reinvite.contains(who) {
                 continue;
             }
             let body = Body::GroupMove {
                 roster: roster.clone(),
                 send_id,
                 reader: grant.clone(),
+            };
+            if let Err(e) = self.transmit(who, body) {
+                self.note(e);
+            }
+        }
+        for who in &moving.reinvite {
+            let Some(grant) = reader_of(who) else {
+                continue;
+            };
+            self.data.groups[g].invited.push((*who, grant.clone()));
+            let group = &self.data.groups[g];
+            let body = Body::GroupInvite {
+                roster: roster.clone(),
+                relay_url: group.relay_url.clone(),
+                onion_url: group.onion_url.clone(),
+                send_id,
+                reader: grant,
             };
             if let Err(e) = self.transmit(who, body) {
                 self.note(e);
@@ -928,6 +960,26 @@ impl Engine {
             file: None,
             ..Default::default()
         });
+    }
+
+    /// The admin sets group `g`'s disappearing timer: a new roster for all.
+    pub fn set_group_timer(&mut self, g: usize, expires_in: Option<u32>) -> Result<(), String> {
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if !group.is_admin() {
+            return Err("only the group's admin sets the timer".into());
+        }
+        let Some(mut roster) = group.roster.clone() else {
+            return Err("the group is not ready yet".into());
+        };
+        roster.expires_in = expires_in;
+        roster.no += 1;
+        roster.signature = self.core().sign_roster(&roster.signed_bytes());
+        self.data.groups[g].roster = Some(roster.clone());
+        self.persist();
+        if roster.members.len() > 1 {
+            self.send_group_body(g, Body::GroupRoster { roster });
+        }
+        Ok(())
     }
 
     /// We leave group `g`: the others are told, and it becomes read-only here.
@@ -1145,6 +1197,7 @@ fn empty_roster(group: GroupId) -> Roster {
         admin: [0; 32],
         name: String::new(),
         members: Vec::new(),
+        expires_in: None,
         signature: [0; 64],
     }
 }

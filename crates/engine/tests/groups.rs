@@ -245,3 +245,69 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
     assert!(!said(&e[1], 0, "anyone?"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_admins_timer_holds_for_all_and_a_pending_invite_survives_a_move() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-groups2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = [
+        engine(&dir, "alice", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    settle(&mut e).await;
+    befriend(&mut e, 1, 0).await;
+    befriend(&mut e, 2, 0).await;
+    let g = e[0].create_group("team").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+    for who in [1, 2] {
+        let i = e[0].index(&e[who].me()).unwrap();
+        e[0].invite_to_group(g, i).unwrap();
+    }
+    pump(&mut e, |e| {
+        e[1].data.group_invites.len() == 1 && e[2].data.group_invites.len() == 1
+    })
+    .await;
+    // Bob joins; Carol waits. Then Bob is removed: the group moves, and
+    // Carol's invite is made again for the new queue.
+    e[1].accept_group(0).unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].members().len() == 2).await;
+    let bob = e[1].me();
+    e[0].remove_from_group(0, &bob).unwrap();
+    pump(&mut e, |e| {
+        e[1].data.groups[0].left && e[0].data.groups[0].moving.is_none()
+    })
+    .await;
+    pump(&mut e, |e| {
+        e[2].data.group_invites.len() == 1 && e[0].data.groups[0].invited.len() == 1
+    })
+    .await;
+    e[2].accept_group(0).unwrap();
+    pump(&mut e, |e| {
+        e[2].data
+            .groups
+            .first()
+            .is_some_and(|g| g.members().len() == 2)
+            && e[0].data.groups[0].members().len() == 2
+    })
+    .await;
+
+    // The admin's timer reaches the member and holds for what they send.
+    e[0].set_group_timer(0, Some(3600)).unwrap();
+    pump(&mut e, |e| e[2].data.groups[0].timer() == Some(3600)).await;
+    assert!(
+        e[2].set_group_timer(0, None).is_err(),
+        "only the admin sets it"
+    );
+    e[2].send_group(0, "for an hour").unwrap();
+    pump(&mut e, |e| said(&e[0], 0, "for an hour")).await;
+    let m = e[0].data.groups[0]
+        .messages
+        .iter()
+        .find(|m| m.text == "for an hour")
+        .unwrap();
+    assert!(m.expires_at.is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
