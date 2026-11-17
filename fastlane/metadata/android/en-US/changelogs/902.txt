@@ -1,0 +1,1 @@
+Messages with several lines now keep them in the terminal client, the desktop app on macOS has a rounded Dock icon, and the wipe dialog describes what the relay does correctly. A user guide is at termchat.app/docs.

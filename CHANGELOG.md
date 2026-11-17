@@ -3,6 +3,18 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.9.2
+
+- Documentation: a user guide at termchat.app/docs, in English and
+  Russian, with every step checked. The manual in the terminal client
+  (Ctrl+P, m) shows the same guide.
+- Terminal: a message with several lines keeps them, and the quote over
+  an answer shows its first line. They were joined into one.
+- macOS: the desktop app has a rounded Dock icon like other apps, not a
+  full square.
+- The wipe dialog says the relay deletes your queues; "forgets your key"
+  was left over from before anonymous queues.
+
 ## 0.9.1
 
 - Answers, edits, deletes and reactions now work when the two of you
