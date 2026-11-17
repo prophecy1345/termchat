@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
 use termchat_core::proto::{REACTIONS, Ref};
-use termchat_engine::data::{Contact, Msg, Status};
+use termchat_engine::data::{Contact, Group, Msg, Status};
 use termchat_engine::engine::{
     OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
 };
@@ -16,6 +16,13 @@ use termchat_engine::{Engine, Happened, reactions, themes};
 use crate::dialog::Dialog;
 
 type Key = [u8; 32];
+
+/// What the right side shows: a chat or a group (ADR-027), by index.
+#[derive(Clone, Copy)]
+enum Open {
+    Chat(usize),
+    Group(usize),
+}
 
 const TOAST_FOR: Duration = Duration::from_secs(5);
 const MAX_TOASTS: usize = 4;
@@ -123,7 +130,8 @@ impl Pal {
         }
         v.panel_fill = self.bg;
         v.window_fill = self.surface;
-        v.extreme_bg_color = self.surface;
+        // Fields a shade off the window they sit in, or they vanish into it.
+        v.extreme_bg_color = self.bg;
         v.override_text_color = Some(self.text);
         v.selection.bg_fill = self.mine;
         v.selection.stroke = Stroke::new(1.0, self.accent);
@@ -149,6 +157,8 @@ struct Toast {
 pub struct Chat {
     pub engine: Box<Engine>,
     pub(crate) open: Option<Key>,
+    /// The open group, when no chat is open (ADR-027).
+    pub(crate) group: Option<[u8; 16]>,
     input: String,
     toasts: Vec<Toast>,
     last_sound: Option<Instant>,
@@ -187,6 +197,7 @@ impl Chat {
         let mut chat = Self {
             engine,
             open: None,
+            group: None,
             input: String::new(),
             toasts: Vec::new(),
             last_sound: None,
@@ -217,6 +228,9 @@ impl Chat {
         }
         if let Some(i) = self.open.and_then(|k| self.engine.index(&k)) {
             self.engine.data.contacts[i].unread = 0;
+        }
+        if let Some(g) = self.open_group() {
+            self.engine.data.groups[g].unread = 0;
         }
         self.toasts.retain(|t| t.until > Instant::now());
         self.absorb(focused, sound)
@@ -274,8 +288,28 @@ impl Chat {
 
     pub(crate) fn select(&mut self, key: Key) {
         self.open = Some(key);
+        self.group = None;
         self.input.clear();
         self.compose = Compose::New;
+    }
+
+    pub(crate) fn select_group(&mut self, g: usize) {
+        self.group = self.engine.data.groups.get(g).map(|g| g.id);
+        self.open = None;
+        self.input.clear();
+        self.compose = Compose::New;
+    }
+
+    pub(crate) fn open_group(&self) -> Option<usize> {
+        let id = self.group?;
+        self.engine.data.groups.iter().position(|g| g.id == id)
+    }
+
+    fn msgs(&self, at: Open) -> &[Msg] {
+        match at {
+            Open::Chat(i) => &self.engine.data.contacts[i].messages,
+            Open::Group(g) => &self.engine.data.groups[g].messages,
+        }
     }
 
     /// Draws the window. True: the user asked to lock.
@@ -306,6 +340,7 @@ impl Chat {
         let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.contacts.len())
             .partition(|&i| self.engine.is_request(&self.engine.data.contacts[i].key));
         let mut picked = None;
+        let mut picked_group = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .max_height(ui.available_height() - 36.0)
@@ -324,10 +359,36 @@ impl Chat {
                 }
                 if contacts.is_empty() && requests.is_empty() {
                     ui.label(RichText::new("no contacts yet").color(p.dim));
+                    ui.add_space(10.0);
+                }
+                // ADR-027: small private groups, after the contacts.
+                let groups = self.engine.data.groups.len();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("Groups  {groups}")).color(p.dim));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .small_button("+ New")
+                            .on_hover_text("A new private group")
+                            .clicked()
+                        {
+                            self.dialog = Some(Dialog::NewGroup {
+                                name: String::new(),
+                                error: String::new(),
+                            });
+                        }
+                    });
+                });
+                for g in 0..groups {
+                    if self.group_row(ui, p, g) {
+                        picked_group = Some(g);
+                    }
                 }
             });
         if let Some(k) = picked {
             self.select(k);
+        }
+        if let Some(g) = picked_group {
+            self.select_group(g);
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.horizontal(|ui| {
@@ -404,7 +465,116 @@ impl Chat {
         r.clicked().then_some(c.key)
     }
 
+    /// One group in the list; true if clicked.
+    fn group_row(&self, ui: &mut egui::Ui, p: &Pal, g: usize) -> bool {
+        let group = &self.engine.data.groups[g];
+        let name = termchat_engine::clean(group.name());
+        let fill = match self.group == Some(group.id) {
+            true => p.surface,
+            false => Color32::TRANSPARENT,
+        };
+        egui::Frame::new()
+            .fill(fill)
+            .corner_radius(4)
+            .inner_margin(6)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    avatar(ui, p, &format!("# {name}"), 32.0);
+                    ui.vertical(|ui| {
+                        let colour = if group.left { p.dim } else { p.text };
+                        ui.label(RichText::new(&name).monospace().color(colour));
+                        let (state, ok) = group_state(group);
+                        ui.label(caps(&state, if ok { p.accent } else { p.dim }));
+                    });
+                    if group.unread > 0 {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let n = group.unread.min(99).to_string();
+                            ui.label(RichText::new(n).strong().color(p.accent));
+                        });
+                    }
+                });
+            })
+            .response
+            .interact(egui::Sense::click())
+            .clicked()
+    }
+
+    fn group_chat(&mut self, ui: &mut egui::Ui, p: &Pal, g: usize) {
+        self.group_header(ui, p, g);
+        egui::Panel::bottom("input")
+            .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
+            .show(ui, |ui| self.input_row(ui, p, Open::Group(g)));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().inner_margin(12))
+            .show(ui, |ui| {
+                let all = ui.max_rect().expand(12.0);
+                crate::synth::backdrop(ui, p, all, false);
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        let group = &self.engine.data.groups[g];
+                        let me = self.engine.me();
+                        let view = View {
+                            msgs: &group.messages,
+                            group: Some(group),
+                            me,
+                            rich: true,
+                        };
+                        if let Some(act) = messages(ui, p, view) {
+                            self.act(Open::Group(g), act);
+                        }
+                    });
+            });
+    }
+
+    fn group_header(&mut self, ui: &mut egui::Ui, p: &Pal, g: usize) {
+        let group = &self.engine.data.groups[g];
+        let name = termchat_engine::clean(group.name());
+        let admin = group.is_admin();
+        let mut next = None;
+        egui::Panel::top("chat-header")
+            .frame(
+                egui::Frame::new()
+                    .fill(p.bg)
+                    .inner_margin(12)
+                    .stroke(Stroke::new(1.0, p.line)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    avatar(ui, p, &format!("# {name}"), 40.0);
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(&name).strong().size(16.0));
+                        let (mut state, ok) = group_state(group);
+                        if admin {
+                            state.push_str(" · YOU ARE ADMIN");
+                        }
+                        ui.label(caps(&state, if ok { p.accent } else { p.dim }));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        // Right to left: the last one stands first.
+                        if !group.left && ui.button("Leave").clicked() {
+                            next = Some(Dialog::LeaveGroup);
+                        }
+                        if admin && ui.button("Invite").clicked() {
+                            next = Some(Dialog::InviteToGroup(String::new()));
+                        }
+                        if ui.button("Members").clicked() {
+                            next = Some(Dialog::Members);
+                        }
+                    });
+                });
+            });
+        if let Some(d) = next {
+            self.dialog = Some(d);
+        }
+    }
+
     fn chat(&mut self, ui: &mut egui::Ui, p: &Pal) {
+        if let Some(g) = self.open_group() {
+            return self.group_chat(ui, p, g);
+        }
         let Some(i) = self.open.and_then(|k| self.engine.index(&k)) else {
             ui.centered_and_justified(|ui| {
                 crate::synth::backdrop(ui, p, ui.max_rect(), true);
@@ -416,7 +586,7 @@ impl Chat {
         self.header(ui, p, i, request);
         egui::Panel::bottom("input")
             .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
-            .show(ui, |ui| self.input_row(ui, p, i));
+            .show(ui, |ui| self.input_row(ui, p, Open::Chat(i)));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(12))
             .show(ui, |ui| {
@@ -426,54 +596,77 @@ impl Chat {
                     .auto_shrink(false)
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        let rich = self.engine.rich(i);
-                        if let Some(act) = messages(ui, p, &self.engine.data.contacts[i], rich) {
-                            self.act(i, act);
+                        let view = View {
+                            msgs: &self.engine.data.contacts[i].messages,
+                            group: None,
+                            me: self.engine.me(),
+                            rich: self.engine.rich(i),
+                        };
+                        if let Some(act) = messages(ui, p, view) {
+                            self.act(Open::Chat(i), act);
                         }
                     });
             });
     }
 
-    fn act(&mut self, i: usize, act: Act) {
-        let c = &self.engine.data.contacts[i];
+    fn act(&mut self, at: Open, act: Act) {
+        let msgs = self.msgs(at);
         let target = |n: usize| {
-            let m: &Msg = &c.messages[n];
+            let m: &Msg = &msgs[n];
             m.id.map(|id| Ref {
                 id,
                 theirs: !m.mine,
             })
         };
+        let rich = match at {
+            Open::Chat(i) => self.engine.rich(i),
+            Open::Group(_) => true,
+        };
         match act {
             Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
-            _ if !self.engine.rich(i) => self.status = OLDER_APP.into(),
+            _ if !rich => self.status = OLDER_APP.into(),
             Act::Reply(n) => {
                 self.compose = target(n).map_or(Compose::New, Compose::Reply);
                 self.focus_input = true;
             }
             Act::Edit(n) => {
                 if let Some(Ref { id, .. }) = target(n) {
-                    self.input = c.messages[n].text.clone();
+                    self.input = msgs[n].text.clone();
                     self.compose = Compose::Edit(id);
                     self.focus_input = true;
                 }
             }
             Act::Delete(n) => self.dialog = Some(Dialog::DeleteMessage(n)),
             Act::React(n, r) => {
-                // The same one again takes it back.
-                let to = (c.messages[n].my_reaction != Some(r)).then_some(r);
-                if let Err(e) = self.engine.react(i, n, to) {
+                let done = match at {
+                    Open::Chat(i) => {
+                        // The same one again takes it back.
+                        let to = (msgs[n].my_reaction != Some(r)).then_some(r);
+                        self.engine.react(i, n, to)
+                    }
+                    Open::Group(g) => {
+                        let mine = my_group_reaction(
+                            &self.engine.data.groups[g],
+                            &msgs[n],
+                            self.engine.me(),
+                        );
+                        let to = (mine != Some(r)).then_some(r);
+                        self.engine.react_group(g, n, to)
+                    }
+                };
+                if let Err(e) = done {
                     self.status = e;
                 }
             }
         }
     }
 
-    /// Where the message `r` points at is now, in chat `i`.
-    fn locate(&self, i: usize, r: Ref) -> Option<usize> {
-        self.engine.data.contacts[i]
-            .messages
+    /// Where the message `r` points at is now. In a group the id alone names it.
+    fn locate(&self, at: Open, r: Ref) -> Option<usize> {
+        let group = matches!(at, Open::Group(_));
+        self.msgs(at)
             .iter()
-            .position(|m| m.id == Some(r.id) && m.mine != r.theirs && !m.deleted)
+            .position(|m| m.id == Some(r.id) && (group || m.mine != r.theirs) && !m.deleted)
     }
 
     fn header(&mut self, ui: &mut egui::Ui, p: &Pal, i: usize, request: bool) {
@@ -481,6 +674,7 @@ impl Chat {
         let name = self.engine.name(c);
         let mut accept = false;
         let mut next = None;
+        let mut join = None;
         egui::Panel::top("chat-header")
             .frame(
                 egui::Frame::new()
@@ -511,6 +705,25 @@ impl Chat {
                         }
                     });
                 });
+                // ADR-027: their group invites, answered here.
+                for (n, inv) in self.engine.data.group_invites.iter().enumerate() {
+                    if inv.from != c.key || request {
+                        continue;
+                    }
+                    ui.horizontal(|ui| {
+                        let what = termchat_engine::clean(&inv.roster.name);
+                        ui.label(
+                            RichText::new(format!("invites you to the group \"{what}\""))
+                                .color(p.warn),
+                        );
+                        if ui.button("Join").clicked() {
+                            join = Some((n, true));
+                        }
+                        if ui.button("Decline").clicked() {
+                            join = Some((n, false));
+                        }
+                    });
+                }
                 let waiting = c.hidden.len() + c.held_back as usize;
                 if request && waiting > 0 {
                     ui.label(
@@ -521,6 +734,14 @@ impl Chat {
             });
         if accept {
             self.engine.accept(i);
+        }
+        match join {
+            Some((n, true)) => match self.engine.accept_group(n) {
+                Ok(g) => self.select_group(g),
+                Err(e) => self.status = e,
+            },
+            Some((n, false)) => self.engine.decline_group(n),
+            None => {}
         }
         match next {
             Some(Menu::Open(d)) => self.dialog = Some(d),
@@ -538,8 +759,11 @@ impl Chat {
         }
     }
 
-    fn input_row(&mut self, ui: &mut egui::Ui, p: &Pal, i: usize) {
-        let timer = self.engine.data.contacts[i].expires_in;
+    fn input_row(&mut self, ui: &mut egui::Ui, p: &Pal, at: Open) {
+        let timer = match at {
+            Open::Chat(i) => self.engine.data.contacts[i].expires_in,
+            Open::Group(g) => self.engine.data.groups[g].timer(),
+        };
         let label = |t: Option<u32>| {
             RichText::new(match t {
                 Some(s) => format!("timer {}", span(u64::from(s))),
@@ -572,9 +796,9 @@ impl Chat {
         let mut send = false;
         let banner = match self.compose {
             Compose::New => None,
-            Compose::Reply(r) => Some(match self.locate(i, r) {
+            Compose::Reply(r) => Some(match self.locate(at, r) {
                 Some(n) => {
-                    let text = clean_text(&self.engine.data.contacts[i].messages[n].text);
+                    let text = clean_text(&self.msgs(at)[n].text);
                     let first = text.lines().next().unwrap_or_default().to_string();
                     format!("↳ Answering: {first}")
                 }
@@ -612,10 +836,12 @@ impl Chat {
                     // File and the timer sit on the field's bottom edge.
                     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                         ui.horizontal(|ui| {
-                            if ui
-                                .add(egui::Button::new(file_text).corner_radius(2))
-                                .on_hover_text("Send a file, up to 1 MiB")
-                                .clicked()
+                            // Groups carry text only for now.
+                            if matches!(at, Open::Chat(_))
+                                && ui
+                                    .add(egui::Button::new(file_text).corner_radius(2))
+                                    .on_hover_text("Send a file, up to 1 MiB")
+                                    .clicked()
                             {
                                 self.dialog = Some(Dialog::SendFile {
                                     path: String::new(),
@@ -628,10 +854,27 @@ impl Chat {
                                         .corner_radius(2)
                                         .min_size(egui::vec2(timer_width, 0.0)),
                                 )
-                                .on_hover_text("Disappearing messages: click for the next timer");
+                                .on_hover_text(match at {
+                                    Open::Chat(_) => {
+                                        "Disappearing messages: click for the next timer"
+                                    }
+                                    Open::Group(_) => {
+                                        "Disappearing messages: the group's admin sets it"
+                                    }
+                                });
                             if t.clicked() {
-                                self.engine
-                                    .edit(i, |c| c.expires_in = next_timer(c.expires_in));
+                                match at {
+                                    Open::Chat(i) => self
+                                        .engine
+                                        .edit(i, |c| c.expires_in = next_timer(c.expires_in)),
+                                    Open::Group(g) => {
+                                        if let Err(e) =
+                                            self.engine.set_group_timer(g, next_timer(timer))
+                                        {
+                                            self.status = e;
+                                        }
+                                    }
+                                }
                             }
                         });
                     });
@@ -690,15 +933,19 @@ impl Chat {
             return;
         }
         let text = std::mem::take(&mut self.input);
-        let sent = match self.compose {
-            Compose::New => self.engine.send(i, &text),
-            Compose::Reply(r) => match self.locate(i, r) {
-                Some(n) => self.engine.reply(i, n, &text),
-                None => Err("the message you answer is gone; Esc to write without it".into()),
+        let gone = "the message you answer is gone; Esc to write without it";
+        let sent = match (self.compose, at) {
+            (Compose::New, Open::Chat(i)) => self.engine.send(i, &text),
+            (Compose::New, Open::Group(g)) => self.engine.send_group(g, &text),
+            (Compose::Reply(r), _) => match (self.locate(at, r), at) {
+                (Some(n), Open::Chat(i)) => self.engine.reply(i, n, &text),
+                (Some(n), Open::Group(g)) => self.engine.reply_group(g, n, &text),
+                (None, _) => Err(gone.into()),
             },
-            Compose::Edit(id) => match self.locate(i, Ref { id, theirs: false }) {
-                Some(n) => self.engine.edit_message(i, n, &text),
-                None => Err("the message is gone; Esc to stop editing".into()),
+            (Compose::Edit(id), _) => match (self.locate(at, Ref { id, theirs: false }), at) {
+                (Some(n), Open::Chat(i)) => self.engine.edit_message(i, n, &text),
+                (Some(n), Open::Group(g)) => self.engine.edit_group_message(g, n, &text),
+                (None, _) => Err("the message is gone; Esc to stop editing".into()),
             },
         };
         match sent {
@@ -823,12 +1070,27 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
     Some(next)
 }
 
-/// The chat history. `Some(m)`: Save was clicked on message `m`, a file.
-/// The history. `rich`: the contact's app reads answers and reactions (ADR-025).
-fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> {
+/// What the history draws: a chat's messages, or a group's (ADR-027).
+struct View<'a> {
+    msgs: &'a [Msg],
+    group: Option<&'a Group>,
+    me: Key,
+    /// The other side reads answers and reactions (ADR-025); always in a group.
+    rich: bool,
+}
+
+/// Our reaction to `m` in group `g`.
+fn my_group_reaction(g: &Group, m: &Msg, me: Key) -> Option<u8> {
+    let id = m.id?;
+    g.reactions_to(id).find(|(k, _)| *k == me).map(|(_, r)| r)
+}
+
+/// The history; what a click on a message asks for.
+fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
     let width = ui.available_width();
     let mut act = None;
-    for (n, m) in c.messages.iter().enumerate() {
+    let mut last_author = None;
+    for (n, m) in v.msgs.iter().enumerate() {
         let text = match &m.file {
             Some(f) => clean_text(f.label().trim_start_matches("📄 ")),
             None => clean_text(&m.text),
@@ -844,8 +1106,26 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
                     });
             });
             ui.add_space(6.0);
+            last_author = None;
             continue;
         }
+        let my_reaction = match v.group {
+            Some(g) => my_group_reaction(g, m, v.me),
+            None => m.my_reaction,
+        };
+        // In a group, who wrote it, over each run of their messages.
+        if let Some(g) = v.group
+            && !m.mine
+            && last_author != Some(m.author)
+        {
+            let who = m.author.and_then(|k| g.name_of(&k)).unwrap_or("someone");
+            ui.label(
+                RichText::new(termchat_engine::clean(who))
+                    .small()
+                    .color(p.mauve),
+            );
+        }
+        last_author = Some(m.author);
         let mut mark = match &m.status {
             Status::Queued | Status::Sending(_) => " · sending".to_string(),
             Status::Sent => " · sent".into(),
@@ -864,10 +1144,11 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
                 .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
                     if let Some(r) = m.reply_to {
-                        let quoted = c
-                            .messages
-                            .iter()
-                            .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted);
+                        let quoted = v.msgs.iter().find(|q| {
+                            q.id == Some(r.id)
+                                && (v.group.is_some() || q.mine != r.theirs)
+                                && !q.deleted
+                        });
                         let quote = match quoted {
                             Some(q) => {
                                 let q = clean_text(&q.text);
@@ -884,39 +1165,47 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
                     }
                 })
                 .response;
-            let pointable = rich && m.id.is_some() && !m.deleted;
+            let pointable = v.rich && m.id.is_some() && !m.deleted;
             if pointable {
-                bubble
+                let r = bubble
                     .interact(egui::Sense::click())
                     .on_hover_text(match m.mine {
-                        true => "Right-click: answer, react, edit, delete",
-                        false => "Right-click: answer, react",
-                    })
-                    .context_menu(|ui| {
-                        ui.horizontal(|ui| {
-                            for r in 0..REACTIONS {
-                                let on = m.my_reaction == Some(r);
-                                let hint = REACTION_NAMES[usize::from(r)];
-                                if sprite(ui, p, r, 2.0, on).on_hover_text(hint).clicked() {
-                                    act = Some(Act::React(n, r));
-                                    ui.close();
-                                }
+                        true => "Double-click: answer. Right-click: react, edit, delete",
+                        false => "Double-click: answer. Right-click: react",
+                    });
+                // As in most desktop messengers.
+                if r.double_clicked() {
+                    act = Some(Act::Reply(n));
+                }
+                r.context_menu(|ui| {
+                    ui.horizontal(|ui| {
+                        for r in 0..REACTIONS {
+                            let on = my_reaction == Some(r);
+                            let hint = REACTION_NAMES[usize::from(r)];
+                            if sprite(ui, p, r, 2.0, on).on_hover_text(hint).clicked() {
+                                act = Some(Act::React(n, r));
+                                ui.close();
                             }
-                        });
-                        ui.separator();
-                        if ui.button("Answer").clicked() {
-                            act = Some(Act::Reply(n));
-                            ui.close();
-                        }
-                        if m.mine && m.file.is_none() && ui.button("Edit").clicked() {
-                            act = Some(Act::Edit(n));
-                            ui.close();
-                        }
-                        if m.mine && ui.button("Delete for both…").clicked() {
-                            act = Some(Act::Delete(n));
-                            ui.close();
                         }
                     });
+                    ui.separator();
+                    if ui.button("Answer").clicked() {
+                        act = Some(Act::Reply(n));
+                        ui.close();
+                    }
+                    if m.mine && m.file.is_none() && ui.button("Edit").clicked() {
+                        act = Some(Act::Edit(n));
+                        ui.close();
+                    }
+                    let delete = match v.group {
+                        Some(_) => "Delete for everyone…",
+                        None => "Delete for both…",
+                    };
+                    if m.mine && ui.button(delete).clicked() {
+                        act = Some(Act::Delete(n));
+                        ui.close();
+                    }
+                });
             }
             let colour = if matches!(m.status, Status::Failed(_)) {
                 p.danger
@@ -929,6 +1218,28 @@ fn messages(ui: &mut egui::Ui, p: &Pal, c: &Contact, rich: bool) -> Option<Act> 
                         .small()
                         .color(colour),
                 );
+                // In a group: each reaction once, how many, and who on hover.
+                if let (Some(g), Some(id)) = (v.group, m.id) {
+                    let mut counts: Vec<(u8, Vec<String>)> = Vec::new();
+                    for (k, r) in g.reactions_to(id) {
+                        let who = match k == v.me {
+                            true => "you".to_string(),
+                            false => termchat_engine::clean(g.name_of(&k).unwrap_or("someone")),
+                        };
+                        match counts.iter_mut().find(|(x, _)| *x == r) {
+                            Some((_, names)) => names.push(who),
+                            None => counts.push((r, vec![who])),
+                        }
+                    }
+                    for (r, names) in counts {
+                        let hint =
+                            format!("{}: {}", REACTION_NAMES[usize::from(r)], names.join(", "));
+                        sprite(ui, p, r, 1.5, false).on_hover_text(hint);
+                        if names.len() > 1 {
+                            ui.label(RichText::new(names.len().to_string()).small().color(p.dim));
+                        }
+                    }
+                }
                 // Theirs, then ours (ADR-025).
                 for (r, mine) in [(m.their_reaction, false), (m.my_reaction, true)] {
                     if let Some(r) = r {
@@ -1017,6 +1328,17 @@ fn list_state(c: &Contact, request: bool) -> (&'static str, bool) {
         _ if c.blocked => ("BLOCKED", false),
         _ if !c.verified => ("NOT VERIFIED", false),
         _ => ("ENCRYPTED", true),
+    }
+}
+
+/// The line under a group's name: its size, or that we are out of it.
+fn group_state(g: &Group) -> (String, bool) {
+    match (g.left, g.members().len()) {
+        (true, _) => ("NO LONGER A MEMBER".into(), false),
+        // Until the relay has made its queue.
+        (false, 0) => ("SETTING UP…".into(), false),
+        (false, 1) => ("1 MEMBER".into(), true),
+        (false, n) => (format!("{n} MEMBERS"), true),
     }
 }
 
@@ -1183,7 +1505,7 @@ mod tests {
         }
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
-        chat.act(0, Act::Reply(0));
+        chat.act(Open::Chat(0), Act::Reply(0));
         let shown = texts(&frame(&mut chat));
         assert!(shown.contains("↳ Answering: hi there"), "{shown}");
 
@@ -1247,6 +1569,43 @@ mod tests {
             let shown = texts(&frame(&mut chat));
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
             assert!(chat.dialog.is_some(), "{want}: stays open until answered");
+        }
+
+        // ADR-027: a group in the list, its history with authors and
+        // counted reactions, and its dialogs.
+        chat.dialog = None;
+        let g = chat.engine.create_group("team").unwrap();
+        chat.select_group(g);
+        let me = chat.engine.me();
+        let group = &mut chat.engine.data.groups[g];
+        let mut said = msg(true, "group hello", Status::Sent);
+        said.id = Some(7);
+        said.author = Some(me);
+        group.messages.push(said);
+        group.set_reaction(7, me, Some(1));
+        let shown = texts(&frame(&mut chat));
+        for want in ["Groups  1", "team", "SETTING UP…", "group hello"] {
+            assert!(shown.contains(want), "{want} missing in:\n{shown}");
+        }
+        let dialogs = [
+            (
+                Dialog::NewGroup {
+                    name: String::new(),
+                    error: String::new(),
+                },
+                "New group",
+            ),
+            (Dialog::Members, "team · members"),
+            (Dialog::InviteToGroup(String::new()), "Invite to the group"),
+            (Dialog::RemoveMember([1; 32]), "Remove from the group"),
+            (Dialog::LeaveGroup, "Leave the group"),
+            (Dialog::DeleteMessage(0), "Delete it for everyone"),
+        ];
+        for (d, want) in dialogs {
+            chat.dialog = Some(d);
+            frame(&mut chat);
+            let shown = texts(&frame(&mut chat));
+            assert!(shown.contains(want), "{want} missing in:\n{shown}");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

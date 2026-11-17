@@ -76,6 +76,19 @@ pub enum Dialog {
     /// The relay cannot be told; the reason.
     WipeAnyway(String),
     News,
+    /// ADR-027: a new group's name.
+    NewGroup {
+        name: String,
+        error: String,
+    },
+    /// The open group's members.
+    Members,
+    /// Contacts the admin can invite to the open group; why the last failed.
+    InviteToGroup(String),
+    /// Remove this member from the open group?
+    RemoveMember([u8; 32]),
+    /// Leave the open group?
+    LeaveGroup,
 }
 
 /// The current password, a new one and its repeat.
@@ -340,6 +353,210 @@ impl Chat {
                     let name = name.trim();
                     let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
                     self.engine.edit(i, |c| c.petname = name);
+                    return false;
+                }
+                stay
+            }
+            Dialog::DeleteMessage(m) if self.open_group().is_some() => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                ui.heading("Delete the message");
+                ui.label("Delete it for everyone in the group? Their apps remove it; a copy or screenshot someone made stays.");
+                let (go, stay) = buttons(ui, p, "Delete");
+                if go {
+                    if let Err(e) = self.engine.delete_group_message(g, *m) {
+                        self.status = e;
+                    }
+                    return false;
+                }
+                stay
+            }
+            Dialog::NewGroup { name, error } => {
+                ui.set_width(560.0);
+                ui.heading("New group");
+                ui.add_space(8.0);
+                ui.label("A small private group, by invitation only, up to 32 people.");
+                ui.label("You are its admin: only you add and remove members.");
+                ui.add_space(14.0);
+                ui.label(RichText::new("NAME").small().strong().color(p.dim));
+                ui.add_space(4.0);
+                let field = ui.add(
+                    egui::TextEdit::singleline(name)
+                        .hint_text("Weekend trip")
+                        .desired_width(f32::INFINITY)
+                        .margin(egui::Margin::symmetric(10, 8))
+                        .font(egui::TextStyle::Body),
+                );
+                if !field.has_focus() && name.is_empty() {
+                    field.request_focus();
+                }
+                ui.add_space(4.0);
+                hint(
+                    ui,
+                    p,
+                    "Seen only by its members. Nobody can find the group.",
+                );
+                error_line(ui, p, error);
+                ui.add_space(6.0);
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let (go, stay) = buttons(ui, p, "Create");
+                if go || enter {
+                    match self.engine.create_group(name.trim()) {
+                        Ok(g) => {
+                            self.select_group(g);
+                            return false;
+                        }
+                        Err(e) => *error = e,
+                    }
+                }
+                stay
+            }
+            Dialog::Members => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                let group = &self.engine.data.groups[g];
+                let me = self.engine.me();
+                let admin_key = group.roster.as_ref().map(|r| r.admin);
+                ui.set_width(560.0);
+                ui.heading(format!(
+                    "{} · members",
+                    termchat_engine::clean(group.name())
+                ));
+                ui.add_space(6.0);
+                ui.label("The admin added them. Compare safety numbers in person to be sure.");
+                ui.add_space(12.0);
+                let mut remove = None;
+                for m in group.members() {
+                    row(ui, p, |ui| {
+                        avatar_letter(ui, p, &m.nickname);
+                        ui.vertical(|ui| {
+                            let mut name = termchat_engine::clean(&m.nickname);
+                            if m.ed25519 == me {
+                                name.push_str(" (you)");
+                            }
+                            ui.label(RichText::new(name).monospace());
+                            let fp = fingerprint(&m.ed25519);
+                            let mut under = fp[..fp.len().min(11)].to_string();
+                            if admin_key == Some(m.ed25519) {
+                                under.push_str(" · ADMIN");
+                            }
+                            ui.label(RichText::new(under).monospace().small().color(p.dim));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if group.is_admin() && m.ed25519 != me && ui.button("Remove…").clicked()
+                            {
+                                remove = Some(m.ed25519);
+                            }
+                        });
+                    });
+                }
+                ui.add_space(12.0);
+                let mut invite = false;
+                let close = ui
+                    .horizontal(|ui| {
+                        if group.is_admin() {
+                            invite = crate::synth::button(
+                                ui,
+                                p,
+                                "Invite a contact",
+                                egui::vec2(170.0, 32.0),
+                            )
+                            .clicked();
+                        }
+                        ui.add(egui::Button::new("Close").min_size(egui::vec2(100.0, 32.0)))
+                            .clicked()
+                    })
+                    .inner;
+                if let Some(k) = remove {
+                    self.dialog = Some(Dialog::RemoveMember(k));
+                    return false;
+                }
+                if invite {
+                    self.dialog = Some(Dialog::InviteToGroup(String::new()));
+                    return false;
+                }
+                !close
+            }
+            Dialog::InviteToGroup(error) => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                ui.set_width(560.0);
+                ui.heading("Invite to the group");
+                ui.add_space(6.0);
+                ui.label("Your own contacts only. They join from their chat with you.");
+                ui.add_space(12.0);
+                let rows = self.engine.invitable(g);
+                if rows.is_empty() {
+                    ui.label(RichText::new("No contact to invite.").color(p.dim));
+                }
+                let group = &self.engine.data.groups[g];
+                let mut pick = None;
+                for i in rows {
+                    let c = &self.engine.data.contacts[i];
+                    let invited = group.asking.contains(&c.key)
+                        || group.invited.iter().any(|(k, _)| *k == c.key);
+                    let name = self.engine.name(c);
+                    row(ui, p, |ui| {
+                        avatar_letter(ui, p, &name);
+                        ui.label(RichText::new(&name).monospace());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let label = match invited {
+                                true => RichText::new("✓ Invited").color(p.accent),
+                                false => RichText::new("Invite"),
+                            };
+                            let b = egui::Button::new(label).min_size(egui::vec2(100.0, 28.0));
+                            if ui.add_enabled(!invited, b).clicked() {
+                                pick = Some(i);
+                            }
+                        });
+                    });
+                }
+                if let Some(i) = pick {
+                    *error = self.engine.invite_to_group(g, i).err().unwrap_or_default();
+                }
+                error_line(ui, p, error);
+                ui.add_space(12.0);
+                !ui.add(egui::Button::new("Close").min_size(egui::vec2(100.0, 32.0)))
+                    .clicked()
+            }
+            Dialog::RemoveMember(who) => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                let name = self.engine.data.groups[g]
+                    .name_of(who)
+                    .map(termchat_engine::clean)
+                    .unwrap_or_default();
+                ui.set_width(560.0);
+                ui.heading("Remove from the group");
+                ui.add_space(6.0);
+                ui.label(format!("Remove {name} from the group?"));
+                ui.label("The group moves to a new queue: they read nothing from now on.");
+                let (go, stay) = buttons(ui, p, "Remove");
+                if go {
+                    if let Err(e) = self.engine.remove_from_group(g, who) {
+                        self.status = e;
+                    }
+                    return false;
+                }
+                stay
+            }
+            Dialog::LeaveGroup => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                ui.set_width(560.0);
+                ui.heading("Leave the group");
+                ui.add_space(6.0);
+                ui.label("The others are told. The chat stays here, read-only.");
+                let (go, stay) = buttons(ui, p, "Leave");
+                if go {
+                    if let Err(e) = self.engine.leave_group(g) {
+                        self.status = e;
+                    }
                     return false;
                 }
                 stay
@@ -866,6 +1083,39 @@ fn buttons(ui: &mut egui::Ui, p: &Pal, main: &str) -> (bool, bool) {
         (go, !cancel)
     })
     .inner
+}
+
+/// One row of a list in a dialog: a framed line.
+fn row(ui: &mut egui::Ui, p: &Pal, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(p.bg)
+        .corner_radius(4)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(add);
+        });
+    ui.add_space(4.0);
+}
+
+/// A square with a name's first letter, as in the contact list.
+fn avatar_letter(ui: &mut egui::Ui, p: &Pal, name: &str) {
+    let letter: String = name
+        .chars()
+        .next()
+        .into_iter()
+        .flat_map(char::to_uppercase)
+        .collect();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 4, p.surface);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        letter,
+        egui::FontId::proportional(13.0),
+        p.text,
+    );
+    ui.add_space(4.0);
 }
 
 fn error_line(ui: &mut egui::Ui, p: &Pal, error: &str) {
