@@ -1,0 +1,1 @@
+Fixed: answers, edits, deletes and reactions were missing in a chat when the two of you updated to 0.9 at different times: one side had none, the other only for their own messages. After this update the chat mends itself at the next connection.

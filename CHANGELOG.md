@@ -3,6 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.9.1
+
+- Answers, edits, deletes and reactions now work when the two of you
+  updated at different times. If one side reached 0.9.0 while the other
+  was still on 0.8, the chat stayed without them on one phone and had
+  them only for one's own messages on the other. The app that updated
+  first needs 0.9.1; the chat mends itself at the next connection
+  (ADR-026).
+
 ## 0.9.0
 
 Answers, edits, deletes and reactions (ADR-025).
