@@ -27,7 +27,8 @@ const en = {
   docs: {
     threatModel: "docs/threat-model.md",
     selfHost: "docs/self-host.md",
-    verify: "README.md#verify-a-release",
+    // A page of the site, not a file in the repository.
+    verify: "/docs/install/#check-that-a-download-is-genuine",
     use: "README.md#acceptable-use",
   },
   nav: { features: "Features", desktop: "Desktop", protection: "Protection", install: "Install", docs: "Docs", blog: "Blog" },
@@ -164,7 +165,7 @@ const ru: typeof en = {
   docs: {
     threatModel: "docs/threat-model.ru.md",
     selfHost: "docs/self-host.ru.md",
-    verify: "README.ru.md#проверка-релиза",
+    verify: "/ru/docs/install/#как-проверить-что-загрузка-подлинная",
     use: "README.ru.md#правила-использования",
   },
   nav: { features: "Возможности", desktop: "Приложение", protection: "Защита", install: "Установка", docs: "Документация", blog: "Блог" },

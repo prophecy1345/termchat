@@ -103,4 +103,4 @@ One identity serves one command at a time: if two scripts run at once, the secon
 
 A server identity is exactly as strong as the server. Its password sits next to its state, so whoever gets root there reads that identity's messages and can write as it. That is why it should always be a separate identity that talks only to you, never your main one: it is a different key with different queues, so it is no way into your real contacts.
 
-The full design is in ADR-024, and the commands are in the README under "Scripts and servers".
+The full design is in ADR-024, and the commands are in the guide under [Scripts and servers](/docs/scripts/).
