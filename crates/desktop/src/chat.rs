@@ -158,6 +158,8 @@ pub struct Chat {
     pub(crate) dialog: Option<Dialog>,
     /// What SEND does with the text (ADR-025).
     compose: Compose,
+    /// Put the cursor in the field, at the end of its text, next frame.
+    focus_input: bool,
 }
 
 /// What SEND does with the typed text (ADR-025).
@@ -192,6 +194,7 @@ impl Chat {
             status: String::new(),
             dialog: None,
             compose: Compose::New,
+            focus_input: false,
         };
         chat.engine.resort();
         chat
@@ -443,11 +446,15 @@ impl Chat {
         match act {
             Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
             _ if !self.engine.rich(i) => self.status = OLDER_APP.into(),
-            Act::Reply(n) => self.compose = target(n).map_or(Compose::New, Compose::Reply),
+            Act::Reply(n) => {
+                self.compose = target(n).map_or(Compose::New, Compose::Reply);
+                self.focus_input = true;
+            }
             Act::Edit(n) => {
                 if let Some(Ref { id, .. }) = target(n) {
                     self.input = c.messages[n].text.clone();
                     self.compose = Compose::Edit(id);
+                    self.focus_input = true;
                 }
             }
             Act::Delete(n) => self.dialog = Some(Dialog::DeleteMessage(n)),
@@ -573,15 +580,19 @@ impl Chat {
                 }
                 None => "↳ Answering a message that is gone".into(),
             }),
-            Compose::Edit(_) => Some("✎ Editing your message".into()),
+            Compose::Edit(_) => Some("Editing your message…".into()),
         };
         if let Some(banner) = banner {
             let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             ui.horizontal(|ui| {
+                // The strip itself cancels: a click, or Esc.
                 let cancel = ui
-                    .add(egui::Button::new("✕").frame(false))
-                    .on_hover_text("Cancel (Esc)");
-                ui.add(egui::Label::new(RichText::new(banner).color(p.accent)).truncate());
+                    .add(
+                        egui::Label::new(RichText::new(banner).color(p.accent))
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Click or Esc to cancel");
                 if cancel.clicked() || esc {
                     if matches!(self.compose, Compose::Edit(_)) {
                         self.input.clear();
@@ -651,6 +662,16 @@ impl Chat {
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             )
                             .show(ui, |ui| {
+                                if std::mem::take(&mut self.focus_input) {
+                                    let end = egui::text::CCursor::new(self.input.chars().count());
+                                    let mut state = egui::TextEdit::load_state(ui.ctx(), id)
+                                        .unwrap_or_default();
+                                    state
+                                        .cursor
+                                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                                    state.store(ui.ctx(), id);
+                                    ui.memory_mut(|m| m.request_focus(id));
+                                }
                                 ui.add(
                                     egui::TextEdit::multiline(&mut self.input)
                                         .id(id)
@@ -673,11 +694,11 @@ impl Chat {
             Compose::New => self.engine.send(i, &text),
             Compose::Reply(r) => match self.locate(i, r) {
                 Some(n) => self.engine.reply(i, n, &text),
-                None => Err("the message you answer is gone; ✕ to write without it".into()),
+                None => Err("the message you answer is gone; Esc to write without it".into()),
             },
             Compose::Edit(id) => match self.locate(i, Ref { id, theirs: false }) {
                 Some(n) => self.engine.edit_message(i, n, &text),
-                None => Err("the message is gone; ✕ to stop editing".into()),
+                None => Err("the message is gone; Esc to stop editing".into()),
             },
         };
         match sent {
