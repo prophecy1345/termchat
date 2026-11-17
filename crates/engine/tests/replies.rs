@@ -67,19 +67,24 @@ fn has(e: &Engine, text: &str) -> bool {
     e.data.contacts[0].messages.iter().any(|m| m.text == text)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn answers_edits_reactions_and_deletes_travel() {
+async fn strangers(dir: &Path) -> (Box<Engine>, Box<Engine>) {
     let url = start_relay().await;
-    let dir = std::env::temp_dir().join(format!("termchat-replies-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut alice = engine(&dir, "alice", &url);
-    let mut bob = engine(&dir, "bob", &url);
+    std::fs::create_dir_all(dir).unwrap();
+    let mut alice = engine(dir, "alice", &url);
+    let mut bob = engine(dir, "bob", &url);
 
     pump(&mut alice, &mut bob, |a, _| a.data.invite_queue.is_some()).await;
     settle(&mut alice, &mut bob).await;
     bob.add(&alice.invite().unwrap(), false).unwrap();
     pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
     settle(&mut alice, &mut bob).await;
+    (alice, bob)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn answers_edits_reactions_and_deletes_travel() {
+    let dir = std::env::temp_dir().join(format!("termchat-replies-{}", std::process::id()));
+    let (mut alice, mut bob) = strangers(&dir).await;
     // A stranger hears nothing from alice before she accepts, not even this.
     assert!(!bob.rich(0));
     assert_eq!(bob.reply(0, 0, "x"), Err(OLDER_APP.into()));
@@ -132,5 +137,28 @@ async fn answers_edits_reactions_and_deletes_travel() {
     assert_eq!(got[0].2, Fetched::Delete);
     // The answer stays; what it answered is gone.
     assert!(alice.reply(0, m, "to nothing").is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn understands_is_said_again_to_a_contact_who_updated_later() {
+    let dir = std::env::temp_dir().join(format!("termchat-understands-{}", std::process::id()));
+    let (mut alice, mut bob) = strangers(&dir).await;
+    alice.accept(0);
+    pump(&mut alice, &mut bob, |a, b| a.rich(0) && b.rich(0)).await;
+    settle(&mut alice, &mut bob).await;
+
+    alice.data.contacts[0].understands = 0;
+    bob.data.contacts[0].understands = 0;
+    bob.data.contacts[0].told = 0;
+    bob.send(0, "updated").unwrap();
+    pump(&mut alice, &mut bob, |a, b| a.rich(0) && b.rich(0)).await;
+
+    settle(&mut alice, &mut bob).await;
+    let told = |e: &Engine| e.data.contacts[0].told;
+    assert_eq!((told(&alice), told(&bob)), (1, 1));
+    bob.send(0, "after").unwrap();
+    pump(&mut alice, &mut bob, |a, _| has(a, "after")).await;
+    alice.react(0, at(&alice, "after"), Some(0)).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -84,6 +84,7 @@ pub struct Data {
     pub pt_program: Option<String>,
     /// Which Arti folder is current: a new one for each change of bridges.
     pub tor_generation: u32,
+    pub understands_resent: bool,
 }
 
 /// An identity of its own, used with one contact only (ADR-014).
@@ -498,6 +499,14 @@ impl Data {
             if matches!(m.status, Status::Sending(_)) {
                 m.status = Status::Failed("not confirmed before exit".into());
             }
+        }
+        if !data.understands_resent {
+            data.understands_resent = true;
+            let heard = |c: &&mut Contact| c.understands >= termchat_proto::UNDERSTANDS;
+            data.contacts
+                .iter_mut()
+                .filter(heard)
+                .for_each(|c| c.told = 0);
         }
         Ok(data)
     }
@@ -1039,6 +1048,25 @@ mod tests {
         list.sort_by_key(|c| std::cmp::Reverse(c.last_at()));
         let keys: Vec<u8> = list.iter().map(|c| c.key[0]).collect();
         assert_eq!(keys, [3, 1, 2]);
+    }
+
+    #[test]
+    fn understands_is_owed_again_once_to_contacts_who_said_it() {
+        let contact = |understands| Contact {
+            understands,
+            told: 1,
+            ..Default::default()
+        };
+        let data = Data {
+            contacts: vec![contact(1), contact(0)],
+            ..Default::default()
+        };
+        let told = |d: &Data| [d.contacts[0].told, d.contacts[1].told];
+        let mut data = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
+        assert_eq!(told(&data), [0, 1]);
+        data.contacts[0].told = 1;
+        let data = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
+        assert_eq!(told(&data), [1, 1]);
     }
 
     #[test]

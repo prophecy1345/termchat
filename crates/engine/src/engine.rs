@@ -453,6 +453,7 @@ impl Engine {
             tor: s.tor,
             nickname: s.nickname.into(),
             news_seen: env!("CARGO_PKG_VERSION").into(),
+            understands_resent: true,
             ..Data::default()
         };
         let mut engine = Self::open(Client::default(), key, data, path.to_owned())?;
@@ -1835,7 +1836,15 @@ impl Engine {
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
             Body::Understands { level } => {
-                self.data.contacts[i].understands = level;
+                let c = &mut self.data.contacts[i];
+                let news = level > c.understands;
+                c.understands = level;
+                if news {
+                    c.told = 0;
+                    if !got.request {
+                        self.deliver(i);
+                    }
+                }
                 return self.persist();
             }
             // Pointing at messages waits for the request to be accepted.
