@@ -628,7 +628,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 clean(&format!("{} · unsaved, Ctrl+G", f.label()))
             }
             Some(f) => clean(&f.label()),
-            None => clean(&msg.text),
+            None => crate::engine::clean_text(&msg.text),
         };
         if msg.status == Status::System {
             lines.push(Line::styled(text, muted.add_modifier(Modifier::ITALIC)));
@@ -665,7 +665,11 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 .find(|q| q.id == Some(r.id) && q.mine != r.theirs && !q.deleted);
             let quote = match quoted {
                 Some(q) => {
-                    let first = clean(&q.text).lines().next().unwrap_or("").to_string();
+                    let first = crate::engine::clean_text(&q.text)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
                     Span::styled(fit(&first, 60), muted)
                 }
                 None => Span::styled(
@@ -681,7 +685,13 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             lines.push(Line::styled("message deleted", gone).style(row));
             continue;
         }
-        let mut spans = vec![Span::styled(text, Style::new().fg(t.text))];
+        // Line breaks the sender typed stay; the marks follow the last line.
+        let mut rows: Vec<&str> = text.split('\n').collect();
+        let last = rows.pop().unwrap_or_default().to_string();
+        for line in rows {
+            lines.push(Line::styled(line.to_string(), Style::new().fg(t.text)).style(row));
+        }
+        let mut spans = vec![Span::styled(last, Style::new().fg(t.text))];
         if msg.edited {
             spans.push(Span::styled(" (edited)", muted));
         }
@@ -782,7 +792,13 @@ fn input_bar(
                 .messages
                 .iter()
                 .find(|q| q.id == Some(r.id) && q.mine != r.theirs)
-                .map(|q| clean(&q.text).lines().next().unwrap_or("").to_string());
+                .map(|q| {
+                    crate::engine::clean_text(&q.text)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .to_string()
+                });
             format!("↳ answering: {}", quoted.unwrap_or_default())
         }),
         Compose::Edit(_) => Some("✎ editing your message".into()),
