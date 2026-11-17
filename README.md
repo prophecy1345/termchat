@@ -490,31 +490,46 @@ Give the server an identity of its own, never your main one: whoever gets
 root on that server can read everything that identity says and hears.
 
 ```sh
-# On the server, once. The password file must be yours and chmod 600.
-export TERMCHAT_HOME=/var/lib/backup-bot
-install -m 600 /dev/null "$TERMCHAT_HOME.pw" && head -c 30 /dev/urandom | base64 > "$TERMCHAT_HOME.pw"
-termchat init --nickname backup-box --password-file "$TERMCHAT_HOME.pw"
+# On the server, once, as root: a user that owns only this identity.
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_INSTALL_DIR=/usr/local/bin sh
+useradd --system --home-dir /var/lib/termchat-bot --shell /usr/sbin/nologin termchat-bot
+install -d -o termchat-bot -g termchat-bot -m 700 /var/lib/termchat-bot /etc/termchat-bot
+head -c 30 /dev/urandom | base64 | sudo -u termchat-bot sh -c 'umask 077; cat > /etc/termchat-bot/pw'
+bot() { sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot termchat "$@" --password-file /etc/termchat-bot/pw; }
+bot init --nickname backup-box
 # Your invite from the app (Ctrl+O, or Invite on the phone):
-termchat add 'termchat:...' --password-file "$TERMCHAT_HOME.pw"
-# Accept the request in your app. Then:
-termchat send alice "backup failed on $(hostname)" --password-file "$TERMCHAT_HOME.pw"
+bot add 'termchat:...'
+# Accept the request in your app. Then see your name as the server knows it:
+bot contacts
+bot send alice "backup failed on $(hostname)"
 ```
 
-More examples:
+More examples (each also takes `--password-file`; without it termchat asks
+at the keyboard, and a script has none):
 
 ```sh
-# The end of a long command, on your laptop (its own identity again):
-make release; termchat send alice "release build: exit $?" --password-file ~/.termchat-bot.pw
-
 # Text from a pipe:
-df -h / | termchat send alice --password-file "$TERMCHAT_HOME.pw"
+df -h / | termchat send alice --password-file /etc/termchat-bot/pw
 
 # Wait up to 10 minutes for an answer, as JSON lines:
-termchat recv --from alice --wait 600 --json --password-file "$TERMCHAT_HOME.pw"
+termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/pw
 ```
 
-With systemd, keep the password out of the unit: `LoadCredential=pw:/etc/termchat/backup.pw`
-and `--password-file "$CREDENTIALS_DIRECTORY/pw"`.
+A service or cron job does not see your shell's variables: give it
+`TERMCHAT_HOME` itself, for example in a systemd unit:
+
+```ini
+[Service]
+Type=oneshot
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-file /etc/termchat-bot/pw'
+```
+
+or in the crontab line: `TERMCHAT_HOME=/var/lib/termchat-bot /usr/local/bin/termchat send ...`.
+systemd's `LoadCredential=` does not fit: the copy it makes belongs to root, and
+termchat accepts only a password file of its own user. One identity runs one
+command at a time; a second one at once exits with code 1.
 
 | Command | What it does |
 |---|---|

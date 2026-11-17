@@ -30,18 +30,65 @@ termchat recv --from alice --wait 600 --json
 
 Сообщение от скрипта идёт ровно так же, как от человека: шифрование Olm, анонимная очередь на relay, Tor, если он включён. Relay их не различает.
 
+На сервере у каждой команды есть ещё `--password-file`: без него termchat спрашивает пароль с клавиатуры, а у скрипта её нет. Ниже настройка целиком.
+
 ## Как завести сервер
 
-Дайте серверу отдельную личность:
+Шаги для Linux с systemd, команды от root.
+
+**1. Установите termchat** для всех пользователей сервера (это один статический файл):
 
 ```sh
-export TERMCHAT_HOME=/var/lib/backup-bot
-install -m 600 /dev/null "$TERMCHAT_HOME.pw" && head -c 30 /dev/urandom | base64 > "$TERMCHAT_HOME.pw"
-termchat init --nickname backup-box --password-file "$TERMCHAT_HOME.pw"
-termchat add 'termchat:...' --password-file "$TERMCHAT_HOME.pw"   # ваше приглашение
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_INSTALL_DIR=/usr/local/bin sh
 ```
 
-Примите его запрос в приложении — и дальше любой скрипт на этом сервере может вам писать. С systemd пароль можно держать вне файла службы через `LoadCredential=`. Так наш собственный relay-сервер теперь присылает владельцу утренний отчёт и сообщение, когда падает сайт.
+**2. Системный пользователь**, которому принадлежит только личность сервера, его папка и случайный пароль, который может прочитать только он:
+
+```sh
+useradd --system --home-dir /var/lib/termchat-bot --shell /usr/sbin/nologin termchat-bot
+install -d -o termchat-bot -g termchat-bot -m 700 /var/lib/termchat-bot /etc/termchat-bot
+head -c 30 /dev/urandom | base64 | sudo -u termchat-bot sh -c 'umask 077; cat > /etc/termchat-bot/pw'
+```
+
+Чтобы не набирать длинную команду в следующих шагах, заведите короткое имя:
+
+```sh
+bot() { sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot termchat "$@" --password-file /etc/termchat-bot/pw; }
+```
+
+**3. Создайте личность.** Никнейм — то, что вы увидите в приложении:
+
+```sh
+bot init --nickname backup-box
+```
+
+**4. Свяжите её с собой.** В приложении создайте приглашение: Ctrl+O в терминале и десктопе, «Пригласить» на телефоне. Передайте его серверу:
+
+```sh
+bot add 'termchat:...'
+```
+
+**5. Примите запрос** от `backup-box` в приложении. Затем посмотрите, под каким именем сервер видит вас, и отправьте пробное сообщение:
+
+```sh
+bot contacts                # ваш никнейм, отпечаток, "ok"
+bot send alice "привет от $(hostname)"
+```
+
+**6. Используйте из systemd.** Файл пароля и `TERMCHAT_HOME` нужно указать в самой службе: служба не видит того, что вы задали в своей оболочке.
+
+```ini
+# /etc/systemd/system/disk-report.service
+[Service]
+Type=oneshot
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-file /etc/termchat-bot/pw'
+```
+
+Для расписания добавьте `.timer`. Если удобнее cron — `crontab -u termchat-bot -e`, и те же две вещи прямо в строке: `0 9 * * * TERMCHAT_HOME=/var/lib/termchat-bot /usr/local/bin/termchat send alice "доброе утро" --password-file /etc/termchat-bot/pw`.
+
+Одна личность выполняет одну команду за раз: если два скрипта запустятся одновременно, второй завершится с кодом 1 и скажет, что личность открыта в другом месте. Наш relay-сервер, заведённый ровно так, теперь присылает владельцу утренний отчёт и сообщение, когда падает сайт.
 
 ## Решения, которые стоит объяснить
 

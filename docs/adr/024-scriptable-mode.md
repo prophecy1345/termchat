@@ -39,7 +39,7 @@ termchat recv [--from CONTACT] [--wait SECS] [--follow] [--json] [--save-dir DIR
 
 The state file is sealed with a password (ADR-003), and a script has nobody to type it. Sources, in order of preference:
 
-- `--password-file PATH`: the file must belong to the current user and have mode `0600`, or it is an error. This also fits systemd's `LoadCredential=`, where the file exists only for the service.
+- `--password-file PATH`: the file must belong to the current user and have mode `0600`, or it is an error. systemd's `LoadCredential=` does not fit: checked on 2026-11-17, its copy belongs to root with mode `0440`; a service passes the file of its own user instead.
 - `--password-stdin`: the first line of stdin. The text for `send` then comes from the argument.
 - Typed at the terminal without echo, when stdin is a terminal and no other source is given.
 

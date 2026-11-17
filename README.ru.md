@@ -362,30 +362,46 @@ TERMCHAT_HOME=~/termchat-test ./termchat
 Заведите серверу отдельную личность, никогда не основную: тот, кто получит root на этом сервере, прочитает всё, что эта личность отправляет и получает.
 
 ```sh
-# На сервере, один раз. Файл пароля должен быть вашим и с правами 600.
-export TERMCHAT_HOME=/var/lib/backup-bot
-install -m 600 /dev/null "$TERMCHAT_HOME.pw" && head -c 30 /dev/urandom | base64 > "$TERMCHAT_HOME.pw"
-termchat init --nickname backup-box --password-file "$TERMCHAT_HOME.pw"
-# Ваше приглашение из приложения (Ctrl+O или Invite на телефоне):
-termchat add 'termchat:...' --password-file "$TERMCHAT_HOME.pw"
-# Примите запрос в приложении. Дальше:
-termchat send alice "бэкап не прошёл на $(hostname)" --password-file "$TERMCHAT_HOME.pw"
+# На сервере, один раз, от root: пользователь, которому принадлежит только эта личность.
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_INSTALL_DIR=/usr/local/bin sh
+useradd --system --home-dir /var/lib/termchat-bot --shell /usr/sbin/nologin termchat-bot
+install -d -o termchat-bot -g termchat-bot -m 700 /var/lib/termchat-bot /etc/termchat-bot
+head -c 30 /dev/urandom | base64 | sudo -u termchat-bot sh -c 'umask 077; cat > /etc/termchat-bot/pw'
+bot() { sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot termchat "$@" --password-file /etc/termchat-bot/pw; }
+bot init --nickname backup-box
+# Ваше приглашение из приложения (Ctrl+O или «Пригласить» на телефоне):
+bot add 'termchat:...'
+# Примите запрос в приложении. Затем посмотрите, под каким именем сервер знает вас:
+bot contacts
+bot send alice "бэкап не прошёл на $(hostname)"
 ```
 
-Ещё примеры:
+Ещё примеры (каждой команде тоже нужен `--password-file`: без него termchat
+спрашивает пароль с клавиатуры, а у скрипта её нет):
 
 ```sh
-# Конец долгой команды, на ноутбуке (опять отдельная личность):
-make release; termchat send alice "сборка релиза: код $?" --password-file ~/.termchat-bot.pw
-
 # Текст из пайпа:
-df -h / | termchat send alice --password-file "$TERMCHAT_HOME.pw"
+df -h / | termchat send alice --password-file /etc/termchat-bot/pw
 
 # Ждать ответа до 10 минут, строками JSON:
-termchat recv --from alice --wait 600 --json --password-file "$TERMCHAT_HOME.pw"
+termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/pw
 ```
 
-С systemd держите пароль вне файла службы: `LoadCredential=pw:/etc/termchat/backup.pw` и `--password-file "$CREDENTIALS_DIRECTORY/pw"`.
+Служба или задача cron не видит переменных вашей оболочки: передайте ей
+`TERMCHAT_HOME` сами, например в службе systemd:
+
+```ini
+[Service]
+Type=oneshot
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-file /etc/termchat-bot/pw'
+```
+
+или прямо в строке crontab: `TERMCHAT_HOME=/var/lib/termchat-bot /usr/local/bin/termchat send ...`.
+`LoadCredential=` из systemd не подходит: копия, которую он делает, принадлежит
+root, а termchat принимает только файл пароля своего пользователя. Одна личность
+выполняет одну команду за раз; вторая одновременно завершится с кодом 1.
 
 | Команда | Что делает |
 |---|---|
