@@ -3,6 +3,30 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.9.0
+
+Answers, edits, deletes and reactions (ADR-025).
+
+- Answer a particular message. The answer points at it and shows its first
+  line; it never copies the text, so a disappearing message still goes on
+  time.
+- Edit or delete your own messages for both of you. Edits keep the timer;
+  no history is kept. A delete is a request: a copy or screenshot the other
+  side made stays.
+- React with one of seven signs, drawn by termchat.app as arcade sprites:
+  like, love, laugh, wow, sad, thanks, dislike.
+- Terminal: Shift+Up or Ctrl+N picks a message; Enter answers, e edits,
+  d deletes, 1 to 7 react. Desktop: right-click a message. Android: long
+  press.
+- `termchat recv --json` prints edits, deletes and reactions as events,
+  and `id` and `reply_to` with each message.
+- Contacts still on 0.8 see one "could not be decrypted" line and one
+  "1 message lost" when your app first says what it reads. Nothing is
+  lost. Answers and reactions work in a chat once both sides run 0.9.
+- From now on a newer kind of message is skipped quietly by older apps.
+- `termchat invite` waits until its keys are on the relay, so the first
+  `termchat add` from it no longer times out.
+
 ## 0.8.2
 
 - Desktop: buttons, text fields, drop-down lists and check boxes are

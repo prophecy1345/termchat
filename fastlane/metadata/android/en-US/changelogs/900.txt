@@ -1,0 +1,1 @@
+Long press a message to answer it, react with one of seven pixel sprites, or edit and delete your own for both of you. Edits keep the disappearing timer; deletes remove the message on the other side too. Contacts still on 0.8 see one false "could not be decrypted" line once; nothing is lost.
