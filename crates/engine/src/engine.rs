@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use termchat_core::proto::{
     self, Body, ClientFrame, Ed25519Key, ErrorCode, INVITE_VERSION, Invite, InviteCode, QueueId,
-    ServerFrame, check_nickname,
+    Ref, ServerFrame, check_nickname,
 };
 use termchat_core::{
     Client, Error as CoreError, FileKey, KdfParams, create_file_key, set_duress, store,
@@ -26,6 +26,22 @@ const LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
 const NOT_REMOVED: &str =
     "The relay did not confirm deleting your queues; it forgets unused ones after 90 days.";
 /// ADR-023: a contact from before anonymous queues, with no way to reach them.
+/// What `take_new` found: a new message, or a change to one (ADR-025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fetched {
+    Message,
+    Edit,
+    Delete,
+    React,
+}
+
+/// `proto::REACTIONS` by index, as words for scripts and screen readers.
+pub const REACTION_NAMES: [&str; proto::REACTIONS as usize] =
+    ["like", "love", "laugh", "wow", "sad", "thanks", "dislike"];
+
+/// ADR-025: where answers, edits, deletes and reactions are not possible yet.
+pub const OLDER_APP: &str = "their app is older; answers and reactions come after they update";
+
 pub const NEEDS_INVITE: &str =
     "this contact needs a new invite: ask them for one, or send them yours";
 /// One-time keys kept on each contact queue (ADR-023, amendment).
@@ -1092,6 +1108,7 @@ impl Engine {
             status: Status::System,
             file: None,
             unfetched: false,
+            ..Default::default()
         });
     }
 
@@ -1199,24 +1216,58 @@ impl Engine {
                 Err(e) => return self.note(e),
             }
         }
+        // ADR-025: once, before anything that could use it.
+        if self.owes_understands(i) {
+            let body = Body::Understands {
+                level: proto::UNDERSTANDS,
+            };
+            match self.transmit(&key, body) {
+                Ok(_) => self.data.contacts[i].told = proto::UNDERSTANDS,
+                Err(e) => return self.note(e),
+            }
+        }
         let expires_in = self.data.contacts[i].expires_in;
+        let rich = self.data.contacts[i].understands >= proto::UNDERSTANDS;
         for m in 0..self.data.contacts[i].messages.len() {
             let msg = &self.data.contacts[i].messages[m];
             if msg.status != Status::Queued || msg.file.is_some() {
                 continue;
             }
-            let body = Body::Text {
-                sent_at: msg.at,
-                expires_in,
-                text: msg.text.clone(),
+            let body = match msg.id {
+                Some(id) if rich => Body::Message {
+                    id,
+                    sent_at: msg.at,
+                    expires_in,
+                    reply_to: msg.reply_to,
+                    text: msg.text.clone(),
+                },
+                _ => Body::Text {
+                    sent_at: msg.at,
+                    expires_in,
+                    text: msg.text.clone(),
+                },
             };
             self.data.contacts[i].messages[m].status = match self.transmit(&key, body) {
                 Ok(id) => Status::Sending(id),
                 Err(e) => Status::Failed(e),
             };
         }
+        // Edits, deletes and reactions, in the order they were made.
+        while let Some(body) = self.data.contacts[i].outbox.first().cloned() {
+            match self.transmit(&key, body) {
+                Ok(_) => drop(self.data.contacts[i].outbox.remove(0)),
+                Err(e) => return self.note(e),
+            }
+        }
         self.persist();
         self.send_chunks();
+    }
+
+    /// Contact `i` has not heard what we read (ADR-025), and may: never a
+    /// stranger whose request is not accepted.
+    fn owes_understands(&self, i: usize) -> bool {
+        let c = &self.data.contacts[i];
+        c.told < proto::UNDERSTANDS && !c.left && !c.blocked && !self.is_request(&c.key)
     }
 
     /// Something to send to contact `i`: flush with a session, claim a key without.
@@ -1277,7 +1328,9 @@ impl Engine {
                         let owed = c.request_pending
                             || c.offer_pending
                             || c.accept_pending
+                            || !c.outbox.is_empty()
                             || c.messages.iter().any(|m| m.status == Status::Queued);
+                        let owed = owed || self.owes_understands(i);
                         if owed {
                             self.deliver(i);
                         }
@@ -1691,7 +1744,7 @@ impl Engine {
         };
         match got.body {
             // A stranger's texts wait out of sight until the request is accepted.
-            Body::Text { text, .. } if got.request => {
+            Body::Text { text, .. } | Body::Message { text, .. } if got.request => {
                 let c = &mut self.data.contacts[i];
                 match c.hidden.len() < MAX_HIDDEN {
                     true => c.hidden.push(Msg {
@@ -1702,6 +1755,7 @@ impl Engine {
                         status: Status::Received,
                         file: None,
                         unfetched: true,
+                        ..Default::default()
                     }),
                     false => c.held_back = c.held_back.saturating_add(1),
                 }
@@ -1719,6 +1773,7 @@ impl Engine {
                     status: Status::Received,
                     file: None,
                     unfetched: true,
+                    ..Default::default()
                 });
                 self.happened.push(alert(false));
             }
@@ -1779,12 +1834,46 @@ impl Engine {
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
-            // ADR-025 kinds; the engine takes them in its own stage.
-            Body::Message { .. }
-            | Body::Edit { .. }
-            | Body::Delete { .. }
-            | Body::React { .. }
-            | Body::Understands { .. } => return self.persist(),
+            Body::Understands { level } => {
+                self.data.contacts[i].understands = level;
+                return self.persist();
+            }
+            // Pointing at messages waits for the request to be accepted.
+            Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } if got.request => {
+                return self.persist();
+            }
+            Body::Message {
+                id,
+                expires_in,
+                reply_to,
+                text,
+                ..
+            } => {
+                let at = now();
+                self.data.contacts[i].messages.push(Msg {
+                    mine: false,
+                    text,
+                    at,
+                    expires_at: expires_in.map(|s| at + u64::from(s)),
+                    status: Status::Received,
+                    file: None,
+                    unfetched: true,
+                    id: Some(id),
+                    // Seen from us: their `theirs` is ours.
+                    reply_to: reply_to.map(|r| Ref {
+                        id: r.id,
+                        theirs: !r.theirs,
+                    }),
+                    ..Default::default()
+                });
+                self.happened.push(alert(false));
+            }
+            body @ (Body::Edit { .. } | Body::Delete { .. } | Body::React { .. }) => {
+                if !self.data.contacts[i].change(body) {
+                    return self.persist();
+                }
+                self.happened.push(alert(false));
+            }
             Body::Goodbye if got.request => {}
             Body::Goodbye => {
                 self.system(i, "deleted their account; this chat is read-only now");
@@ -1889,6 +1978,7 @@ impl Engine {
             status: Status::System,
             file: None,
             unfetched: false,
+            ..Default::default()
         });
         let hidden = std::mem::take(&mut c.hidden);
         let held = std::mem::take(&mut c.held_back);
@@ -2032,10 +2122,21 @@ impl Engine {
 
     /// Queues `text` to contact `i` and sends it as soon as there is a session.
     pub fn send(&mut self, i: usize, text: &str) -> Result<(), String> {
+        self.send_text(i, text, None)
+    }
+
+    /// `text` as an answer to message `m` of chat `i` (ADR-025).
+    pub fn reply(&mut self, i: usize, m: usize, text: &str) -> Result<(), String> {
+        let target = self.target(i, m)?;
+        self.send_text(i, text, Some(target))
+    }
+
+    fn send_text(&mut self, i: usize, text: &str, reply_to: Option<Ref>) -> Result<(), String> {
         if text.len() > proto::MAX_TEXT_BYTES {
             return Err("message too long".into());
         }
         let expires_in = self.writable(i)?.expires_in;
+        let id = getrandom::u64().map_err(|e| e.to_string())?;
         let at = now();
         self.data.contacts[i].messages.push(Msg {
             mine: true,
@@ -2044,8 +2145,100 @@ impl Engine {
             expires_at: expires_in.map(|s| at + u64::from(s)),
             status: Status::Queued,
             file: None,
-            unfetched: false,
+            id: Some(id),
+            reply_to,
+            ..Default::default()
         });
+        self.persist();
+        self.deliver(i);
+        Ok(())
+    }
+
+    /// Whether chat `i` can answer, edit, delete and react (ADR-025): their
+    /// app has said it reads these.
+    pub fn rich(&self, i: usize) -> bool {
+        self.data.contacts[i].understands >= proto::UNDERSTANDS
+    }
+
+    /// Message `m` of chat `i` as something to point at (ADR-025).
+    fn target(&self, i: usize, m: usize) -> Result<Ref, String> {
+        self.writable(i)?;
+        if !self.rich(i) {
+            return Err(OLDER_APP.into());
+        }
+        let msg = self.data.contacts[i]
+            .messages
+            .get(m)
+            .ok_or("no such message")?;
+        match msg.id {
+            Some(id) if !msg.deleted => Ok(Ref {
+                id,
+                theirs: !msg.mine,
+            }),
+            _ => Err("this message cannot be pointed at".into()),
+        }
+    }
+
+    /// Queues `body` about our message `m` of chat `i`, unless the message
+    /// itself has not gone yet.
+    fn own_change(&mut self, i: usize, m: usize, body: Body) -> Result<(), String> {
+        if self.target(i, m)?.theirs {
+            return Err("only your own messages can be changed".into());
+        }
+        let c = &mut self.data.contacts[i];
+        if c.messages[m].status != Status::Queued {
+            c.outbox.push(body);
+        }
+        Ok(())
+    }
+
+    /// New text for our message `m` of chat `i` (ADR-025).
+    pub fn edit_message(&mut self, i: usize, m: usize, text: &str) -> Result<(), String> {
+        if text.len() > proto::MAX_TEXT_BYTES {
+            return Err("message too long".into());
+        }
+        if text.trim().is_empty() {
+            return Err("an edit cannot be empty; delete the message instead".into());
+        }
+        let id = self.target(i, m)?.id;
+        let body = Body::Edit {
+            id,
+            text: text.to_string(),
+        };
+        self.own_change(i, m, body)?;
+        let msg = &mut self.data.contacts[i].messages[m];
+        // Still queued: it goes out with the new text, as a first version.
+        msg.edited = msg.status != Status::Queued;
+        msg.replace_text(text.to_string());
+        self.persist();
+        self.deliver(i);
+        Ok(())
+    }
+
+    /// Deletes our message `m` of chat `i` for both sides (ADR-025).
+    pub fn delete_message(&mut self, i: usize, m: usize) -> Result<(), String> {
+        let id = self.target(i, m)?.id;
+        self.own_change(i, m, Body::Delete { id })?;
+        let messages = &mut self.data.contacts[i].messages;
+        match messages[m].status {
+            // Never sent: as if it never was.
+            Status::Queued => drop(messages.remove(m)),
+            _ => messages[m].wipe(),
+        }
+        self.persist();
+        self.deliver(i);
+        Ok(())
+    }
+
+    /// Our reaction to message `m` of chat `i`, or none (ADR-025).
+    pub fn react(&mut self, i: usize, m: usize, reaction: Option<u8>) -> Result<(), String> {
+        if reaction.is_some_and(|r| r >= proto::REACTIONS) {
+            return Err("no such reaction".into());
+        }
+        let target = self.target(i, m)?;
+        let c = &mut self.data.contacts[i];
+        c.messages[m].my_reaction = reaction;
+        c.outbox.push(Body::React { target, reaction });
         self.persist();
         self.deliver(i);
         Ok(())
@@ -2086,6 +2279,7 @@ impl Engine {
                 data: Some(bytes),
             }),
             unfetched: false,
+            ..Default::default()
         });
         self.persist();
         match self.has_session(&key) {
@@ -2525,11 +2719,12 @@ impl Engine {
         }
     }
 
-    /// Messages that arrived since the last call, for `termchat recv`
-    /// (ADR-024): oldest first, each with its contact's index, and marked as
-    /// taken. A file counts once it is whole. A request not yet accepted
-    /// shows nothing, as in the apps (ADR-007).
-    pub fn take_new(&mut self, from: Option<usize>) -> Vec<(usize, Msg)> {
+    /// Messages that arrived since the last call, and what the contact did
+    /// to messages since (ADR-025), for `termchat recv` (ADR-024): oldest
+    /// first, each with its contact's index, and marked as taken. A file
+    /// counts once it is whole. A request not yet accepted shows nothing, as
+    /// in the apps (ADR-007).
+    pub fn take_new(&mut self, from: Option<usize>) -> Vec<(usize, Msg, Fetched)> {
         let mut out = Vec::new();
         for i in 0..self.data.contacts.len() {
             if from.is_some_and(|f| f != i) || self.is_request(&self.data.contacts[i].key) {
@@ -2539,14 +2734,24 @@ impl Engine {
                 let whole = m.file.as_ref().is_none_or(|f| f.complete());
                 if m.unfetched && whole {
                     m.unfetched = false;
-                    out.push((i, m.clone()));
+                    out.push((i, m.clone(), Fetched::Message));
+                }
+                let changes = std::mem::take(&mut m.changes);
+                for (happened, what) in [
+                    (changes.edit, Fetched::Edit),
+                    (changes.delete, Fetched::Delete),
+                    (changes.react, Fetched::React),
+                ] {
+                    if happened {
+                        out.push((i, m.clone(), what));
+                    }
                 }
             }
         }
         if !out.is_empty() {
             self.persist();
         }
-        out.sort_by_key(|(_, m)| m.at);
+        out.sort_by_key(|(_, m, _)| m.at);
         out
     }
 
@@ -2644,6 +2849,7 @@ fn show_missed(c: &mut Contact, missed: u64) {
             status: Status::System,
             file: None,
             unfetched: false,
+            ..Default::default()
         });
     }
 }
@@ -2820,6 +3026,7 @@ mod tests {
             status: Status::Received,
             file: None,
             unfetched,
+            ..Default::default()
         };
         e.data.contacts[0].messages.push(msg("old", 1, false));
         e.data.contacts[0].messages.push(msg("second", 3, true));
@@ -2834,8 +3041,8 @@ mod tests {
         });
         e.data.contacts[1].messages.push(file);
 
-        let texts = |got: &[(usize, Msg)]| -> Vec<(usize, String)> {
-            got.iter().map(|(i, m)| (*i, m.text.clone())).collect()
+        let texts = |got: &[(usize, Msg, Fetched)]| -> Vec<(usize, String)> {
+            got.iter().map(|(i, m, _)| (*i, m.text.clone())).collect()
         };
         assert_eq!(texts(&e.take_new(Some(1))), [(1, "first".into())]);
         assert_eq!(texts(&e.take_new(None)), [(0, "second".into())]);

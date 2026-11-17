@@ -861,6 +861,7 @@ mod tests {
             status,
             file: None,
             unfetched: false,
+            ..Default::default()
         };
         engine.data.contacts.push(Contact {
             key: [1; 32],

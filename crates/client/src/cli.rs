@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use termchat_engine::data::{self, Msg, Status};
-use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY, NEEDS_INVITE};
+use termchat_engine::engine::{
+    DEFAULT_ONION, DEFAULT_RELAY, Fetched, NEEDS_INVITE, REACTION_NAMES,
+};
 use termchat_engine::{Engine, Setup, Unlocked, clean, engine::clean_text};
 use zeroize::Zeroizing;
 
@@ -457,8 +459,8 @@ async fn recv(e: &mut Engine, a: &Args) -> Result<(), Fail> {
     let until = a.wait.map(|s| Instant::now() + Duration::from_secs(s));
     let mut printed = 0;
     loop {
-        for (i, m) in e.take_new(from) {
-            show(e, a, i, &m)?;
+        for (i, m, what) in e.take_new(from) {
+            show(e, a, i, &m, what)?;
             printed += 1;
         }
         let waiting = until.is_some_and(|u| printed == 0 && Instant::now() < u);
@@ -470,7 +472,7 @@ async fn recv(e: &mut Engine, a: &Args) -> Result<(), Fail> {
     }
 }
 
-fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg) -> Result<(), Fail> {
+fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg, what: Fetched) -> Result<(), Fail> {
     let c = &e.data.contacts[i];
     let (name, fingerprint) = (e.name(c), termchat_core::fingerprint(&c.key));
     let text = match &m.file {
@@ -494,15 +496,43 @@ fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg) -> Result<(), Fail> {
             ),
         },
     };
+    // Ids as strings: JSON readers lose digits past 2^53.
+    let id = m.id.map(|id| id.to_string());
+    let reaction = m.their_reaction.map(|r| REACTION_NAMES[usize::from(r)]);
     let mut out = std::io::stdout().lock();
     let written = match a.json {
         true => {
-            let line = serde_json::json!({
-                "from": name, "fingerprint": fingerprint, "at": m.at, "text": text,
+            let mut line = serde_json::json!({
+                "from": name, "fingerprint": fingerprint, "at": m.at, "id": id,
             });
+            let more = match what {
+                Fetched::Message => serde_json::json!({
+                    "kind": "message",
+                    "text": text,
+                    "reply_to": m.reply_to.map(|r| serde_json::json!({
+                        "id": r.id.to_string(), "mine": !r.theirs,
+                    })),
+                }),
+                Fetched::Edit => serde_json::json!({ "kind": "edit", "text": text }),
+                Fetched::Delete => serde_json::json!({ "kind": "delete" }),
+                Fetched::React => serde_json::json!({
+                    "kind": "react", "mine": m.mine, "reaction": reaction,
+                }),
+            };
+            if let (Some(line), Some(more)) = (line.as_object_mut(), more.as_object()) {
+                line.extend(more.clone());
+            }
             writeln!(out, "{line}")
         }
-        false => writeln!(out, "{name}: {}", text.replace('\n', "\n  ")),
+        false => match what {
+            Fetched::Message => writeln!(out, "{name}: {}", text.replace('\n', "\n  ")),
+            Fetched::Edit => writeln!(out, "{name} edited: {}", text.replace('\n', "\n  ")),
+            Fetched::Delete => writeln!(out, "{name} deleted a message"),
+            Fetched::React => match reaction {
+                Some(r) => writeln!(out, "{name} reacted {r} to: {}", first_line(&text)),
+                None => writeln!(out, "{name} took back a reaction"),
+            },
+        },
     };
     written.map_err(|e| Fail(1, format!("cannot write: {e}")))
 }

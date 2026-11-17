@@ -9,7 +9,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
-use termchat_proto::{Body, Ed25519Key, InviteCode, QueueId, QueueToken};
+use termchat_proto::{Body, Ed25519Key, InviteCode, QueueId, QueueToken, Ref};
 use zeroize::{Zeroize, Zeroizing};
 
 /// One of our queues on a relay (ADR-023). The token opens it, so no `Debug`.
@@ -172,9 +172,20 @@ pub struct Contact {
     /// every link would show the relay which belong together.
     #[serde(default)]
     pub next_client_id: u64,
+    /// What their client said it reads (`Body::Understands`, ADR-025); 0
+    /// until it says: they get plain `Text` and nothing to point at.
+    #[serde(default)]
+    pub understands: u16,
+    /// What we have told them we read; below `proto::UNDERSTANDS` it goes
+    /// with the next flush.
+    #[serde(default)]
+    pub told: u16,
+    /// Edits, deletes and reactions waiting for a session (ADR-025).
+    #[serde(default)]
+    pub outbox: Vec<Body>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Msg {
     pub mine: bool,
     pub text: String,
@@ -189,6 +200,34 @@ pub struct Msg {
     /// Absent in older files: everything there counts as taken.
     #[serde(default)]
     pub unfetched: bool,
+    /// The message's name on the wire (ADR-025), chosen by its author.
+    /// `None`: older, a file or a system line; it cannot be pointed at.
+    #[serde(default)]
+    pub id: Option<u64>,
+    /// The message this one answers; `theirs`: the contact's (ADR-025).
+    #[serde(default)]
+    pub reply_to: Option<Ref>,
+    #[serde(default)]
+    pub edited: bool,
+    /// Wiped by its author (ADR-025): the text is gone, a line stays.
+    #[serde(default)]
+    pub deleted: bool,
+    /// Our reaction and the contact's, as `proto::REACTIONS` indices.
+    #[serde(default)]
+    pub my_reaction: Option<u8>,
+    #[serde(default)]
+    pub their_reaction: Option<u8>,
+    /// Changes from the contact `termchat recv` has not printed yet.
+    #[serde(default)]
+    pub changes: Changes,
+}
+
+/// What happened to a message after it arrived, for `termchat recv`.
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+pub struct Changes {
+    pub edit: bool,
+    pub delete: bool,
+    pub react: bool,
 }
 
 /// What was said is wiped when a message goes: on lock, when its timer runs
@@ -285,6 +324,7 @@ impl Data {
             status: Status::System,
             file: None,
             unfetched: false,
+            ..Default::default()
         };
         let Some(c) = self.contacts.get_mut(i) else {
             return false;
@@ -334,6 +374,7 @@ impl Data {
             status: Status::Received,
             file: Some(file),
             unfetched: true,
+            ..Default::default()
         });
         whole
     }
@@ -390,9 +431,10 @@ mod b64_bytes {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Status {
     /// Waiting for a session with the contact.
+    #[default]
     Queued,
     Sending(u64),
     /// Accepted by the relay.
@@ -545,7 +587,75 @@ pub fn lock(state: &Path) -> io::Result<Option<fs::File>> {
     }
 }
 
+impl Msg {
+    /// Its author deleted it (ADR-025): the text goes, a line stays.
+    pub fn wipe(&mut self) {
+        self.text.zeroize();
+        self.text.clear();
+        self.deleted = true;
+        self.edited = false;
+        self.reply_to = None;
+        self.my_reaction = None;
+        self.their_reaction = None;
+    }
+
+    /// New text in place of the old, which is wiped.
+    pub fn replace_text(&mut self, text: String) {
+        std::mem::replace(&mut self.text, text).zeroize();
+    }
+}
+
 impl Contact {
+    /// Their message `id`, or ours (`theirs` false), if it is still here.
+    pub fn find(&mut self, id: u64, theirs: bool) -> Option<&mut Msg> {
+        self.messages
+            .iter_mut()
+            .find(|m| m.id == Some(id) && m.mine != theirs && !m.deleted)
+    }
+
+    /// The contact's edit, delete or reaction (ADR-025); whether it changed
+    /// anything. Edits and deletes reach only their own messages.
+    pub fn change(&mut self, body: Body) -> bool {
+        match body {
+            Body::Edit { id, text } => {
+                let Some(m) = self.find(id, true) else {
+                    return false;
+                };
+                m.replace_text(text);
+                m.edited = true;
+                // Not printed yet: `recv` shows the new text as it is.
+                m.changes.edit |= !m.unfetched;
+                true
+            }
+            Body::Delete { id } => {
+                let Some(m) = self.find(id, true) else {
+                    return false;
+                };
+                m.wipe();
+                // Never printed: nothing to take back.
+                m.changes = Changes {
+                    delete: !m.unfetched,
+                    ..Changes::default()
+                };
+                m.unfetched = false;
+                true
+            }
+            // Their `theirs` is ours.
+            Body::React { target, reaction } => {
+                if reaction.is_some_and(|r| r >= termchat_proto::REACTIONS) {
+                    return false;
+                }
+                let Some(m) = self.find(target.id, !target.theirs) else {
+                    return false;
+                };
+                m.their_reaction = reaction;
+                m.changes.react = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Latest activity, for "most recent first" in the list.
     pub fn last_at(&self) -> u64 {
         let last = |m: &[Msg]| m.last().map_or(0, |m| m.at);
@@ -907,6 +1017,7 @@ mod tests {
             status: Status::Received,
             file: None,
             unfetched: false,
+            ..Default::default()
         };
         let new = Contact {
             key: [1; 32],
@@ -941,6 +1052,7 @@ mod tests {
             status,
             file: None,
             unfetched: false,
+            ..Default::default()
         };
         let mut kept = Contact {
             key: [1; 32],
@@ -961,5 +1073,46 @@ mod tests {
             back.contacts[0].messages[0].status,
             Status::Failed(_)
         ));
+    }
+
+    #[test]
+    fn a_contact_changes_only_its_own_messages() {
+        let mut c = Contact::default();
+        for (mine, id) in [(true, 1), (false, 2)] {
+            c.messages.push(Msg {
+                mine,
+                text: "said".into(),
+                status: Status::Received,
+                file: None,
+                id: Some(id),
+                ..Default::default()
+            });
+        }
+        let edit = |id| Body::Edit {
+            id,
+            text: "forged".into(),
+        };
+        // Our message 1, named as theirs: nothing happens.
+        assert!(!c.change(edit(1)));
+        assert!(!c.change(Body::Delete { id: 1 }));
+        assert_eq!(c.messages[0].text, "said");
+        // A reaction outside the set is not one.
+        let ours = Ref {
+            id: 1,
+            theirs: true,
+        };
+        let react = |reaction| Body::React {
+            target: ours,
+            reaction,
+        };
+        assert!(!c.change(react(Some(termchat_proto::REACTIONS))));
+        assert!(c.change(react(Some(0))));
+        assert_eq!(c.messages[0].their_reaction, Some(0));
+        assert!(c.change(edit(2)));
+        assert!(c.messages[1].edited);
+        assert!(c.change(Body::Delete { id: 2 }));
+        assert!(c.messages[1].deleted && c.messages[1].text.is_empty());
+        // Gone: no more edits.
+        assert!(!c.change(edit(2)));
     }
 }
