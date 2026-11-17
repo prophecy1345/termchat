@@ -33,6 +33,12 @@ ignore = [
     # (tor-dirmgr) require rusqlite below 0.41; one `links = "sqlite3"` per
     # build. Drop once Arti allows rusqlite 0.41.
     { id = "RUSTSEC-2026-0459", reason = "local files of our own only; rusqlite 0.41 is blocked by arti's tor-dirmgr" },
+    # chrono: zxcvbn depends on it only for wasm32, which nothing here builds;
+    # no known vulnerability.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained; only zxcvbn's wasm32 target uses it" },
+    # humantime: Arti reads durations in its config with it; ours is built in
+    # code, not from a file. No known vulnerability. Drop once Arti moves off it.
+    { id = "RUSTSEC-2026-0542", reason = "unmaintained, duration parsing inside arti's config" },
 ]
 
 [licenses]
