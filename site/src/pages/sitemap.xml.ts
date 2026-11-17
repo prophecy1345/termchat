@@ -1,13 +1,18 @@
 // Every page in both languages; articles join as they are published.
 import type { APIRoute } from "astro";
 import { posts } from "../releases";
+import { written } from "../guide";
 
-const pages = ["/", "/compare/", "/faq/", "/self-host/", "/threat-model/", "/changelog/", "/privacy/"];
+const pages = ["/", "/docs/", "/compare/", "/faq/", "/threat-model/", "/changelog/", "/privacy/"];
 
 export const GET: APIRoute = async ({ site }) => {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const abs = (path: string) => new URL(base + path, site).href;
   const pairs: [string | null, string | null][] = pages.map((p) => [p, `/ru${p}`]);
+  for (const s of written("en")) {
+    const ru = written("ru").some((r) => r.slug === s.slug);
+    pairs.push([`/docs/${s.slug}/`, ru ? `/ru/docs/${s.slug}/` : null]);
+  }
   const en = await posts("en");
   const ru = await posts("ru");
   if (en.length || ru.length) pairs.push(["/blog/", "/ru/blog/"]);

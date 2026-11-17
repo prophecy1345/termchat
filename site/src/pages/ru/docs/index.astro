@@ -1,0 +1,8 @@
+---
+import Guide from "../../../components/Guide.astro";
+import { compiledContent, frontmatter } from "../../../../../docs/guide/index.ru.md";
+const html = await compiledContent();
+const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/s)?.[1]?.replace(/<[^>]+>/g, "") ?? "Документация";
+---
+
+<Guide lang="ru" slug="" title={frontmatter.title} description={frontmatter.description} h1={h1} html={html} />

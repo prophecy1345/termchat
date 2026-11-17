@@ -20,8 +20,8 @@ const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/s)?.[1]?.replace(/<[^>]+>/g, "") ?? 
 const pages: Record<string, [string, string]> = {
   "threat-model.md": ["/threat-model/", "threat model"],
   "threat-model.ru.md": ["/ru/threat-model/", "модель угроз"],
-  "self-host.md": ["/self-host/", "running your own relay"],
-  "self-host.ru.md": ["/ru/self-host/", "свой relay"],
+  "self-host.md": ["/docs/relay/", "running your own relay"],
+  "self-host.ru.md": ["/ru/docs/relay/", "свой relay"],
 };
 const body = html
   .replace(/<h1[^>]*>.*?<\/h1>/s, "")

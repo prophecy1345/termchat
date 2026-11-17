@@ -1,0 +1,63 @@
+---
+// A page of the user guide: the sections on the left (a fold-out list on a
+// phone), the text, and the way to the next section.
+import Doc from "./Doc.astro";
+import { sections, written } from "../guide";
+import type { Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+  /** The section shown; "" for the guide's first page. */
+  slug: string;
+  title: string;
+  description: string;
+  h1: string;
+  html: string;
+}
+const { lang, slug, title, description, h1, html } = Astro.props;
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const p = lang === "en" ? "" : "/ru";
+const href = (s: string) => url(`${p}/docs/${s ? `${s}/` : ""}`);
+const list = written(lang);
+const at = list.findIndex((s) => s.slug === slug);
+const next = list[at + 1];
+const prev = at > 0 ? list[at - 1] : at === 0 ? { slug: "", title: { en: "Overview", ru: "Обзор" } } : undefined;
+const words = lang === "en"
+  ? { sections: "Sections", overview: "Overview", next: "Next", prev: "Back" }
+  : { sections: "Разделы", overview: "Обзор", next: "Дальше", prev: "Назад" };
+// Links between documents point at their pages, as on the other doc pages.
+const pages: Record<string, string> = {
+  "threat-model.md": "/threat-model/",
+  "threat-model.ru.md": "/ru/threat-model/",
+  "self-host.md": "/docs/relay/",
+  "self-host.ru.md": "/ru/docs/relay/",
+};
+const body = html
+  .replace(/<h1[^>]*>.*?<\/h1>/s, "")
+  .replace(/href="(?:\.\.\/)?([\w.-]+\.md)"/g, (all, f) => (pages[f] ? `href="${url(pages[f])}"` : all))
+  .replace(/href="([\w-]+)(?:\.ru)?\.md(#[^"]*)?"/g, (all, s, hash) =>
+    sections.some((x) => x.slug === s) ? `href="${href(s)}${hash ?? ""}"` : all,
+  );
+---
+
+<Doc lang={lang} title={title} description={description} h1={h1} en={`/docs/${slug ? `${slug}/` : ""}`} ru={`/ru/docs/${slug ? `${slug}/` : ""}`} guide>
+  <nav class="guide-menu" slot="aside" aria-label={words.sections}>
+    {[false, true].map((fold) => {
+      const items = (
+        <ul>
+          <li><a href={href("")} aria-current={slug === "" ? "page" : undefined}>{words.overview}</a></li>
+          {list.map((s) => (
+            <li><a href={href(s.slug)} aria-current={s.slug === slug ? "page" : undefined}>{s.title[lang]}</a></li>
+          ))}
+        </ul>
+      );
+      // A phone gets the list folded under the heading; a wide screen, always open.
+      return fold ? <details class="fold"><summary>{words.sections}</summary>{items}</details> : <div class="wide">{items}</div>;
+    })}
+  </nav>
+  <div class="md" set:html={body} />
+  <nav class="guide-steps" slot="after">
+    {prev ? <a href={href(prev.slug)}>← {words.prev}: {prev.title[lang]}</a> : <span />}
+    {next && <a href={href(next.slug)}>{words.next}: {next.title[lang]} →</a>}
+  </nav>
+</Doc>

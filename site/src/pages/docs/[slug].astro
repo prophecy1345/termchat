@@ -1,0 +1,21 @@
+---
+import Guide from "../../components/Guide.astro";
+import { file, sections, written } from "../../guide";
+
+export function getStaticPaths() {
+  return written("en").map((s) => ({ params: { slug: s.slug } }));
+}
+const { slug } = Astro.params;
+const md = file(slug, "en")!;
+const html = await md.compiledContent();
+const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/s)?.[1]?.replace(/<[^>]+>/g, "") ?? slug;
+---
+
+<Guide
+  lang="en"
+  slug={slug}
+  title={md.frontmatter.title ?? `${h1} · termchat.app docs`}
+  description={md.frontmatter.description ?? sections.find((s) => s.slug === slug)?.description?.en ?? h1}
+  h1={h1}
+  html={html}
+/>
