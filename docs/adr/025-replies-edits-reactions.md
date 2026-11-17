@@ -69,8 +69,8 @@ Body::Delete { id: u64 }
 Body::React { target: Ref, reaction: Option<u8> }
 ```
 
-- A **fixed set** of six, by index: like, love, laugh, wow, sad, thanks (in the sense of 👍 ❤️ 😂 😮 😢 🙏). `None` takes one's reaction back. An index outside the set is ignored.
-- **Drawn by termchat.app, not by an emoji font**, in the theme's colours and the app's synthwave look: the same picture on every device. The terminal shows one-column glyphs (▲ ♥ ☺ ◎ ☹ ✧). The wire carries only the index, so the drawing can change without a protocol change.
+- A **fixed set** of seven, by index: like, love, laugh, wow, sad, thanks, dislike (in the sense of 👍 ❤️ 😂 😮 😢 🙏 👎). `None` takes one's reaction back. An index outside the set is ignored.
+- **Drawn by termchat.app, not by an emoji font**, as 1980s arcade pixel sprites with a soft glow, in the theme's colours (dislike is a red arrow down): the same picture on every device. The terminal shows one-column glyphs (▲ ♥ ☺ ◎ ☹ ✧ ▼). The wire carries only the index, so the drawing can change without a protocol change.
 - One reaction per person per message; a new one replaces the old.
 - Free text or any emoji as a reaction is not allowed: it would be a second text channel past every limit, and arbitrary emoji break the terminal's column widths.
 - A reaction goes with its message: it expires and is deleted with it.
@@ -115,7 +115,7 @@ New variants of the plaintext inside Olm, and random ids for naming messages. Ol
 ## Maintainer's decisions (2026-11-17)
 
 1. No time limit for edits and deletes.
-2. The six reactions stay, drawn in termchat.app's own synthwave style rather than as system emoji (section 5).
+2. Six reactions plus dislike (a red arrow down), drawn by termchat.app as pixel sprites rather than as system emoji (section 5).
 3. Texts only for now; replies, deletes and reactions for files come with the next change to `File`.
 4. Section 6's one-time cost is accepted: `Understands` and section 7 ship together.
 5. `recv --json` prints edits, deletes and reactions as events (section 8).
