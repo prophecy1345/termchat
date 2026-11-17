@@ -686,7 +686,7 @@ impl Chat {
                 ui.label(
                     "Erases keys, contacts and history from this device. No undo.\n\
                      WIPE deletes the account: contacts are told you left and the relay \
-                     forgets your key.\nMOVED (restored on another device): erases only \
+                     deletes your queues.\nMOVED (restored on another device): erases only \
                      this device and tells nobody.",
                 );
                 ui.horizontal(|ui| {

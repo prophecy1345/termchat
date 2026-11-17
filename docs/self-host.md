@@ -14,8 +14,8 @@ All in its data folder, mode `0600` (ADR-005):
 
 | File | Contents | Kept |
 |---|---|---|
-| `termchat-relay.db` (+ `-wal`, `-shm`) | public keys, prekeys, undelivered ciphertext with sender/recipient/time, bans | envelopes until delivered or 14 days; accounts until 90 days idle |
-| `termchat-reports.log` | reports users chose to send you (ADR-006): time, reported key, disclosed text | until you delete it |
+| `termchat-relay.db` (+ `-wal`, `-shm`) | anonymous queues (ADR-023): two random IDs and a SHA-256 of the owner's token each, when it was made and last used, a UnifiedPush address if its owner set one; prekeys published on queues; undelivered ciphertext with its queue and arrival time. No user keys, no senders, no accounts | envelopes until delivered or 14 days; queues until 90 days unused |
+| `termchat-reports.log` | reports users chose to send you (ADR-006): time and the text they disclosed | until you delete it |
 
 Nothing else: no IP addresses, no access log, no message history.
 
@@ -23,7 +23,7 @@ Nothing else: no IP addresses, no access log, no message history.
 
 ```sh
 git clone https://github.com/prophecy1345/termchat && cd termchat/deploy
-# put your domain into Caddyfile and docker-compose.yml (relay.example.org)
+# put your domain into Caddyfile in place of relay.example.org
 docker compose up -d
 ```
 
@@ -124,8 +124,8 @@ not lock out Tor users.
 - **Disk encryption.** Use full-disk encryption on the server: deleted rows can
   linger on SSDs until TRIM.
 - **Upgrades.** Stop, replace the binary, start. The schema version is stored in
-  the database (`PRAGMA user_version`) so later releases can migrate it; so far
-  version 2 adds the UnifiedPush endpoint (ADR-012) and migrates on start. Clients compare their version with the one your
+  the database (`PRAGMA user_version`); version 3 (0.7.0, anonymous queues)
+  starts empty and erases everything from before on its first start (ADR-023). Clients compare their version with the one your
   relay reports and tell their users when it is newer (ADR-010), so keep the
   relay current: an old relay keeps quiet about new releases.
 - **Shutting down for good.** `systemctl stop termchat-relay`, then delete the

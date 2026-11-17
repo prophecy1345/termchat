@@ -106,7 +106,7 @@ impl Kind {
                 "The newest unsaved file in this chat. Files from contacts can be\nharmful: termchat never opens them, check before you do.\nAn existing file is never overwritten. Esc: keep it for later."
             }
             Self::Wipe => {
-                "Erases keys, contacts and history from this device. No undo.\nWIPE deletes the account: contacts are told you left and the\nrelay forgets your key. MOVED (restored on another device):\nerases only this device and tells nobody."
+                "Erases keys, contacts and history from this device. No undo.\nWIPE deletes the account: contacts are told you left and the\nrelay deletes your queues. MOVED (restored on another device):\nerases only this device and tells nobody."
             }
         }
     }

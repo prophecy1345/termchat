@@ -1,0 +1,117 @@
+---
+title: "termchat.app for scripts and servers: send, recv, cron, systemd"
+description: "Send end-to-end encrypted messages from a shell script, cron job, CI run or server to your phone with termchat send, and read answers with termchat recv, without a bot account."
+---
+
+# Scripts and servers
+
+Русская версия: [scripts.ru.md](scripts.ru.md).
+
+`termchat` with no arguments opens the chat screen. With a command it does one thing without a screen and exits, so a script, a cron job or a server can send you an end-to-end encrypted message, or read your answer: "the backup failed" on your phone, without a Telegram bot or a third party reading it.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `init --nickname NAME [--relay URL] [--onion URL] [--tor]` | makes the identity |
+| `invite` | prints a one-time invite |
+| `add INVITE` | asks a contact; they accept in their app |
+| `contacts` | name, fingerprint and state, one contact per line |
+| `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
+| `send-file CONTACT PATH` | a document of up to 1 MiB |
+| `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
+
+Every command also takes `--password-file PATH` or `--password-stdin`, and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
+
+- `CONTACT` is the name the app shows, or the start of the fingerprint. If more than one contact matches, nothing is sent.
+- **The password never comes from the environment**: every child process inherits it. Use a file that belongs to you and has mode `600`, stdin, or the keyboard. Without any of them termchat asks at the keyboard, and a script has none: it ends with "no terminal to type the password".
+- There is no "send to all": one command, one contact.
+- A server identity cannot accept requests: you make the link from your app, so it can never let a stranger in.
+- Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
+
+Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact not found or more than one, 4 the relay did not take it in time (it goes with the next command), 5 cannot write to that contact.
+
+## Setting up a server
+
+Steps for Linux with systemd, run as root. Give the server **an identity of its own**, never your main one: whoever gets root on that server can read everything that identity says and hears, and write as it.
+
+```sh
+# 1. termchat for every user of the server
+curl -fsSL https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install.sh | TERMCHAT_INSTALL_DIR=/usr/local/bin sh
+
+# 2. a system user that owns only this identity, its folder, and a password only it can read
+useradd --system --home-dir /var/lib/termchat-bot --shell /usr/sbin/nologin termchat-bot
+install -d -o termchat-bot -g termchat-bot -m 700 /var/lib/termchat-bot /etc/termchat-bot
+head -c 30 /dev/urandom | base64 | sudo -u termchat-bot sh -c 'umask 077; cat > /etc/termchat-bot/pw'
+
+# a short name for the next steps
+bot() { sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot termchat "$@" --password-file /etc/termchat-bot/pw; }
+
+# 3. the identity; the nickname is what you will see in your app
+bot init --nickname backup-box
+
+# 4. your invite: Ctrl+O in the terminal, Invite in the desktop app, Your invite on Android
+bot add 'termchat:...'
+```
+
+5. Accept the request from `backup-box` in your app.
+6. See under which name the server knows you, and send a test:
+
+```sh
+bot contacts
+bot send alice "hello from $(hostname)"
+```
+
+## From systemd or cron
+
+A service or a cron job does not see what you set in your shell: give it `TERMCHAT_HOME` and the password file itself.
+
+```ini
+# /etc/systemd/system/disk-report.service
+[Service]
+Type=oneshot
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-file /etc/termchat-bot/pw'
+```
+
+Add a `.timer` for a schedule. With cron, `crontab -u termchat-bot -e`:
+
+```
+0 9 * * * TERMCHAT_HOME=/var/lib/termchat-bot /usr/local/bin/termchat send alice "good morning" --password-file /etc/termchat-bot/pw
+```
+
+systemd's `LoadCredential=` does not fit: the copy it makes belongs to root, and termchat accepts only a password file of its own user.
+
+One identity runs one command at a time: a second one at the same moment ends with code 1 and says the identity is open elsewhere.
+
+## More examples
+
+```sh
+# the end of a long command, on your laptop (again an identity of its own)
+make release; termchat send alice "release build: exit $?" --password-file ~/.termchat-bot.pw
+
+# text from a pipe
+df -h / | termchat send alice --password-file /etc/termchat-bot/pw
+
+# wait up to 10 minutes for an answer, as JSON lines
+termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/pw
+```
+
+## What recv prints
+
+Plain: `alice: text`, `alice edited: text`, `alice deleted a message`, `alice reacted like to: text`.
+
+With `--json`, one object per line:
+
+```json
+{"at":1794913363,"fingerprint":"78125 66938 20371 20023 95579 06120","from":"alice·78125","id":"17037012887881307594","kind":"react","mine":true,"reaction":"love"}
+{"at":1794913393,"fingerprint":"78125 66938 20371 20023 95579 06120","from":"alice·78125","id":"5136533931879411279","kind":"message","reply_to":{"id":"5235206626092912747","mine":true},"text":"which disk? / or /var?"}
+```
+
+- `kind`: `message`, `edit`, `delete` or `react`.
+- `id`: the message, as a string (JSON readers lose digits past 2^53). For `react`, `mine` says whether it is your message; `reaction` is one of `like`, `love`, `laugh`, `wow`, `sad`, `thanks`, `dislike`, or `null` when it was taken back.
+- `reply_to`: what a message answers; `mine` there says whether that was your message.
+- `at`: when the message itself arrived.
+
+A message edited before `recv` took it comes once, as it is now; one deleted before that does not come at all.

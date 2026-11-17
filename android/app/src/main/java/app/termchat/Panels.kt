@@ -383,7 +383,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
                     else -> {
                         Text(
                             "Erases keys, contacts and history from this phone. No undo.\n" +
-                                "WIPE deletes the account: contacts are told you left and the relay forgets your key.\n" +
+                                "WIPE deletes the account: contacts are told you left and the relay deletes your queues.\n" +
                                 "MOVED (you restored on another device): erases only this phone and tells nobody.",
                             style = Tc.small.copy(color = Tc.warn),
                         )
