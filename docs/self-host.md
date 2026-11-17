@@ -124,6 +124,21 @@ friend's. Matching the two by timing would take both operators, or someone
 who watches both servers. If your friends set your relay as theirs instead,
 both sides are on one server again: yours.
 
+The strongest setup is two people with a relay each:
+
+| | Alice | Bob |
+|---|---|---|
+| Her or his relay | `wss://relay.alice.example/` | `wss://relay.bob.example/` |
+| Their own queue lives on | Alice's relay | Bob's relay |
+| Writes to the other's queue on | Bob's relay | Alice's relay |
+
+Each sets their own relay at first run and they exchange invites as usual;
+nothing else to configure. Alice's server sees only when her queue is written
+to and read, Bob's only his. Neither operator holds both sides, and each of
+them controls only their own. Two relays run by one person on two servers do
+not give this: one operator still sees both sides; it only helps if one of the
+servers is seized or broken into.
+
 ## Running it well
 
 - **Backups.** Losing the database loses undelivered messages and prekeys
