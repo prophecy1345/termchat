@@ -128,3 +128,12 @@ Section 4 said what, not how. How it lands on the group queue of ADR-027:
 What the relay learns: a group queue with one reader per device, so the number of members' devices, as for chats. It still cannot read the names, the lists or the messages.
 
 Not a new cryptographic protocol: Megolm and Olm as in ADR-027, and device lists signed as in section 1.
+
+### Implementation notes for groups (2026-11-18, proposed)
+
+1. **`GroupReaderAsk` is not needed.** The admin is a contact of every member it invited, so it hears each member's new list in their `Devices` (section 3) and acts on it: new devices get readers and invites, removed ones make the group move without them. The kind stays reserved in 0.13 and is never sent; it can go in the next protocol change.
+2. **A removed device leaves its groups itself** when it hears its own list without itself; the admin cannot write to it any more.
+3. **A device linked later joins by itself** when the invite's roster already holds its identity.
+4. **The admin sends the roster again** with each `GroupDevices`: a new device reads only from that point on.
+5. **Edits, deletes and reactions** made on another device of ours are not mirrored in groups yet; messages are.
+6. **Limits.** The 32 readers of a group are now devices, not people. A move asks the relay for a reader per device at once; past the relay's queue budget for one IP (20 an hour) it waits, as a large removal already did.

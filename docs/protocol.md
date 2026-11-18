@@ -346,11 +346,23 @@ Body += DeviceLink { code: [u8; 16], identity: Identity }
       | Devices { list: DeviceList, queues: Vec<DeviceQueue> }                             // to contacts
       | OwnQueue { contact: [u8; 32], queue: DeviceQueue }                                 // own devices only
       | SiblingQueue { device: [u8; 32], queue: DeviceQueue }   // linked device -> primary -> linked device
+      | GroupDevices { group: [u8; 16], member: [u8; 32], list: DeviceList,
+                       readers: Vec<([u8; 32], [u8; 16])> }   // admin -> group, inside Megolm
+      | OwnGroupJoin { group: [u8; 16] }                       // own devices only
+      | GroupReaderAsk { group: [u8; 16], list: DeviceList }   // reserved, not sent
 ```
 
 Linked devices meet through the primary: each makes a queue for the other
 and sends its address in `SiblingQueue` to the primary, which checks both are
 on the list and passes it on.
+
+In groups every device is a reader of the group queue. The roster names
+identities with their primary's reader; `GroupDevices` adds a member's list,
+signed by that member, and the reader of each linked device. Each device has
+its own Megolm session, shares it with every device, and signs messages as
+itself; a message counts for the member whose checked list holds the device.
+The admin follows members' lists from their `Devices`: a new device gets a
+reader and an invite, and a removed one makes the group move without it.
 
 The list is signed by the identity key over `"termchat-devices-v1" ||
 postcard(identity, no, devices)`. The first device is the primary: its key is

@@ -134,6 +134,8 @@ impl Engine {
         list.signature = self.core().sign_devices(&list).map_err(|e| e.to_string())?;
         self.data.devices = Some(list.clone());
         self.data.device_labels.retain(|(k, _)| k != key);
+        let me = self.me();
+        self.group_devices_changed(me);
         // The removed device hears the list without itself, then nothing.
         if let Some(o) = self.index(key) {
             self.data.contacts[o].outbox.push(Body::OwnDevices {
@@ -198,7 +200,7 @@ impl Engine {
     }
 
     /// Whether our device list names `key`.
-    fn lists(&self, key: &Ed25519Key) -> bool {
+    pub(super) fn lists(&self, key: &Ed25519Key) -> bool {
         self.data
             .devices
             .as_ref()
@@ -239,6 +241,8 @@ impl Engine {
         self.data.devices = Some(list);
         self.tell_own_devices();
         self.hand_over(i);
+        let me = self.me();
+        self.group_devices_changed(me);
         // Every contact hears of the new list; the new device learns where
         // we read each of them.
         for c in 0..self.data.contacts.len() {
@@ -443,6 +447,10 @@ impl Engine {
                 let note = match (first, on_it) {
                     (true, _) => "This device is linked.",
                     (false, false) => {
+                        // Its groups end here too: the admin moves them without it.
+                        for g in &mut self.data.groups {
+                            g.left = true;
+                        }
                         "This device was removed from your account: it reads and sends nothing more."
                     }
                     (false, true) => return,
@@ -491,7 +499,9 @@ impl Engine {
                             self.note(e);
                         }
                     }
-                    None if !self.data.pending_group_joins.contains(&group) => {
+                    None if !self.data.pending_group_joins.contains(&group)
+                        && !self.data.groups.iter().any(|g| g.id == group && !g.left) =>
+                    {
                         self.data.pending_group_joins.push(group);
                     }
                     None => {}
@@ -657,6 +667,7 @@ impl Engine {
             return self.note(e);
         }
         self.deliver(i);
+        self.group_devices_changed(key);
     }
 
     /// Whoever else may write to our queue for contact `key`: their other

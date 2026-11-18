@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use termchat_engine::{Engine, Setup};
-use termchat_relay::{Config, Limits};
+use termchat_relay::{Config, Limits, Rate};
 use tokio::net::TcpListener;
 
 const PASSWORD: &str = "correct horse battery staple violin";
@@ -18,7 +18,12 @@ async fn start_relay() -> String {
         trust_proxy: false,
         db: None,
         reports: None,
-        limits: Limits::default(),
+        // Every device here comes from 127.0.0.1: one IP's queue budget is
+        // too small for four devices, their contacts and group moves.
+        limits: Limits {
+            queues_per_ip: Rate::per(1000.0, 3600.0),
+            ..Limits::default()
+        },
     };
     tokio::spawn(termchat_relay::serve(listener, None, config));
     url
@@ -48,7 +53,12 @@ async fn pump(e: &mut [Box<Engine>], done: impl Fn(&[Box<Engine>]) -> bool) {
                         .collect();
                     let devs: Vec<_> = g.devices().iter().map(|d| d.ed25519[0]).collect();
                     eprintln!(
-                        "#{n} me {} devices {devs:?} shared {:?} early {} msgs {texts:?}",
+                        "#{n} left {} moving {:?} asking {} me {} devices {devs:?} shared {:?} early {} msgs {texts:?}",
+                        g.left,
+                        g.moving
+                            .as_ref()
+                            .map(|m| (m.stay.len(), m.grants.len(), m.removed.len())),
+                        g.asking.len(),
                         x.me()[0],
                         g.shared.iter().map(|k| k[0]).collect::<Vec<_>>(),
                         g.early.len()
@@ -541,6 +551,83 @@ async fn every_device_of_a_member_reads_and_writes_in_the_group() {
     pump(&mut e, |e| {
         in_group(&e[2], "and from her phone", false, Some(alice))
             && in_group(&e[1], "and from her phone", true, None)
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Alice's phone links one more device, a tablet, as e[3].
+#[allow(clippy::vec_box)] // the engines the other helpers make
+async fn link_tablet(e: &mut Vec<Box<Engine>>, dir: &Path, url: &str) {
+    e.push(engine(dir, "tablet", url));
+    pump(e, |e| e[3].data.invite_queue.is_some()).await;
+    let code = e[3].link_code().unwrap();
+    let at_phone = e[0].add_device(&code).unwrap();
+    pump(e, |e| e[3].pending_link().is_some()).await;
+    let at_tablet = e[3].pending_link().unwrap();
+    e[3].confirm_link(at_tablet);
+    e[0].confirm_link(at_phone);
+    pump(e, |e| {
+        e[3].data
+            .devices
+            .as_ref()
+            .is_some_and(|d| d.devices.len() == 3)
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_device_linked_later_joins_and_a_removed_one_reads_no_more() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices11-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let g = group_with_alice_on_two_devices(&mut e).await;
+    let (alice, bob, laptop) = (e[0].me(), e[2].me(), e[1].me());
+    link_tablet(&mut e, &dir, &url).await;
+
+    // The tablet joins by itself: alice is in the group already.
+    pump(&mut e, |e| {
+        e[3].data.groups.first().is_some_and(|g| g.reader.is_some())
+    })
+    .await;
+    e[2].send_group(g, "welcome, tablet").unwrap();
+    pump(&mut e, |e| {
+        (0..4)
+            .filter(|&n| n != 2)
+            .all(|n| in_group(&e[n], "welcome, tablet", false, Some(bob)))
+    })
+    .await;
+    e[3].send_group(0, "from the tablet").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[2], "from the tablet", false, Some(alice))
+            && in_group(&e[1], "from the tablet", true, None)
+    })
+    .await;
+
+    // The laptop is removed: the group moves without it.
+    e[0].remove_device(&laptop).unwrap();
+    pump(&mut e, |e| {
+        e[2].data.groups[0].moving.is_none()
+            && e[2].data.groups[0]
+                .member_devices
+                .iter()
+                .all(|(_, l, _)| l.devices.iter().all(|d| d.ed25519 != laptop))
+            && e[1].data.groups[0].left
+    })
+    .await;
+    e[2].send_group(g, "after the laptop went").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[0], "after the laptop went", false, Some(bob))
+            && in_group(&e[3], "after the laptop went", false, Some(bob))
+    })
+    .await;
+    assert!(!in_group(&e[1], "after the laptop went", false, Some(bob)));
+
+    // Bob removes alice: her devices leave too.
+    e[2].remove_from_group(g, &alice).unwrap();
+    pump(&mut e, |e| {
+        e[0].data.groups[0].left && e[3].data.groups[0].left
     })
     .await;
     std::fs::remove_dir_all(&dir).unwrap();

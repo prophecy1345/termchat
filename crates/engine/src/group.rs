@@ -215,9 +215,12 @@ impl Engine {
         }
         self.data.groups[g].awaiting.retain(|k| *k != key);
         // ADR-028: a reader for each of their devices, primary first.
+        let welcome =
+            self.devices_welcome(g) && self.data.contacts[i].understands >= proto::UNDERSTANDS;
         let devices: Vec<Ed25519Key> = self.data.contacts[i]
             .their_devices
             .iter()
+            .filter(|_| welcome)
             .flat_map(|d| d.devices.iter().map(|x| x.ed25519))
             .filter(|k| *k != key)
             .collect();
@@ -673,6 +676,8 @@ impl Engine {
                     self.subscribe_group(g);
                     self.persist();
                     self.flush_group(g);
+                    // Our own linked devices join our new group (ADR-028).
+                    self.group_devices_changed(who);
                 } else {
                     self.data.groups[g].invited.push((who, grant.clone()));
                     self.persist();
@@ -700,6 +705,19 @@ impl Engine {
                                 self.transmit_device(&key, who, body);
                             }
                         }
+                    }
+                    // A device of someone in the group already: everyone hears.
+                    let owner = match self.owner_of_device(&who) {
+                        Some(c) => Some(self.data.contacts[c].key),
+                        None => self.lists(&who).then(|| self.identity_key()),
+                    };
+                    if let Some(owner) = owner.filter(|o| {
+                        self.data.groups[g]
+                            .members()
+                            .iter()
+                            .any(|m| m.ed25519 == *o)
+                    }) {
+                        self.publish_devices(g, owner);
                     }
                 }
             }
@@ -1011,19 +1029,45 @@ impl Engine {
         if !group.members().iter().any(|m| m.ed25519 == *who) {
             return Err("not in this group".into());
         }
-        let stay: Vec<Ed25519Key> = group
-            .members()
+        // Their linked devices go with them (ADR-028).
+        let mut gone = vec![*who];
+        for (m, list, _) in &group.member_devices {
+            if m == who {
+                gone.extend(list.devices.iter().map(|d| d.ed25519).filter(|k| k != who));
+            }
+        }
+        self.data.groups[g]
+            .member_devices
+            .retain(|(m, ..)| m != who);
+        self.start_move(g, gone);
+        let name = self.data.groups[g]
+            .name_of(who)
+            .unwrap_or("someone")
+            .to_string();
+        self.group_system(g, format!("you removed {name}"));
+        self.persist();
+        Ok(())
+    }
+
+    /// Admin: the group moves to a new queue without `gone`, members or
+    /// devices; every device that stays gets a reader of the new one.
+    fn start_move(&mut self, g: usize, gone: Vec<Ed25519Key>) {
+        // shortcut: a reader per device and one queue, all at once; past the
+        // relay's queue budget (20 an hour per IP) the move waits stuck, as
+        // a large member removal already did. Retry refused frames if seen.
+        let stay: Vec<Ed25519Key> = self.data.groups[g]
+            .devices()
             .iter()
             .map(|m| m.ed25519)
-            .filter(|k| k != who)
+            .filter(|k| !gone.contains(k))
             .collect();
         let group = &mut self.data.groups[g];
         match group.moving.as_mut() {
             // Removed while moving: out of the move too.
             Some(m) => {
-                m.removed.push(*who);
-                m.stay.retain(|k| k != who);
-                group.asking.retain(|k| k != who);
+                m.removed.extend(&gone);
+                m.stay.retain(|k| !gone.contains(k));
+                group.asking.retain(|k| !gone.contains(k));
             }
             None => {
                 // Invites not answered yet point at the old queue: they are
@@ -1033,7 +1077,7 @@ impl Engine {
                 asking.extend(&reinvite);
                 group.moving = Some(GroupMoving {
                     stay,
-                    removed: vec![*who],
+                    removed: gone,
                     grants: Vec::new(),
                     old: None,
                     reinvite,
@@ -1042,13 +1086,18 @@ impl Engine {
                 self.group_send(g, ClientFrame::CreateGroup);
             }
         }
-        let name = self.data.groups[g]
-            .name_of(who)
-            .unwrap_or("someone")
-            .to_string();
-        self.group_system(g, format!("you removed {name}"));
-        self.persist();
-        Ok(())
+    }
+
+    /// `body` to `who`: a contact, one of our devices, or a contact's device.
+    fn group_tell(&mut self, who: &Ed25519Key, body: Body) {
+        if self.index(who).is_some() {
+            if let Err(e) = self.transmit(who, body) {
+                self.note(e);
+            }
+        } else if let Some(c) = self.owner_of_device(who) {
+            let key = self.data.contacts[c].key;
+            self.transmit_device(&key, *who, body);
+        }
     }
 
     /// Every remaining member has a reader of the new queue: tell them, tell
@@ -1088,6 +1137,15 @@ impl Engine {
         if let Some(mine) = reader_of(&me) {
             group.reader = Some(mine);
         }
+        // Linked devices' readers of the new queue (ADR-028).
+        for (_, list, readers) in &mut group.member_devices {
+            *readers = list
+                .devices
+                .iter()
+                .filter_map(|d| reader_of(&d.ed25519).map(|r| (d.ed25519, r.send_id)))
+                .filter(|(k, _)| *k != list.identity)
+                .collect();
+        }
         let send_id = group.send_id;
         self.persist();
         for (who, grant) in &moving.grants {
@@ -1099,9 +1157,7 @@ impl Engine {
                 send_id,
                 reader: grant.clone(),
             };
-            if let Err(e) = self.transmit(who, body) {
-                self.note(e);
-            }
+            self.group_tell(who, body);
         }
         for who in &moving.reinvite {
             let Some(grant) = reader_of(who) else {
@@ -1116,21 +1172,29 @@ impl Engine {
                 send_id,
                 reader: grant,
             };
-            if let Err(e) = self.transmit(who, body) {
-                self.note(e);
-            }
+            self.group_tell(who, body);
         }
         let gid = self.data.groups[g].id;
         for who in &moving.removed {
-            if self.index(who).is_some() {
-                let _ = self.transmit(who, Body::GroupLeave { group: gid });
-            }
+            self.group_tell(who, Body::GroupLeave { group: gid });
         }
         if let Some((group_id, token)) = moving.old {
             self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
         }
         self.subscribe_group(g);
         self.after_members_left(g, &moving.removed);
+        let entries = self.data.groups[g].member_devices.clone();
+        for (member, list, readers) in entries {
+            self.send_group_body(
+                g,
+                Body::GroupDevices {
+                    group: gid,
+                    member,
+                    list,
+                    readers,
+                },
+            );
+        }
     }
 
     /// Members gone from the roster: their sessions are forgotten and ours
@@ -1265,20 +1329,19 @@ impl Engine {
     /// Admin: member `who`'s device list and the readers made for their
     /// linked devices, to everyone in the group (ADR-028).
     fn publish_devices(&mut self, g: usize, who: Ed25519Key) {
-        let Some(list) = self
-            .index(&who)
-            .and_then(|i| self.data.contacts[i].their_devices.clone())
-        else {
+        let Some(list) = self.device_list_of(&who) else {
             return;
         };
         let group = &mut self.data.groups[g];
         let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k && *k != who);
-        let readers: Vec<(Ed25519Key, QueueId)> = group
-            .invited
-            .iter()
-            .filter(|(k, _)| listed(k))
-            .map(|(k, grant)| (*k, grant.send_id))
-            .collect();
+        let had = group.member_devices.iter().find(|(m, ..)| *m == who);
+        let mut readers: Vec<(Ed25519Key, QueueId)> = had
+            .map(|(_, _, r)| r.iter().filter(|(k, _)| listed(k)).copied().collect())
+            .unwrap_or_default();
+        for (k, grant) in group.invited.iter().filter(|(k, _)| listed(k)) {
+            readers.retain(|(x, _)| x != k);
+            readers.push((*k, grant.send_id));
+        }
         group.invited.retain(|(k, _)| !listed(k));
         group.member_devices.retain(|(m, ..)| *m != who);
         group
@@ -1303,6 +1366,84 @@ impl Engine {
         self.persist();
     }
 
+    /// The signed device list of `who`: ours, or a contact's.
+    fn device_list_of(&self, who: &Ed25519Key) -> Option<proto::DeviceList> {
+        if *who == self.identity_key() {
+            return self.data.devices.clone();
+        }
+        self.index(who)
+            .and_then(|i| self.data.contacts[i].their_devices.clone())
+    }
+
+    /// Whether linked devices may take part in group `g`: every member we
+    /// know of understands devices (ADR-028, amendment point 8).
+    fn devices_welcome(&self, g: usize) -> bool {
+        let me = self.identity_key();
+        self.data.groups[g].members().iter().all(|m| {
+            m.ed25519 == me
+                || self
+                    .index(&m.ed25519)
+                    .is_some_and(|i| self.data.contacts[i].understands >= proto::UNDERSTANDS)
+        })
+    }
+
+    /// Admin: `who`'s device list changed. New devices get readers and
+    /// invites; devices gone from it make the group move without them.
+    pub(super) fn group_devices_changed(&mut self, who: Ed25519Key) {
+        let Some(list) = self.device_list_of(&who) else {
+            return;
+        };
+        for g in 0..self.data.groups.len() {
+            let group = &self.data.groups[g];
+            if !group.is_admin() || group.left || !group.members().iter().any(|m| m.ed25519 == who)
+            {
+                continue;
+            }
+            if !self.devices_welcome(g) {
+                continue;
+            }
+            let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k);
+            let had: Vec<Ed25519Key> = group
+                .member_devices
+                .iter()
+                .filter(|(m, ..)| *m == who)
+                .flat_map(|(_, _, r)| r.iter().map(|(k, _)| *k))
+                .collect();
+            let gone: Vec<Ed25519Key> = had.iter().filter(|k| !listed(k)).copied().collect();
+            let new: Vec<Ed25519Key> = list
+                .devices
+                .iter()
+                .map(|d| d.ed25519)
+                .filter(|k| {
+                    *k != who
+                        && *k != self.me()
+                        && !had.contains(k)
+                        && !group.asking.contains(k)
+                        && !group.invited.iter().any(|(x, _)| x == k)
+                })
+                .collect();
+            let group = &mut self.data.groups[g];
+            if let Some(entry) = group.member_devices.iter_mut().find(|(m, ..)| *m == who) {
+                entry.1 = list.clone();
+                entry.2.retain(|(k, _)| listed(k));
+            }
+            if !gone.is_empty() {
+                self.start_move(g, gone);
+            }
+            if new.is_empty() {
+                continue;
+            }
+            let group = &mut self.data.groups[g];
+            group.asking.extend(&new);
+            if let (Some((group_id, token)), None) = (group.admin, group.moving.as_ref()) {
+                for _ in &new {
+                    self.group_send(g, ClientFrame::AddReader { group_id, token });
+                }
+            }
+        }
+        self.persist();
+    }
+
     /// `GroupDevices` from the admin: kept once the member signed the list.
     fn take_member_devices(
         &mut self,
@@ -1323,10 +1464,21 @@ impl Engine {
             return;
         }
         let group = &mut self.data.groups[g];
+        let gone: Vec<Ed25519Key> = group
+            .member_devices
+            .iter()
+            .filter(|(m, ..)| *m == member)
+            .flat_map(|(_, _, r)| r.iter().map(|(k, _)| *k))
+            .filter(|k| !readers.iter().any(|(x, _)| x == k))
+            .collect();
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
         self.know_members(g);
-        self.share_key(g);
+        if gone.is_empty() {
+            self.share_key(g);
+        } else {
+            self.after_members_left(g, &gone);
+        }
         self.persist();
     }
 
@@ -1399,7 +1551,11 @@ impl Engine {
                     reader,
                 });
                 // Another device of ours took this group already (ADR-028).
-                if self.data.pending_group_joins.contains(&group) {
+                let ours = self.identity_key();
+                let on_it = self.data.group_invites.last().is_some_and(|x| {
+                    !self.is_primary() && x.roster.members.iter().any(|m| m.ed25519 == ours)
+                });
+                if on_it || self.data.pending_group_joins.contains(&group) {
                     let n = self.data.group_invites.len() - 1;
                     if let Err(e) = self.take_group_invite(n, false) {
                         self.note(e);
