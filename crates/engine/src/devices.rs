@@ -108,6 +108,52 @@ impl Engine {
         self.accept(i);
     }
 
+    /// On the primary: device `key` leaves the list. Contacts stop writing to
+    /// it, our devices stop sending it copies, and it hears so itself.
+    pub fn remove_device(&mut self, key: &Ed25519Key) -> Result<(), String> {
+        if !self.is_primary() {
+            return Err("only your main device removes devices".into());
+        }
+        if *key == self.me() {
+            return Err("the main device stays: it is your identity".into());
+        }
+        let Some(mut list) = self.data.devices.clone() else {
+            return Err("no such device".into());
+        };
+        let before = list.devices.len();
+        list.devices.retain(|d| d.ed25519 != *key);
+        if list.devices.len() == before {
+            return Err("no such device".into());
+        }
+        list.no += 1;
+        list.signature = self.core().sign_devices(&list).map_err(|e| e.to_string())?;
+        self.data.devices = Some(list.clone());
+        self.data.device_labels.retain(|(k, _)| k != key);
+        // The removed device hears the list without itself, then nothing.
+        if let Some(o) = self.index(key) {
+            self.data.contacts[o].outbox.push(Body::OwnDevices {
+                list,
+                labels: Vec::new(),
+                nickname: self.data.nickname.clone(),
+            });
+            self.deliver(o);
+        }
+        self.tell_own_devices();
+        for c in 0..self.data.contacts.len() {
+            if !self.data.contacts[c].own {
+                self.deliver(c);
+            }
+        }
+        self.persist();
+        Ok(())
+    }
+
+    /// A linked device the primary removed: it keeps what it had, and sends
+    /// nothing more.
+    pub fn removed(&self) -> bool {
+        !self.is_primary() && self.data.devices.is_some() && !self.lists(&self.me())
+    }
+
     /// Whether our device list names `key`.
     fn lists(&self, key: &Ed25519Key) -> bool {
         self.data
@@ -315,22 +361,27 @@ impl Engine {
                 };
                 let me = self.me();
                 let newer = self.data.devices.as_ref().is_none_or(|d| list.no > d.no);
+                let on_it = list.devices.iter().any(|d| d.ed25519 == me);
+                let first = self.data.devices.is_none();
                 if self.data.contacts[i].key != primary
                     || list.identity != primary
                     || !newer
-                    || !list.devices.iter().any(|d| d.ed25519 == me)
+                    || (first && !on_it)
                     || verify_devices(&list).is_err()
                 {
                     return;
                 }
-                let first = self.data.devices.is_none();
                 self.data.devices = Some(list);
                 self.data.device_labels = labels;
                 self.data.nickname = nickname;
-                if first {
-                    self.happened
-                        .push(Happened::Notice("This device is linked.".into()));
-                }
+                let note = match (first, on_it) {
+                    (true, _) => "This device is linked.",
+                    (false, false) => {
+                        "This device was removed from your account: it reads and sends nothing more."
+                    }
+                    (false, true) => return,
+                };
+                self.happened.push(Happened::Notice(note.into()));
             }
             Body::LinkedContact { contact } if own && !self.is_primary() => {
                 if self.data.contacts[i].key

@@ -2249,6 +2249,9 @@ impl Engine {
         if self.needs_invite(c) {
             return Err(NEEDS_INVITE.into());
         }
+        if self.removed() {
+            return Err("this device was removed from your account".into());
+        }
         // ADR-028: an app before devices hears only from the primary.
         if !self.is_primary() && !c.own && c.understands < proto::UNDERSTANDS {
             return Err("their app knows no second devices yet: write from your main one, or ask them to update".into());

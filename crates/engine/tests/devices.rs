@@ -265,3 +265,46 @@ async fn a_contact_writes_to_both_devices_and_each_device_sees_what_the_other_se
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removed_device_hears_so_and_contacts_stop_writing_to_it() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices5-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (alice, laptop, bob) = (e[0].me(), e[1].me(), e[2].me());
+    pump(&mut e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        e[2].data.contacts[i].device_addrs.len() == 1
+    })
+    .await;
+
+    assert!(e[1].remove_device(&laptop).is_err(), "only the primary");
+    assert!(
+        e[0].remove_device(&alice).is_err(),
+        "not the primary itself"
+    );
+    e[0].remove_device(&laptop).unwrap();
+    pump(&mut e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        let c = &e[2].data.contacts[i];
+        e[1].removed()
+            && c.their_devices
+                .as_ref()
+                .is_some_and(|d| d.devices.len() == 1)
+            && c.device_addrs.is_empty()
+    })
+    .await;
+
+    let j = e[1].index(&bob).unwrap();
+    assert!(e[1].send(j, "still here?").is_err());
+    let i = e[2].index(&alice).unwrap();
+    e[2].send(i, "after").unwrap();
+    pump(&mut e, |e| has(&e[0], &bob, "after", false)).await;
+    settle(&mut e, 1500).await;
+    assert!(
+        !has(&e[1], &bob, "after", false),
+        "the removed laptop reads nothing new"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
