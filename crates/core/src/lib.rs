@@ -19,7 +19,9 @@ pub use fingerprint::{fingerprint, safety_number};
 pub use store::{FileKey, KdfParams, create as create_file_key, opens_duress, rekey, set_duress};
 pub use termchat_proto as proto;
 
-use proto::{Body, Curve25519Key, Ed25519Key, Envelope, Identity, Inner, Signature, SignedKey};
+use proto::{
+    Body, Curve25519Key, DeviceList, Ed25519Key, Envelope, Identity, Inner, Signature, SignedKey,
+};
 
 /// ADR-007: unanswered contact requests kept at once.
 const MAX_REQUESTS: usize = 50;
@@ -34,6 +36,7 @@ const ID_CONTEXT: &[u8] = b"termchat-id-v1";
 const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
 /// ADR-027: what a group admin signs.
 const ROSTER_CONTEXT: &[u8] = b"termchat-roster-v1";
+const DEVICES_CONTEXT: &[u8] = b"termchat-devices-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -671,8 +674,9 @@ impl Client {
         self.groups.decrypt(group, bytes)
     }
 
-    /// A group member, known by the keys the admin signed for (ADR-027),
-    /// not by an invite; kept apart from contacts by the app.
+    /// A group member, known by the keys the admin signed for (ADR-027), or
+    /// a device of a contact or of our own, known by its owner's signed device
+    /// list (ADR-028): not by an invite; kept apart from contacts by the app.
     pub fn add_member(&mut self, ed25519: Ed25519Key, curve25519: Curve25519Key) {
         self.contacts.entry(ed25519).or_insert(Contact {
             curve25519,
@@ -692,6 +696,19 @@ impl Client {
         self.account
             .sign([ROSTER_CONTEXT, roster].concat())
             .to_bytes()
+    }
+
+    /// Signs our device list (ADR-028). Only the primary can: its key is
+    /// the identity the list is for.
+    pub fn sign_devices(&self, list: &DeviceList) -> Result<Signature, Error> {
+        if list.identity != self.ed25519() {
+            return Err(Error::BadSignature);
+        }
+        list.check()?;
+        Ok(self
+            .account
+            .sign([DEVICES_CONTEXT, &list.signed_bytes()].concat())
+            .to_bytes())
     }
 
     pub fn has_session(&self, contact: &Ed25519Key) -> bool {
@@ -847,6 +864,16 @@ fn open_inner(plain: &[u8], sender: &Ed25519Key, me: &Ed25519Key) -> Result<Inne
 /// Whether `admin` signed `roster` (ADR-027).
 pub fn verify_roster(admin: &Ed25519Key, roster: &[u8], sig: &Signature) -> Result<(), Error> {
     verify_message(admin, &[ROSTER_CONTEXT, roster].concat(), sig)
+}
+
+/// Whether a device list is well formed and signed by its identity (ADR-028).
+pub fn verify_devices(list: &DeviceList) -> Result<(), Error> {
+    list.check()?;
+    verify_message(
+        &list.identity,
+        &[DEVICES_CONTEXT, &list.signed_bytes()].concat(),
+        &list.signature,
+    )
 }
 
 fn verify_identity(id: &Identity) -> Result<(), Error> {
