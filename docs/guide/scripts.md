@@ -20,6 +20,7 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
 | `send-file CONTACT PATH` | a document of up to 1 MiB |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
+| `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
 Every command also takes `--password-file PATH` or `--password-stdin`, and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
 
@@ -83,7 +84,49 @@ Add a `.timer` for a schedule. With cron, `crontab -u termchat-bot -e`:
 
 systemd's `LoadCredential=` does not fit: the copy it makes belongs to root, and termchat accepts only a password file of its own user.
 
-One identity runs one command at a time: a second one at the same moment ends with code 1 and says the identity is open elsewhere.
+One identity runs one command at a time: a second one at the same moment ends with code 1 and says the identity is open elsewhere. A daemon lifts that limit.
+
+## A daemon, for a bot that answers
+
+Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it: no password, an answer within a second, and several at a time. When no daemon runs, they work as before.
+
+```ini
+# /etc/systemd/system/termchat-daemon.service
+[Unit]
+Description=termchat daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/usr/local/bin/termchat daemon --password-file /etc/termchat-bot/pw
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/termchat-bot
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+A bot that answers "status" and "disk" from your phone (`jq` reads the JSON):
+
+```sh
+export TERMCHAT_HOME=/var/lib/termchat-bot
+termchat recv --from alice --follow --json | while read -r line; do
+  case "$(printf '%s' "$line" | jq -r .text)" in
+    status) termchat send alice "$(uptime)" ;;
+    disk)   termchat send alice "$(df -h / | tail -1)" ;;
+  esac
+done
+```
+
+- The daemon listens on `daemon.sock` in the state folder, mode `600`, and lets in only its own user. Nothing listens on the network.
+- **While it runs, the password and the keys are in its memory, and any process of that user can send through it.** Give it a server identity under a user of its own, never your main identity.
+- A document you send is read by the command, not the daemon; a `recv --save-dir` folder must exist before you ask.
+- It stops on SIGTERM or Ctrl+C, saving first. On Windows there is no daemon.
 
 ## More examples
 

@@ -1,0 +1,439 @@
+//! Daemon mode (ADR-029): `termchat daemon` keeps one identity open and
+//! answers the scriptable commands over a Unix socket in the state folder.
+//! One JSON object per line each way; only the daemon's own user gets in.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+use termchat_engine::Engine;
+use termchat_engine::data::{self, Status};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::mpsc;
+use zeroize::Zeroizing;
+
+use super::{
+    Args, Fail, Mark, USAGE, can_write, contact_rows, fail, last_mark, print_record, record,
+    status_of,
+};
+
+pub const SOCKET: &str = "daemon.sock";
+/// A 1 MB document in base64, with room for the rest of the line.
+const MAX_LINE: u64 = 2 << 20;
+const MAX_CONNECTIONS: usize = 16;
+
+/// A request and where its answer lines go.
+type Job = (Value, mpsc::UnboundedSender<String>);
+
+/// Something waiting on the relay: a sent message, or a request out.
+enum Waiting {
+    Sent { i: usize, m: Mark },
+    Added { i: usize },
+}
+
+struct Pending {
+    what: Waiting,
+    until: Instant,
+    reply: mpsc::UnboundedSender<String>,
+}
+
+/// A `recv` that waits or follows.
+struct Reader {
+    from: Option<usize>,
+    files: bool,
+    follow: bool,
+    until: Option<Instant>,
+    got: usize,
+    reply: mpsc::UnboundedSender<String>,
+}
+
+fn ok(more: Value) -> String {
+    let mut v = json!({ "ok": true });
+    if let (Some(v), Some(more)) = (v.as_object_mut(), more.as_object()) {
+        v.extend(more.clone());
+    }
+    v.to_string()
+}
+
+fn err(Fail(code, why): Fail) -> String {
+    json!({ "ok": false, "code": code, "error": why }).to_string()
+}
+
+pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
+    let path = home.join(SOCKET);
+    // We hold the state lock, so a socket here is a crashed daemon's.
+    let _ = std::fs::remove_file(&path);
+    let listener =
+        UnixListener::bind(&path).map_err(|why| Fail(1, format!("cannot listen: {why}")))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|why| Fail(1, format!("cannot protect the socket: {why}")))?;
+    }
+    use tokio::signal::unix::{SignalKind, signal};
+    let signals = |k| signal(k).map_err(|why| Fail(1, format!("signals: {why}")));
+    let (mut term, mut int) = (
+        signals(SignalKind::terminate())?,
+        signals(SignalKind::interrupt())?,
+    );
+    let me = rustix::process::geteuid().as_raw();
+    let (tx, mut rx) = mpsc::channel::<Job>(64);
+    let open = Arc::new(AtomicUsize::new(0));
+    let (mut pending, mut readers) = (Vec::new(), Vec::new());
+    eprintln!("termchat: daemon ready on {}", path.display());
+    loop {
+        tokio::select! {
+            Ok((stream, _)) = listener.accept() => {
+                // Only our own user; anyone else is closed without a word.
+                let ours = stream.peer_cred().is_ok_and(|c| c.uid() == me);
+                if ours && open.fetch_add(1, Ordering::SeqCst) < MAX_CONNECTIONS {
+                    let (tx, open) = (tx.clone(), open.clone());
+                    tokio::spawn(async move {
+                        connection(stream, tx).await;
+                        open.fetch_sub(1, Ordering::SeqCst);
+                    });
+                } else if ours {
+                    open.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
+            Some((request, reply)) = rx.recv() => {
+                handle(e, request, reply, &mut pending, &mut readers);
+            }
+            Some(ev) = e.events.recv() => e.on_relay(ev),
+            () = tokio::time::sleep(Duration::from_millis(200)) => {}
+            _ = term.recv() => break,
+            _ = int.recv() => break,
+        }
+        e.tick();
+        e.happened.clear();
+        progress(e, &mut pending, &mut readers);
+    }
+    e.persist();
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+/// One client: its request lines in, the answers out, until it closes.
+async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
+    let (read, mut write) = stream.into_split();
+    let mut read = BufReader::new(read);
+    loop {
+        let mut line = String::new();
+        let n = (&mut read).take(MAX_LINE + 1).read_line(&mut line).await;
+        match n {
+            Ok(0) | Err(_) => return,
+            Ok(_) if line.len() as u64 > MAX_LINE => {
+                let _ = write
+                    .write_all(format!("{}\n", err(Fail(2, "request too long".into()))).as_bytes())
+                    .await;
+                return;
+            }
+            Ok(_) => {}
+        }
+        let (reply, mut answers) = mpsc::unbounded_channel();
+        let request = serde_json::from_str(&line).unwrap_or(Value::Null);
+        if jobs.send((request, reply)).await.is_err() {
+            return;
+        }
+        // Until the last answer, or the client goes away. A client that
+        // writes again meanwhile is left alone: its bytes wait for us.
+        let mut watch = true;
+        loop {
+            tokio::select! {
+                answer = answers.recv() => {
+                    let Some(answer) = answer else { return };
+                    let last = serde_json::from_str::<Value>(&answer)
+                        .is_ok_and(|v| v.get("ok").is_some());
+                    if write.write_all(format!("{answer}\n").as_bytes()).await.is_err() {
+                        return;
+                    }
+                    if last {
+                        break;
+                    }
+                }
+                more = read.fill_buf(), if watch => match more {
+                    Ok([]) | Err(_) => return,
+                    Ok(_) => watch = false,
+                },
+            }
+        }
+    }
+}
+
+fn handle(
+    e: &mut Engine,
+    request: Value,
+    reply: mpsc::UnboundedSender<String>,
+    pending: &mut Vec<Pending>,
+    readers: &mut Vec<Reader>,
+) {
+    let s = |k: &str| request[k].as_str().map(str::to_string);
+    let timeout = Duration::from_secs(request["timeout"].as_u64().unwrap_or(60));
+    let find = |e: &Engine, q: Option<String>| -> Result<usize, Fail> {
+        let q = q.ok_or_else(|| Fail(2, "no contact given".into()))?;
+        e.find(&q).map_err(|why| Fail(3, why))
+    };
+    let answer = match request["cmd"].as_str().unwrap_or_default() {
+        "contacts" => {
+            let rows: Vec<Value> = contact_rows(e)
+                .into_iter()
+                .map(|[name, fingerprint, state]| {
+                    json!({ "name": name, "fingerprint": fingerprint, "state": state })
+                })
+                .collect();
+            Ok(ok(json!({ "contacts": rows })))
+        }
+        "invite" => match e.data.invite_queue.is_some() && e.data.fallback_published {
+            true => e
+                .invite()
+                .map(|i| ok(json!({ "invite": i })))
+                .map_err(|w| Fail(4, w)),
+            false => Err(Fail(
+                4,
+                "the invite queue is not ready yet: try again shortly".into(),
+            )),
+        },
+        "add" => match e.add(&s("invite").unwrap_or_default(), false) {
+            Ok(i) => {
+                let until = Instant::now() + timeout;
+                pending.push(Pending {
+                    what: Waiting::Added { i },
+                    until,
+                    reply,
+                });
+                return;
+            }
+            Err(why) => Err(Fail(1, why)),
+        },
+        cmd @ ("send" | "send_file") => {
+            let started = find(e, s("to"))
+                .and_then(|i| can_write(e, i))
+                .and_then(|i| {
+                    let sent = match cmd {
+                        "send" => {
+                            let text = Zeroizing::new(s("text").unwrap_or_default());
+                            match text.trim().is_empty() {
+                                true => return Err(Fail(2, "nothing to send".into())),
+                                false => e.send(i, &text),
+                            }
+                        }
+                        _ => {
+                            let data = s("data").unwrap_or_default();
+                            let bytes = base64::Engine::decode(
+                                &base64::engine::general_purpose::STANDARD,
+                                data,
+                            )
+                            .map_err(|_| Fail(2, "the file data is not base64".into()))?;
+                            e.send_file(i, &s("name").unwrap_or_default(), bytes)
+                        }
+                    };
+                    sent.map_err(|why| Fail(5, why))?;
+                    Ok(i)
+                });
+            match started {
+                Ok(i) => {
+                    let m = last_mark(e, i);
+                    let until = Instant::now() + timeout;
+                    pending.push(Pending {
+                        what: Waiting::Sent { i, m },
+                        until,
+                        reply,
+                    });
+                    return;
+                }
+                Err(f) => Err(f),
+            }
+        }
+        "recv" => {
+            let from = match s("from") {
+                Some(q) => match find(e, Some(q)) {
+                    Ok(i) => Some(i),
+                    Err(f) => {
+                        let _ = reply.send(err(f));
+                        return;
+                    }
+                },
+                None => None,
+            };
+            let until = request["wait"]
+                .as_u64()
+                .map(|w| Instant::now() + Duration::from_secs(w));
+            readers.push(Reader {
+                from,
+                files: request["files"].as_bool().unwrap_or(false),
+                follow: request["follow"].as_bool().unwrap_or(false),
+                until,
+                got: 0,
+                reply,
+            });
+            return;
+        }
+        _ => Err(Fail(2, format!("unknown request\n{USAGE}"))),
+    };
+    let _ = reply.send(answer.unwrap_or_else(err));
+}
+
+/// Answers what has come to an end: sends on the relay, new messages.
+fn progress(e: &mut Engine, pending: &mut Vec<Pending>, readers: &mut Vec<Reader>) {
+    let now = Instant::now();
+    pending.retain(|p| {
+        let done = match p.what {
+            Waiting::Sent { i, m } => match status_of(e, i, m) {
+                Some(Status::Sent) | None => Some(Ok(ok(json!({})))),
+                Some(Status::Failed(why)) => Some(Err(Fail(5, why))),
+                _ => None,
+            },
+            Waiting::Added { i } => {
+                let c = &e.data.contacts[i];
+                (!c.request_pending && !c.offer_pending && c.mine.is_some())
+                    .then(|| Ok(ok(json!({ "name": e.name(c) }))))
+            }
+        };
+        let done = done.or_else(|| {
+            (now >= p.until).then(|| {
+                Err(Fail(
+                    4,
+                    "the relay did not take it in time; it goes later".into(),
+                ))
+            })
+        });
+        match done {
+            Some(answer) => {
+                let _ = p.reply.send(answer.unwrap_or_else(err));
+                false
+            }
+            None => !p.reply.is_closed(),
+        }
+    });
+    readers.retain(|r| !r.reply.is_closed());
+    if readers.is_empty() {
+        return;
+    }
+    // Everyone gets each new message: take once for all, by contact.
+    let mut fresh = Vec::new();
+    if readers.iter().any(|r| r.from.is_none()) {
+        fresh = e.take_new(None);
+    } else {
+        let mut seen = Vec::new();
+        for r in readers.iter() {
+            if !seen.contains(&r.from) {
+                seen.push(r.from);
+                fresh.extend(e.take_new(r.from));
+            }
+        }
+    }
+    for (i, m, what) in fresh {
+        let wanted = |r: &Reader| r.from.is_none_or(|f| f == i);
+        let files = readers.iter().any(|r| wanted(r) && r.files);
+        let line = record(e, i, &m, what, files, true);
+        let mut bare = line.clone();
+        if let Some(f) = bare.get_mut("_file") {
+            f["data"] = Value::Null;
+        }
+        for r in readers.iter_mut().filter(|r| wanted(r)) {
+            let v = if r.files { &line } else { &bare };
+            let _ = r.reply.send(v.to_string());
+            r.got += 1;
+        }
+    }
+    readers.retain(|r| {
+        let waiting = r.until.is_some_and(|u| r.got == 0 && now < u);
+        if r.follow || waiting {
+            return true;
+        }
+        let _ = r.reply.send(ok(json!({})));
+        false
+    });
+}
+
+/// The command side: through a running daemon, if one answers for this
+/// state folder. `None`: there is none, so the command runs by itself.
+pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
+    let stream = UnixStream::connect(home.join(SOCKET)).await.ok()?;
+    Some(talk(a, stream).await)
+}
+
+async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
+    let request = request(a)?;
+    let (read, mut write) = stream.into_split();
+    let io = |why: std::io::Error| Fail(1, format!("daemon: {why}"));
+    write
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .map_err(io)?;
+    let mut lines = BufReader::new(read).lines();
+    while let Some(line) = lines.next_line().await.map_err(io)? {
+        let v: Value =
+            serde_json::from_str(&line).map_err(|_| Fail(1, "daemon: bad answer".into()))?;
+        let Some(done) = v["ok"].as_bool() else {
+            print_record(a, v)?;
+            continue;
+        };
+        if !done {
+            let code = v["code"]
+                .as_i64()
+                .and_then(|c| i32::try_from(c).ok())
+                .unwrap_or(1);
+            return fail(code, v["error"].as_str().unwrap_or("daemon error"));
+        }
+        match a.command.as_str() {
+            "contacts" => {
+                for c in v["contacts"].as_array().into_iter().flatten() {
+                    let f = |k: &str| c[k].as_str().unwrap_or_default().to_string();
+                    println!("{}\t{}\t{}", f("name"), f("fingerprint"), f("state"));
+                }
+            }
+            "invite" => println!("{}", v["invite"].as_str().unwrap_or_default()),
+            "add" => println!(
+                "request sent to {}; they accept it on their device",
+                v["name"].as_str().unwrap_or_default()
+            ),
+            _ => {}
+        }
+        return Ok(());
+    }
+    fail(1, "the daemon stopped")
+}
+
+/// The request line for the command in `a`.
+fn request(a: &Args) -> Result<Value, Fail> {
+    let timeout = a.timeout.unwrap_or(60);
+    Ok(match (a.command.as_str(), a.positional.as_slice()) {
+        ("contacts", _) => json!({ "cmd": "contacts" }),
+        ("invite", _) => json!({ "cmd": "invite" }),
+        ("add", [invite]) => json!({ "cmd": "add", "invite": invite, "timeout": timeout }),
+        ("send", [to, text]) => {
+            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout })
+        }
+        ("send", [to]) => {
+            let mut text = Zeroizing::new(String::new());
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                .map_err(|e| Fail(1, format!("cannot read stdin: {e}")))?;
+            let text = text.strip_suffix('\n').unwrap_or(&text);
+            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout })
+        }
+        ("send-file", [to, file]) => {
+            // The command reads the file as its own user; the daemon opens no paths.
+            let (name, bytes) =
+                data::read_document(&data::expand(file)).map_err(|why| Fail(1, why))?;
+            let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+            json!({ "cmd": "send_file", "to": to, "name": name, "data": data, "timeout": timeout })
+        }
+        ("recv", _) => {
+            // The daemon hands documents over for good: the folder must be there.
+            if let Some(dir) = &a.save_dir
+                && !dir.is_dir()
+            {
+                return fail(1, format!("{} is not a folder", dir.display()));
+            }
+            json!({
+                "cmd": "recv", "from": a.from, "wait": a.wait, "follow": a.follow,
+                "files": a.save_dir.is_some(),
+            })
+        }
+        _ => return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command)),
+    })
+}

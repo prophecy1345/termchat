@@ -20,7 +20,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 termchat-core = { path = "../core" }
 termchat-engine = { path = "../engine", default-features = false }
 tokio-tungstenite = "0.29.0"
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal", "io-util"] }
 zeroize = "1.9.1"
 
 # geteuid, to check who owns a password file (ADR-024); already in the tree through engine.

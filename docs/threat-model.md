@@ -102,7 +102,9 @@ that (ADR-023).
 - **An identity on a server** (scriptable mode, ADR-024). Its password sits
   next to its state file, so whoever gets root there reads that identity's
   messages and can write as it. It is a separate key with separate queues,
-  so it is no way into your main identity; give each server its own.
+  so it is no way into your main identity; give each server its own. A
+  daemon (ADR-029) keeps the password and keys in memory while it runs, and
+  any process of its user can send through its socket; other users cannot.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the

@@ -15,8 +15,12 @@ use termchat_engine::engine::{
 use termchat_engine::{Engine, Setup, Unlocked, clean, engine::clean_text};
 use zeroize::Zeroizing;
 
-pub const COMMANDS: [&str; 7] = [
+#[cfg(unix)]
+mod daemon;
+
+pub const COMMANDS: [&str; 8] = [
     "init",
+    "daemon",
     "invite",
     "add",
     "contacts",
@@ -27,6 +31,7 @@ pub const COMMANDS: [&str; 7] = [
 
 const USAGE: &str = "usage:
   termchat init --nickname NAME [--relay URL] [--onion URL] [--tor]
+  termchat daemon                       (keeps the identity open for the commands below)
   termchat invite
   termchat add INVITE
   termchat contacts
@@ -102,7 +107,7 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
     let n = a.positional.len();
     let ok = match a.command.as_str() {
         "init" => n == 0 && a.nickname.is_some(),
-        "invite" | "contacts" | "recv" => n == 0,
+        "invite" | "contacts" | "recv" | "daemon" => n == 0,
         "add" => n == 1,
         "send" => n == 1 || n == 2,
         "send-file" => n == 2,
@@ -131,6 +136,17 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     if a.command == "init" {
         return init(&a, &path).await;
     }
+    // ADR-029: a running daemon answers without a password.
+    #[cfg(unix)]
+    if a.command != "daemon"
+        && let Some(answer) = daemon::ask(&a, &data::home()).await
+    {
+        return answer;
+    }
+    #[cfg(not(unix))]
+    if a.command == "daemon" {
+        return fail(2, "termchat daemon needs Linux or macOS");
+    }
     let _lock = lock(&path)?;
     if !path.exists() {
         return fail(1, "no identity here yet: run termchat init first");
@@ -156,6 +172,8 @@ async fn command(args: &[String]) -> Result<(), Fail> {
         "send" => send(&mut e, &a, deadline).await,
         "send-file" => send_file(&mut e, &a, deadline).await,
         "recv" => recv(&mut e, &a).await,
+        #[cfg(unix)]
+        "daemon" => daemon::serve(&mut e, &data::home()).await,
         other => fail(2, format!("unknown command {other}\n{USAGE}")),
     }
 }
@@ -360,7 +378,14 @@ async fn add(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
 }
 
 fn contacts(e: &Engine) {
-    for c in e.data.contacts.iter().filter(|c| !c.own) {
+    for [name, fingerprint, state] in contact_rows(e) {
+        println!("{name}\t{fingerprint}\t{state}");
+    }
+}
+
+/// Name, fingerprint and state of each contact.
+fn contact_rows(e: &Engine) -> Vec<[String; 3]> {
+    let rows = e.data.contacts.iter().filter(|c| !c.own).map(|c| {
         let state = match () {
             _ if e.is_request(&c.key) => "request",
             _ if c.left => "left",
@@ -369,12 +394,13 @@ fn contacts(e: &Engine) {
             _ if c.theirs.is_none() => "waiting for them",
             _ => "ok",
         };
-        println!(
-            "{}\t{}\t{state}",
+        [
             e.name(c),
-            termchat_core::fingerprint(&c.key)
-        );
-    }
+            termchat_core::fingerprint(&c.key),
+            state.to_string(),
+        ]
+    });
+    rows.collect()
 }
 
 /// The contact `query` names. Not found: what waits on the relay may be
@@ -392,6 +418,11 @@ async fn locate(e: &mut Engine, query: &str, deadline: Instant) -> Result<usize,
 /// The contact `query` names, if it can be written to.
 async fn writable(e: &mut Engine, query: &str, deadline: Instant) -> Result<usize, Fail> {
     let i = locate(e, query, deadline).await?;
+    can_write(e, i)
+}
+
+/// Contact `i`, if it can be written to.
+fn can_write(e: &Engine, i: usize) -> Result<usize, Fail> {
     let c = &e.data.contacts[i];
     let why = match () {
         _ if c.left => "this contact left",
@@ -422,7 +453,7 @@ async fn send(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
     }
     let i = writable(e, query, deadline).await?;
     e.send(i, text).map_err(|why| Fail(5, why))?;
-    let m = e.data.contacts[i].messages.len() - 1;
+    let m = last_mark(e, i);
     delivered(e, i, m, deadline).await
 }
 
@@ -433,13 +464,38 @@ async fn send_file(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fa
     let i = writable(e, query, deadline).await?;
     let (name, bytes) = data::read_document(&data::expand(file)).map_err(|why| Fail(1, why))?;
     e.send_file(i, &name, bytes).map_err(|why| Fail(5, why))?;
-    let m = e.data.contacts[i].messages.len() - 1;
+    let m = last_mark(e, i);
     delivered(e, i, m, deadline).await
 }
 
+/// What tells a message of ours apart: its id, or its document's. Not its
+/// place in the chat, which shifts as older messages disappear.
+type Mark = (Option<u64>, Option<u32>);
+
+fn mark(m: &Msg) -> Mark {
+    (m.id, m.file.as_ref().map(|f| f.id))
+}
+
+/// The mark of the message just sent to contact `i`.
+fn last_mark(e: &Engine, i: usize) -> Mark {
+    e.data.contacts[i]
+        .messages
+        .last()
+        .map(mark)
+        .unwrap_or_default()
+}
+
+/// The status of our message `m` to contact `i`; `None` once it is gone.
+fn status_of(e: &Engine, i: usize, m: Mark) -> Option<Status> {
+    let msgs = &e.data.contacts[i].messages;
+    msgs.iter()
+        .find(|x| x.mine && mark(x) == m)
+        .map(|x| x.status.clone())
+}
+
 /// Waits until message `m` of contact `i` is on the relay.
-async fn delivered(e: &mut Engine, i: usize, m: usize, deadline: Instant) -> Result<(), Fail> {
-    let status = |e: &Engine| e.data.contacts[i].messages.get(m).map(|m| m.status.clone());
+async fn delivered(e: &mut Engine, i: usize, m: Mark, deadline: Instant) -> Result<(), Fail> {
+    let status = |e: &Engine| status_of(e, i, m);
     pump(e, deadline, |e| {
         matches!(status(e), Some(Status::Sent | Status::Failed(_)) | None)
     })
@@ -487,66 +543,120 @@ async fn recv(e: &mut Engine, a: &Args) -> Result<(), Fail> {
 }
 
 fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg, what: Fetched) -> Result<(), Fail> {
+    let record = record(e, i, m, what, a.save_dir.is_some(), false);
+    let at = record["_file"]["at"].as_u64();
+    // The bytes leave the engine only once they are on disk.
+    if print_record(a, record)?
+        && let Some(at) = at.and_then(|at| usize::try_from(at).ok())
+    {
+        e.discard_file(i, at);
+    }
+    Ok(())
+}
+
+/// One received message as a `recv --json` line. Keys starting with `_`
+/// are for `print_record` only; with `files`, a document's bytes come along,
+/// and with `hand_over` they leave the engine.
+fn record(
+    e: &mut Engine,
+    i: usize,
+    m: &Msg,
+    what: Fetched,
+    files: bool,
+    hand_over: bool,
+) -> serde_json::Value {
     let c = &e.data.contacts[i];
     let (name, fingerprint) = (e.name(c), termchat_core::fingerprint(&c.key));
-    let text = match &m.file {
-        None => clean_text(&m.text),
-        Some(f) => match &a.save_dir {
-            Some(dir) => {
-                let at = c
-                    .messages
-                    .iter()
-                    .position(|x| x.at == m.at && x.file.as_ref().is_some_and(|y| y.id == f.id));
-                match at.map(|at| e.save_file(i, at, dir)) {
-                    Some(Ok(path)) => format!("file saved: {}", path.display()),
-                    Some(Err(why)) => format!("file {} not saved: {why}", clean(&f.name)),
-                    None => format!("file {} not saved", clean(&f.name)),
-                }
-            }
-            None => format!(
-                "file {} ({} bytes) arrived; --save-dir saves it",
-                clean(&f.name),
-                f.size
-            ),
-        },
-    };
     // Ids as strings: JSON readers lose digits past 2^53.
     let id = m.id.map(|id| id.to_string());
-    let reaction = m.their_reaction.map(|r| REACTION_NAMES[usize::from(r)]);
-    let mut out = std::io::stdout().lock();
-    let written = match a.json {
-        true => {
-            let mut line = serde_json::json!({
-                "from": name, "fingerprint": fingerprint, "at": m.at, "id": id,
-            });
-            let more = match what {
-                Fetched::Message => serde_json::json!({
-                    "kind": "message",
-                    "text": text,
-                    "reply_to": m.reply_to.map(|r| serde_json::json!({
-                        "id": r.id.to_string(), "mine": !r.theirs,
-                    })),
-                }),
-                Fetched::Edit => serde_json::json!({ "kind": "edit", "text": text }),
-                Fetched::Delete => serde_json::json!({ "kind": "delete" }),
-                Fetched::React => serde_json::json!({
-                    "kind": "react", "mine": m.mine, "reaction": reaction,
-                }),
-            };
-            if let (Some(line), Some(more)) = (line.as_object_mut(), more.as_object()) {
-                line.extend(more.clone());
-            }
-            writeln!(out, "{line}")
-        }
-        false => match what {
-            Fetched::Message => writeln!(out, "{name}: {}", text.replace('\n', "\n  ")),
-            Fetched::Edit => writeln!(out, "{name} edited: {}", text.replace('\n', "\n  ")),
-            Fetched::Delete => writeln!(out, "{name} deleted a message"),
-            Fetched::React => match reaction {
-                Some(r) => writeln!(out, "{name} reacted {r} to: {}", first_line(&text)),
-                None => writeln!(out, "{name} took back a reaction"),
-            },
-        },
+    let text = clean_text(&m.text);
+    let mut line = serde_json::json!({
+        "from": name, "fingerprint": fingerprint, "at": m.at, "id": id,
+    });
+    let more = match what {
+        Fetched::Message => serde_json::json!({
+            "kind": "message",
+            "text": text,
+            "reply_to": m.reply_to.map(|r| serde_json::json!({
+                "id": r.id.to_string(), "mine": !r.theirs,
+            })),
+        }),
+        Fetched::Edit => serde_json::json!({ "kind": "edit", "text": text }),
+        Fetched::Delete => serde_json::json!({ "kind": "delete" }),
+        Fetched::React => serde_json::json!({
+            "kind": "react", "mine": m.mine,
+            "reaction": m.their_reaction.map(|r| REACTION_NAMES[usize::from(r)]),
+            "_text": text,
+        }),
     };
-    written.map_err(|e| Fail(1, format!("cannot write: {e}")))
+    if let (Some(line), Some(more)) = (line.as_object_mut(), more.as_object()) {
+        line.extend(more.clone());
+    }
+    if let Some(f) = &m.file {
+        let at = c
+            .messages
+            .iter()
+            .position(|x| x.at == m.at && x.file.as_ref().is_some_and(|y| y.id == f.id));
+        let bytes = at
+            .filter(|_| files)
+            .and_then(|at| e.file_bytes(i, at).map(|(_, b)| (at, b)));
+        let data = bytes.map(|(at, b)| {
+            if hand_over {
+                e.discard_file(i, at);
+            }
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b)
+        });
+        line["_file"] =
+            serde_json::json!({ "name": clean(&f.name), "size": f.size, "data": data, "at": at });
+    }
+    line
+}
+
+/// Prints a `record`, saving its document under `--save-dir`; `true` if
+/// a document was saved.
+fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
+    let mut saved = false;
+    let s = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
+    if let Some(f) = v.as_object_mut().and_then(|o| o.remove("_file")) {
+        let name = s(&f, "name");
+        let bytes = f["data"].as_str().and_then(|d| {
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, d).ok()
+        });
+        v["text"] = match (&a.save_dir, bytes) {
+            (Some(dir), Some(bytes)) => {
+                match data::save_new(dir, &termchat_engine::engine::safe_name(&name), &bytes) {
+                    Ok(path) => {
+                        saved = true;
+                        format!("file saved: {}", path.display())
+                    }
+                    Err(why) => format!("file {name} not saved: {why}"),
+                }
+            }
+            (Some(_), None) => format!("file {name} not saved"),
+            (None, _) => format!(
+                "file {name} ({} bytes) arrived; --save-dir saves it",
+                f["size"].as_u64().unwrap_or(0)
+            ),
+        }
+        .into();
+    }
+    let text = s(&v, "text");
+    let quoted = v.as_object_mut().and_then(|o| o.remove("_text"));
+    let name = s(&v, "from");
+    let mut out = std::io::stdout().lock();
+    let written = match (a.json, s(&v, "kind").as_str()) {
+        (true, _) => writeln!(out, "{v}"),
+        (false, "edit") => writeln!(out, "{name} edited: {}", text.replace('\n', "\n  ")),
+        (false, "delete") => writeln!(out, "{name} deleted a message"),
+        (false, "react") => match v["reaction"].as_str() {
+            Some(r) => {
+                let quoted = quoted.as_ref().and_then(|q| q.as_str()).unwrap_or_default();
+                writeln!(out, "{name} reacted {r} to: {}", first_line(quoted))
+            }
+            None => writeln!(out, "{name} took back a reaction"),
+        },
+        (false, _) => writeln!(out, "{name}: {}", text.replace('\n', "\n  ")),
+    };
+    written.map_err(|e| Fail(1, format!("cannot write: {e}")))?;
+    Ok(saved)
 }

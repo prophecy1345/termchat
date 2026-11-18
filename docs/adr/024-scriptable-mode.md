@@ -101,7 +101,7 @@ The same Olm sessions, the same queues and frames. Only the way the client start
 
 ## Maintainer's decisions (2026-11-16)
 
-1. **No daemon mode.** No long-lived process with the password in memory; every command connects on its own. Come back to it if people ask.
+1. **No daemon mode.** No long-lived process with the password in memory; every command connects on its own. Come back to it if people ask. (Revisited: [ADR-029](029-daemon.md) adds one, 2026-11-18.)
 2. **Typing the password is supported** in the first version: at the terminal without echo, when stdin is a terminal and no other source is given.
 3. **The duress password from a file erases the data**, silently, as in the apps (ADR-003).
 4. **A script contact is not marked** in the desktop app or on Android: it is an ordinary contact with the nickname it chose.

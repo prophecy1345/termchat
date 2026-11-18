@@ -1,6 +1,6 @@
 # ADR-029: daemon mode for scripts
 
-Status: **proposed** (2026-11-18). Русская версия: [029-daemon.ru.md](029-daemon.ru.md). Revisits decision 1 of [ADR-024](024-scriptable-mode.md).
+Status: **accepted** (maintainer, 2026-11-18). Русская версия: [029-daemon.ru.md](029-daemon.ru.md). Revisits decision 1 of [ADR-024](024-scriptable-mode.md).
 
 ## Context
 
@@ -73,3 +73,9 @@ The same engine, sessions and queues. Only how commands reach the engine changes
 - `client`: `daemon` (listener, peer check, request loop), and in `send`/`recv`/... a first try at the socket.
 - Docs: a "Daemon" section in the scripting guide (EN/RU) with a systemd unit, the threat model line, and ADR-024 points to this ADR.
 - `core`, `proto`, `relay` and `engine`'s protocol do not change.
+
+## Implementation notes (2026-11-18)
+
+1. A leftover socket is removed once the daemon holds the state lock: the lock already proves no other daemon runs for this folder, which is stronger than probing the socket.
+2. Requests also carry `timeout` (seconds to wait for the relay, as `--timeout`) and, for `recv`, `files`: whether to hand documents over. A document handed over leaves the daemon; the command checks that its `--save-dir` exists before asking.
+3. A follower that has not saved a document still marks it read, as `recv` without `--save-dir` always did.

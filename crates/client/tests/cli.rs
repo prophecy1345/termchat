@@ -290,3 +290,151 @@ fn bad_arguments_exit_with_2() {
     }
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// ADR-029: with `termchat daemon` running, the same commands work without
+/// a password, documents included, and a follower sees new messages.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn commands_go_through_a_running_daemon() {
+    use std::io::BufRead;
+    use std::os::unix::fs::PermissionsExt;
+
+    let url = start_relay().await;
+    let dir = tmp("daemon");
+    let setup = Setup {
+        relay_url: &url,
+        onion_url: None,
+        tor: false,
+        nickname: "alice",
+        password: PASSWORD,
+    };
+    let mut phone = Engine::setup(&dir.join("phone"), &setup).unwrap();
+    pump(&mut phone, |e| e.data.fallback_published).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let invite = phone.invite().unwrap();
+    let home = dir.join("server");
+    std::fs::create_dir_all(&home).unwrap();
+    let pw = secret(&dir, PASSWORD, 0o600);
+    let pw = pw.to_str().unwrap();
+    let init = [
+        "init",
+        "--nickname",
+        "box",
+        "--relay",
+        &url,
+        "--password-file",
+        pw,
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &init).await.status.code(),
+        Some(0)
+    );
+    let add = ["add", &invite, "--password-file", pw];
+    assert_eq!(
+        termchat(&mut phone, &home, &add).await.status.code(),
+        Some(0)
+    );
+    pump(&mut phone, |e| {
+        e.data.contacts.first().is_some_and(|c| c.theirs.is_some())
+    })
+    .await;
+    phone.accept(0);
+    pump(&mut phone, |e| !e.data.contacts[0].accept_pending).await;
+
+    /// Killed if the test fails halfway, so no daemon outlives it.
+    struct Daemon(std::process::Child);
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_termchat"))
+            .env("TERMCHAT_HOME", &home)
+            .args(["daemon", "--password-file", pw])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = home.join("daemon.sock");
+    pump(&mut phone, |_| socket.exists()).await;
+    let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+
+    // No password from here on.
+    let started = Instant::now();
+    let (code, _, err) = text(&termchat(&mut phone, &home, &["send", "alice", "disk full"]).await);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "no new connection"
+    );
+    pump(&mut phone, |e| {
+        e.data.contacts[0]
+            .messages
+            .iter()
+            .any(|m| m.text == "disk full")
+    })
+    .await;
+    let (code, out, _) = text(&termchat(&mut phone, &home, &["contacts"]).await);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("\tok"), "{out}");
+    let (code, _, _) = text(&termchat(&mut phone, &home, &["send", "nobody", "hi"]).await);
+    assert_eq!(code, Some(3));
+
+    // A follower sees a text from the phone.
+    let mut follower = Command::new(env!("CARGO_BIN_EXE_termchat"))
+        .env("TERMCHAT_HOME", &home)
+        .args(["recv", "--follow", "--json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let lines = std::io::BufReader::new(follower.stdout.take().unwrap());
+    let mut first = tokio::task::spawn_blocking(move || lines.lines().next().unwrap().unwrap());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    phone.send(0, "status?").unwrap();
+    let first = loop {
+        tokio::select! {
+            line = &mut first => break line.unwrap(),
+            Some(ev) = phone.events.recv() => phone.on_relay(ev),
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+        phone.tick();
+    };
+    let first: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(first["text"], "status?");
+    follower.kill().unwrap();
+    let _ = follower.wait();
+
+    // A document, saved through the daemon.
+    phone
+        .send_file(0, "notes.txt", b"all good".to_vec())
+        .unwrap();
+    let saved = dir.join("saved");
+    std::fs::create_dir_all(&saved).unwrap();
+    let save = [
+        "recv",
+        "--json",
+        "--wait",
+        "15",
+        "--save-dir",
+        saved.to_str().unwrap(),
+    ];
+    let (code, out, err) = text(&termchat(&mut phone, &home, &save).await);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(out.contains("file saved"), "{out}");
+    assert_eq!(std::fs::read(saved.join("notes.txt")).unwrap(), b"all good");
+
+    // SIGTERM: the daemon saves, removes its socket and exits 0.
+    let killed = Command::new("kill")
+        .args(["-TERM", &daemon.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    assert_eq!(daemon.0.wait().unwrap().code(), Some(0));
+    assert!(!socket.exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

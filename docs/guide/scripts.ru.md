@@ -20,6 +20,7 @@ English version: [scripts.md](scripts.md).
 | `send CONTACT [TEXT]` | отправляет TEXT или stdin, если TEXT не указан; ждёт, пока сообщение окажется на relay |
 | `send-file CONTACT PATH` | документ до 1 МиБ |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | печатает новые сообщения и изменения, каждое один раз; файлы сохраняются только в `--save-dir` |
+| `daemon` | держит личность открытой, и команды выше работают без пароля и отвечают сразу (Linux, macOS; см. ниже) |
 
 Каждая команда принимает также `--password-file PATH` или `--password-stdin` и `--timeout SECS` (по умолчанию 60). Папка состояния — `TERMCHAT_HOME` или `~/.termchat`.
 
@@ -83,7 +84,49 @@ ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-fi
 
 `LoadCredential=` из systemd не подходит: копия, которую он делает, принадлежит root, а termchat принимает только файл пароля своего пользователя.
 
-Одна личность выполняет одну команду за раз: вторая в тот же момент завершится с кодом 1 и скажет, что личность открыта в другом месте.
+Одна личность выполняет одну команду за раз: вторая в тот же момент завершится с кодом 1 и скажет, что личность открыта в другом месте. Служба снимает это ограничение.
+
+## Служба для бота, который отвечает
+
+Каждая команда выше заново расшифровывает личность и подключается к relay: через Tor это 10–30 секунд на команду. `termchat daemon` делает это один раз и остаётся (ADR-029). Пока она работает, `send`, `send-file`, `recv`, `contacts`, `invite` и `add` для того же `TERMCHAT_HOME` идут через неё: без пароля, с ответом за секунду и по нескольку сразу. Если службы нет, всё работает как раньше.
+
+```ini
+# /etc/systemd/system/termchat-daemon.service
+[Unit]
+Description=termchat daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/usr/local/bin/termchat daemon --password-file /etc/termchat-bot/pw
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/termchat-bot
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Бот, который отвечает на «status» и «disk» с телефона (`jq` разбирает JSON):
+
+```sh
+export TERMCHAT_HOME=/var/lib/termchat-bot
+termchat recv --from alice --follow --json | while read -r line; do
+  case "$(printf '%s' "$line" | jq -r .text)" in
+    status) termchat send alice "$(uptime)" ;;
+    disk)   termchat send alice "$(df -h / | tail -1)" ;;
+  esac
+done
+```
+
+- Служба слушает `daemon.sock` в папке состояния с правами `600` и пускает только своего пользователя. В сети ничего не слушает.
+- **Пока она работает, пароль и ключи у неё в памяти, и любой процесс этого пользователя может писать через неё.** Давайте ей серверную личность под отдельным пользователем, никогда не основную.
+- Отправляемый документ читает команда, а не служба; папка для `recv --save-dir` должна существовать заранее.
+- Останавливается по SIGTERM или Ctrl+C, сначала всё сохранив. На Windows службы нет.
 
 ## Ещё примеры
 
