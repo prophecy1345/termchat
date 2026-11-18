@@ -547,6 +547,15 @@ async fn every_device_of_a_member_reads_and_writes_in_the_group() {
     })
     .await;
 
+    // A contact's new device is not a restarted conversation.
+    let restarted = |x: &Engine| {
+        x.data
+            .contacts
+            .iter()
+            .flat_map(|c| &c.messages)
+            .any(|m| m.text.contains("restarted"))
+    };
+    assert!(!e.iter().any(|x| restarted(x)));
     e[0].send_group(0, "and from her phone").unwrap();
     pump(&mut e, |e| {
         in_group(&e[2], "and from her phone", false, Some(alice))

@@ -1820,7 +1820,8 @@ impl Engine {
                 ..Default::default()
             }),
         };
-        if got.new_session && had_session {
+        // A first session with another device of theirs is no restart (ADR-028).
+        if got.new_session && had_session && via == from {
             self.system(
                 i,
                 "⚠ they restarted the conversation (restored a backup?); messages may be lost",
