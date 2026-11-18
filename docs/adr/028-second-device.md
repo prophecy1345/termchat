@@ -35,14 +35,13 @@ The new device is linked by the path that already exists for contacts: an invite
 4. The primary then sends, over Olm, everything the new device needs (section 3): the new device list, contacts with their keys, nicknames and verification marks, the address of each conversation, and the settings that are not tied to a device.
 5. **No history.** The new device starts empty and shows "older messages stay on your other devices". Copying history would take every old message out of one device's protection and put it into another's, and disappearing messages would have to be tracked across both. Revisit if people ask.
 
-### 3. Messages: one write, a reader per device
+### 3. Messages: a queue per device (amended 2026-11-18)
 
-ADR-027 gave a queue several readers. Contact chats use the same mechanism.
-
-- **Every incoming queue gets a reader per own device** (`AddReader` with the queue owner's token). Each device subscribes with its own `recv_id` and token, on a connection of its own, as now (ADR-023, section 7).
-- **Sending is one write of a bundle**: one Olm ciphertext for every device of the contact and for every other own device, each with the target device's key. Each reader gets the whole bundle and decrypts its own part. This is how Matrix sends to-device messages; there is no new cryptography, only several Olm messages in one envelope.
-- **Your other devices learn what you sent** from the copy in the same bundle. It goes into **your own incoming queue for that contact**, not into a shared queue of your own: that queue is already linked to the contact's on the same connection, so the relay learns nothing new about who talks to whom. A shared "self" queue would link all contacts by timing.
-- **Prekeys:** each reader of a contact queue publishes its own one-time keys there; `ClaimKey` returns one per reader. A contact starts an Olm session with each device it finds.
+- **Every device has its own incoming queue for each contact**, made and read by that device alone, on a connection of its own, as now (ADR-023, section 7). The relay needs nothing new.
+- **A device tells a contact its address** with the `QueueOffer` that already exists (ADR-023). The contact keeps one address per device on the signed device list.
+- **Sending is one ordinary Olm message per device**: to each device of the contact, into that device's queue, and to each other own device, into its queue for the same contact. No new envelope format: each write is what a chat sends today.
+- **Your other devices learn what you sent** from their copy. It goes into **their own queue for that contact**, not into a shared queue of yours: those queues are already tied to the contact's on the same connections, so the relay learns nothing new about who talks to whom. A shared "self" queue would link all contacts by timing.
+- **Prekeys:** each device publishes one-time keys on its own queues, as now; a contact claims one per device with `ClaimKey` and starts an Olm session with each.
 - Answers, edits, deletes, reactions (ADR-025) and documents (ADR-017) travel the same way. An edit or delete from any of your devices applies to your message on all of them.
 - **Read marks** are not synced between devices in the first version.
 
@@ -55,7 +54,7 @@ ADR-027 gave a queue several readers. Contact chats use the same mechanism.
 
 ### 5. Removing and losing devices
 
-- **Removing a device** (on the primary: Settings → Devices → Remove): a new device list without it, `RemoveReader` on every queue, and a session rotation in groups. Contacts drop their Olm sessions with that device. The removed device keeps what it already had; it reads nothing new.
+- **Removing a device** (on the primary: Settings → Devices → Remove): a new device list without it, and a session rotation in groups. Contacts drop their Olm sessions with that device and stop writing to its queues. The removed device keeps what it already had; it reads nothing new.
 - **A secondary device is lost:** remove it from the primary as above.
 - **The primary is lost:** the other devices keep working with the current list, but cannot add or remove devices. Restoring the primary from its backup file (ADR-003) brings the identity key back; sessions with contacts start anew. Handing the primary role to another device is left for later.
 - **The duress password** wipes the device it is typed on and nothing else, as now. A signed "wipe everything" message to other devices is not part of this ADR: a stolen primary could then erase a person's other devices.
@@ -63,13 +62,13 @@ ADR-027 gave a queue several readers. Contact chats use the same mechanism.
 
 ### 6. Older clients
 
-`Understands` (ADR-025, ADR-026) goes to **level 3**: devices. A contact on level 2 or lower cannot read bundles. With such a contact only the primary talks, with plain Olm messages as now; the other devices show "this contact needs to update to see messages here". Group members below level 3 make the group fall back the same way.
+`Understands` (ADR-025, ADR-026) goes to **level 3**: devices. A contact on level 2 or lower does not know devices. With such a contact only the primary talks, with plain Olm messages as now; the other devices show "this contact needs to update to see messages here". Group members below level 3 make the group fall back the same way.
 
 ## What the relay sees, honestly
 
-- **The number of devices.** A queue with three readers belongs to someone with three devices. Bundle size, in buckets, also grows with the number of devices on both sides.
-- **Device links on one connection.** Each device has its own connection per contact, so the relay sees several connections read the same queue. With Tor these are separate circuits; without Tor, IP addresses tie them to each other and to the person.
-- **A device is added or removed** when `AddReader`/`RemoveReader` come for many queues at once.
+- **The number of devices.** A message to someone with three devices is three writes at once, from one connection, into three queues; the relay can tie those queues together as one person's devices.
+- **Device links by IP.** Each device has its own connection per contact. With Tor these are separate circuits; without Tor, IP addresses tie them to each other and to the person.
+- **A device is added or removed** when new queues start to receive, or old ones stop, for many conversations at once.
 - It still does not see who is in a conversation, the device list, the labels, or a single message.
 
 For contacts: a contact sees how many devices a person has and their keys, never the labels.
@@ -79,7 +78,7 @@ For contacts: a contact sees how many devices a person has and their keys, never
 - Each device is an ordinary vodozemac Olm account; contacts talk to each device over ordinary Olm sessions.
 - The device list is an Ed25519 signature by the identity key, as the roster in ADR-027.
 - The link is a contact invite with a one-time code (ADR-013, ADR-023), followed by a fingerprint check by eye.
-- A bundle is several Olm messages in one envelope, as Matrix's to-device messages.
+- A message to several devices is several ordinary Olm messages, one per device, as Matrix sends to-device messages.
 
 ## Rejected
 
@@ -87,7 +86,7 @@ For contacts: a contact sees how many devices a person has and their keys, never
 - **Every device a separate identity**, contacts add each: the problem this ADR exists to solve.
 - **A new master key** for the identity (as Matrix cross-signing): every contact would have to verify everyone again; keeping the first device's key gives the same with no re-verification. A separate master key can come later for "hand over the primary role".
 - **vodozemac's ECIES channel with a check code** (used for Matrix QR login) for linking: it works, but our invite path already carries a one-time code, Olm and the fingerprint check, and is tested. Revisit if linking by QR from the phone to a laptop turns out awkward.
-- **One write per device** instead of a bundle: N writes at once show the same device count, cost more and are easier to correlate.
+- **One write of a bundle** with a ciphertext per device (the first version of this ADR): a 16 KB message for 7 devices is about 112 KB, past the relay's 64 KB frame and the 20 KB envelope; and every reader would get every copy, N² bytes. Separate writes show the relay nothing it does not see anyway (amendment of 2026-11-18).
 - **A shared self-queue** for syncing own messages: links all contacts by timing (section 3).
 - **History for the new device:** see section 2, point 5.
 
@@ -98,3 +97,7 @@ For contacts: a contact sees how many devices a person has and their keys, never
 3. No history on a new device.
 4. Two releases: one-to-one chats first, groups in the second.
 5. Device labels are seen only by the person's own devices, never by contacts.
+
+## Amendment of 2026-11-18 (maintainer): a queue per device
+
+Planning the implementation found that the bundle of section 3 does not fit: a long message or a document chunk times the number of devices passes the frame and envelope limits, and every reader would receive every copy. Section 3 now gives each device its own queue per contact and sends one ordinary Olm message per device. The relay protocol and the envelope stay as they are.
