@@ -12,6 +12,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 
 class MainActivity : ComponentActivity() {
@@ -65,6 +66,28 @@ private fun Root(m: Model) {
             Screen.Settings -> Settings(m)
             Screen.News -> News(m)
             Screen.Bridges -> Bridges(m)
+            Screen.Devices -> Devices(m)
+            Screen.LinkCode -> LinkCode(m)
+        }
+    }
+    // ADR-028: a device waiting for the fingerprint check asks over any screen.
+    @Suppress("UNUSED_EXPRESSION") m.version
+    m.account?.let { a ->
+        a.pendingLink()?.let { i ->
+            AlertDialog(
+                onDismissRequest = {},
+                containerColor = Tc.surface,
+                shape = corner,
+                title = { Text("Link a device", style = Tc.name) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Both screens show this fingerprint. Go on only if they are the same: someone who copied the link code would show another one.", style = Tc.mono)
+                        Text(a.linkFingerprint(), style = Tc.name.copy(color = Tc.lime))
+                    }
+                },
+                confirmButton = { Flat("The same") { a.confirmLink(i); m.note = "confirmed: linking finishes when the other screen agrees"; m.changed() } },
+                dismissButton = { Flat("Cancel", color = Tc.dim) { a.cancelLink(i); m.note = "linking cancelled"; m.changed() } },
+            )
         }
     }
     m.notice?.let { Dialog(it, "OK") { m.notice = null } }

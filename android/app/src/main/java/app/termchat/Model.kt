@@ -30,6 +30,10 @@ sealed interface Screen {
     data object Settings : Screen
     data object News : Screen
     data object Bridges : Screen
+    /** ADR-028: our devices, on the main one. */
+    data object Devices : Screen
+    /** ADR-028: this new device's link code. */
+    data object LinkCode : Screen
 }
 
 /** Everything on screen; the engine reports through [Listener] on its own thread. */

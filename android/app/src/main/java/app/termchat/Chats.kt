@@ -43,13 +43,16 @@ fun Chats(m: Model) {
                     }
                     item("Your invite") { m.screen = Screen.Invite }
                     item("Add contact") { m.screen = Screen.Add }
-                    item("New group") { newGroup = true }
+                    if (a.isPrimary()) item("New group") { newGroup = true }
+                    if (a.canLink()) item("Link to my main device") { m.screen = Screen.LinkCode }
+                    if (a.isPrimary()) item("Devices") { m.screen = Screen.Devices }
                     item("Settings" + if (a.backedUp()) "" else "  ●") { m.screen = Screen.Settings }
                     item("What's new" + if (update != null) "  ●" else "") { m.screen = Screen.News }
                     item("Lock") { m.lock() }
                 }
             }
         }
+        if (a.removed()) Banner("This device was removed from your account: it reads and sends nothing more.") {}
         if (update != null) Banner("termchat.app $update is out: tap for how to update") { m.screen = Screen.News }
         if (!a.backedUp()) Banner("No backup yet: a lost phone means a lost identity") { m.screen = Screen.Settings }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 16.dp))

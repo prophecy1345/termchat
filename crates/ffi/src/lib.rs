@@ -152,6 +152,16 @@ pub struct GroupView {
     pub last_at: u64,
 }
 
+/// One of our devices (ADR-028), the main one first.
+#[derive(uniffi::Record)]
+pub struct DeviceView {
+    /// Seen only by our own devices; empty if none was given.
+    pub label: String,
+    pub fingerprint: String,
+    pub main: bool,
+    pub me: bool,
+}
+
 #[derive(uniffi::Record)]
 pub struct MemberView {
     pub name: String,
@@ -375,7 +385,7 @@ impl Account {
         let _rt = runtime().enter();
         let mut e = self.lock();
         let i = usize::try_from(index).unwrap_or(usize::MAX);
-        if i >= e.data.contacts.len() {
+        if i >= e.data.people() {
             return Err(String::from("no such contact").into());
         }
         Ok(f(&mut e, i))
@@ -584,12 +594,93 @@ impl Account {
     /// The app sorts by `last_at` for display.
     pub fn contacts(&self) -> Vec<ContactView> {
         let e = self.lock();
+        // Our own devices (ADR-028) come after the people, never shown.
         e.data
             .contacts
             .iter()
+            .take(e.data.people())
             .enumerate()
             .map(|(i, c)| view(&e, i, c))
             .collect()
+    }
+
+    /// ADR-028: this device links others (it is the main one, or alone).
+    pub fn is_primary(&self) -> bool {
+        self.lock().is_primary()
+    }
+
+    /// A new device, with nobody on it yet, may ask to be linked.
+    pub fn can_link(&self) -> bool {
+        let e = self.lock();
+        e.is_primary() && e.data.devices.is_none() && e.data.people() == 0
+    }
+
+    /// The primary removed this device: it reads and sends nothing more.
+    pub fn removed(&self) -> bool {
+        self.lock().removed()
+    }
+
+    pub fn link_code(&self) -> Result<String> {
+        Ok(self.lock().link_code()?)
+    }
+
+    /// The device waiting for the fingerprint check, by index (for
+    /// `confirm_link` and `cancel_link`).
+    pub fn pending_link(&self) -> Option<u32> {
+        self.lock().pending_link().map(|i| i as u32)
+    }
+
+    pub fn link_fingerprint(&self) -> String {
+        self.lock().link_fingerprint()
+    }
+
+    pub fn add_device(&self, code: String) -> Result<u32> {
+        let _rt = runtime().enter();
+        Ok(self.lock().add_device(&code)? as u32)
+    }
+
+    pub fn confirm_link(&self, device: u32) {
+        let _rt = runtime().enter();
+        self.lock().confirm_link(device as usize);
+    }
+
+    pub fn cancel_link(&self, device: u32) {
+        let _rt = runtime().enter();
+        let mut e = self.lock();
+        let i = device as usize;
+        if e.data.contacts.get(i).is_some_and(|c| c.own) {
+            e.delete(i);
+        }
+    }
+
+    pub fn devices(&self) -> Vec<DeviceView> {
+        let e = self.lock();
+        let me = e.me();
+        e.device_rows()
+            .into_iter()
+            .enumerate()
+            .map(|(n, (k, label))| DeviceView {
+                label,
+                fingerprint: termchat_core::fingerprint(&k),
+                main: n == 0,
+                me: k == me,
+            })
+            .collect()
+    }
+
+    /// Device `row` of `devices()`.
+    pub fn remove_device(&self, row: u32) -> Result<()> {
+        let _rt = runtime().enter();
+        let mut e = self.lock();
+        let key = e.device_rows().get(row as usize).map(|(k, _)| *k);
+        Ok(e.remove_device(&key.ok_or_else(|| String::from("no such device"))?)?)
+    }
+
+    pub fn set_device_label(&self, row: u32, label: String) -> Result<()> {
+        let _rt = runtime().enter();
+        let mut e = self.lock();
+        let key = e.device_rows().get(row as usize).map(|(k, _)| *k);
+        Ok(e.set_device_label(&key.ok_or_else(|| String::from("no such device"))?, &label)?)
     }
 
     pub fn messages(&self, index: u32) -> Result<Vec<MessageView>> {

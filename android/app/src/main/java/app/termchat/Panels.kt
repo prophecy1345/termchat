@@ -404,3 +404,89 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         dismissButton = { Flat("Cancel", color = Tc.dim) { form = null } },
     )
 }
+
+/** ADR-028: this new device's link code, to scan or paste on the main one. */
+@Composable
+fun LinkCode(m: Model) = Panel(m, "Link to my main device") {
+    val a = m.account ?: return@Panel
+    val code = remember { runCatching { a.linkCode() }.getOrElse { m.note = it.message ?: "$it"; "" } }
+    val context = LocalContext.current
+    Text("On your main device: Devices, then scan or paste this code. Then compare the fingerprint both screens show.", style = Tc.small)
+    if (code.isEmpty()) return@Panel
+    Image(
+        qr(code).asImageBitmap(), "link QR code",
+        filterQuality = FilterQuality.None,
+        modifier = Modifier.fillMaxWidth().aspectRatio(1f).background(Tc.text).padding(12.dp),
+    )
+    SelectionContainer { Text(code, style = Tc.small.copy(color = Tc.text)) }
+    Flat("Copy") { copy(context, code); m.note = "link code copied" }
+}
+
+/** ADR-028: our devices on the main one: add, label, remove. */
+@Composable
+fun Devices(m: Model) = Panel(m, "Devices") {
+    val a = m.account ?: return@Panel
+    @Suppress("UNUSED_EXPRESSION") m.version
+    var code by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<UInt?>(null) }
+    var removing by remember { mutableStateOf<UInt?>(null) }
+    var label by remember { mutableStateOf("") }
+    val add = { text: String ->
+        runCatching { a.addDevice(text.trim()) }
+            .onSuccess { code = ""; error = ""; m.changed() }
+            .onFailure { error = it.message ?: "$it" }
+    }
+    val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { add(it) } }
+    Text("Up to four, this one included. Contacts write to each of them; labels stay on your own devices.", style = Tc.small)
+    a.devices().forEachIndexed { n, d ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text((d.label.ifEmpty { "device" }) + if (d.me) " (this one)" else "", style = Tc.mono)
+                Text(d.fingerprint.take(11) + if (d.main) " · MAIN" else "", style = Tc.small)
+            }
+            Text("Rename", style = Tc.small.copy(color = Tc.lime), modifier = Modifier.clickable { renaming = n.toUInt(); label = d.label }.padding(8.dp))
+            if (!d.me) Text("Remove", style = Tc.small.copy(color = Tc.danger), modifier = Modifier.clickable { removing = n.toUInt() }.padding(8.dp))
+        }
+    }
+    Line()
+    Text("Add a device: on it, Link to my main device; scan or paste its code here.", style = Tc.small)
+    Flat("Scan QR code") {
+        scan.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setPrompt("").setOrientationLocked(false))
+    }
+    Field(code, { code = it }, "termchat-link:…", Modifier.fillMaxWidth(), singleLine = false)
+    Flat("Add", enabled = code.isNotBlank()) { add(code) }
+    if (error.isNotEmpty()) Text(error, style = Tc.small.copy(color = Tc.warn))
+    renaming?.let { row ->
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            containerColor = Tc.surface,
+            shape = corner,
+            title = { Text("Rename a device", style = Tc.name) },
+            text = { Field(label, { label = it }, "phone, laptop…", Modifier.fillMaxWidth()) },
+            confirmButton = {
+                Flat("Save") {
+                    runCatching { a.setDeviceLabel(row, label) }.onFailure { m.note = it.message ?: "$it" }
+                    renaming = null; m.changed()
+                }
+            },
+            dismissButton = { Flat("Cancel", color = Tc.dim) { renaming = null } },
+        )
+    }
+    removing?.let { row ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            containerColor = Tc.surface,
+            shape = corner,
+            title = { Text("Remove a device", style = Tc.name) },
+            text = { Text("It keeps what it has, and reads and sends nothing more.", style = Tc.mono) },
+            confirmButton = {
+                Flat("Remove", color = Tc.danger) {
+                    runCatching { a.removeDevice(row) }.onFailure { m.note = it.message ?: "$it" }
+                    removing = null; m.changed()
+                }
+            },
+            dismissButton = { Flat("Cancel", color = Tc.dim) { removing = null } },
+        )
+    }
+}
