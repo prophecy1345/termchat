@@ -89,6 +89,19 @@ pub enum Dialog {
     RemoveMember([u8; 32]),
     /// Leave the open group?
     LeaveGroup,
+    /// ADR-028: this device's link code, for the main device.
+    LinkCode(String),
+    /// Our devices.
+    Devices,
+    /// A new device's link code being pasted.
+    AddDevice {
+        code: String,
+        error: String,
+    },
+    /// The fingerprint to compare on both screens, for own device `i`.
+    Link(usize),
+    /// Remove this device?
+    RemoveDevice([u8; 32]),
 }
 
 /// The current password, a new one and its repeat.
@@ -544,6 +557,157 @@ impl Chat {
                 }
                 stay
             }
+            Dialog::LinkCode(code) => {
+                ui.set_width(640.0);
+                ui.heading("Link to my main device");
+                hint(
+                    ui,
+                    p,
+                    "On your main device: Settings, Devices, Add a device. Scan or paste this code, then compare the fingerprint both screens show.",
+                );
+                ui.add_space(12.0);
+                ui.horizontal_top(|ui| {
+                    crate::synth::qr(ui, code, 200.0);
+                    ui.add_space(16.0);
+                    ui.vertical(|ui| {
+                        let width = ui.available_width();
+                        let text = RichText::new(code.as_str())
+                            .monospace()
+                            .size(11.5)
+                            .color(p.accent);
+                        ui.add(egui::Label::new(text).wrap());
+                        ui.add_space(10.0);
+                        if crate::synth::button(ui, p, "Copy code", egui::vec2(width, 36.0))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(code.clone());
+                            self.status = "link code copied".into();
+                        }
+                    });
+                });
+                ui.add_space(12.0);
+                !ui.add(egui::Button::new("Close").min_size(egui::vec2(100.0, 32.0)))
+                    .clicked()
+            }
+            Dialog::Devices => {
+                ui.set_width(560.0);
+                ui.heading("Devices");
+                ui.add_space(6.0);
+                ui.label("Up to four, this one included. Contacts write to each of them.");
+                ui.add_space(12.0);
+                let me = self.engine.me();
+                let mut remove = None;
+                for (n, (k, label)) in self.engine.device_rows().into_iter().enumerate() {
+                    row(ui, p, |ui| {
+                        ui.vertical(|ui| {
+                            let mut name = match label.is_empty() {
+                                true => "device".to_string(),
+                                false => label,
+                            };
+                            if k == me {
+                                name.push_str(" (this one)");
+                            }
+                            ui.label(RichText::new(name).monospace());
+                            let fp = fingerprint(&k);
+                            let mut under = fp[..fp.len().min(11)].to_string();
+                            if n == 0 {
+                                under.push_str(" · MAIN");
+                            }
+                            ui.label(RichText::new(under).monospace().small().color(p.dim));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if k != me && ui.button("Remove…").clicked() {
+                                remove = Some(k);
+                            }
+                        });
+                    });
+                }
+                ui.add_space(12.0);
+                let mut add = false;
+                let close = ui
+                    .horizontal(|ui| {
+                        add = crate::synth::button(ui, p, "Add a device", egui::vec2(170.0, 32.0))
+                            .clicked();
+                        ui.add(egui::Button::new("Close").min_size(egui::vec2(100.0, 32.0)))
+                            .clicked()
+                    })
+                    .inner;
+                if let Some(k) = remove {
+                    self.dialog = Some(Dialog::RemoveDevice(k));
+                    return false;
+                }
+                if add {
+                    self.dialog = Some(Dialog::AddDevice {
+                        code: String::new(),
+                        error: String::new(),
+                    });
+                    return false;
+                }
+                !close
+            }
+            Dialog::AddDevice { code, error } => {
+                ui.heading("Add a device");
+                ui.label(
+                    "On the new device: Settings, Link to my main device. Paste its code here.",
+                );
+                ui.add(
+                    egui::TextEdit::multiline(code)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+                error_line(ui, p, error);
+                let (go, stay) = buttons(ui, p, "Add");
+                if go {
+                    match self.engine.add_device(code.trim()) {
+                        Ok(i) => {
+                            self.dialog = Some(Dialog::Link(i));
+                            return false;
+                        }
+                        Err(e) => *error = e,
+                    }
+                }
+                stay
+            }
+            Dialog::Link(i) => {
+                ui.set_width(560.0);
+                ui.heading("Link a device");
+                ui.add_space(6.0);
+                ui.label("Both screens show this fingerprint. Go on only if they are the same: someone who copied the link code would show another one.");
+                ui.add_space(10.0);
+                ui.label(
+                    RichText::new(self.engine.link_fingerprint())
+                        .monospace()
+                        .size(18.0)
+                        .color(p.accent),
+                );
+                let (go, stay) = buttons(ui, p, "The same");
+                if go {
+                    self.engine.confirm_link(*i);
+                    self.status = "confirmed: linking finishes when the other screen agrees".into();
+                    return false;
+                }
+                if !stay {
+                    self.engine.delete(*i);
+                    self.status = "linking cancelled".into();
+                }
+                stay
+            }
+            Dialog::RemoveDevice(key) => {
+                ui.set_width(560.0);
+                ui.heading("Remove a device");
+                ui.add_space(6.0);
+                ui.label("It keeps what it has, and reads and sends nothing more.");
+                let (go, stay) = buttons(ui, p, "Remove");
+                if go {
+                    self.status = match self.engine.remove_device(key) {
+                        Ok(()) => "device removed".into(),
+                        Err(e) => e,
+                    };
+                    return false;
+                }
+                stay
+            }
             Dialog::LeaveGroup => {
                 let Some(g) = self.open_group() else {
                     return false;
@@ -683,6 +847,35 @@ impl Chat {
                     "Uses less battery and network, but the relay then sees which queues are yours. \
                      Off: a connection per contact (ADR-023).",
                 );
+                section(ui, p, "Devices");
+                let e = &self.engine;
+                let linkable = e.is_primary() && e.data.devices.is_none() && e.data.people() == 0;
+                let mut device = None;
+                ui.columns(2, |cols| {
+                    if e.is_primary() && wide(&mut cols[0], p, "Devices…") {
+                        device = Some(Dialog::Devices);
+                    }
+                    if linkable && wide(&mut cols[1], p, "Link to my main device") {
+                        device = Some(Dialog::LinkCode(String::new()));
+                    }
+                });
+                if !e.is_primary() {
+                    hint(
+                        ui,
+                        p,
+                        "This device is linked to your main one, which adds and removes devices. Groups stay on the main device for now.",
+                    );
+                }
+                if let Some(d) = device {
+                    self.dialog = Some(match d {
+                        Dialog::LinkCode(_) => match self.engine.link_code() {
+                            Ok(code) => Dialog::LinkCode(code),
+                            Err(e) => Dialog::Notice(e),
+                        },
+                        d => d,
+                    });
+                    return false;
+                }
                 section(ui, p, "Account and security");
                 let tor = match self.engine.data.tor {
                     true => "Turn Tor off",

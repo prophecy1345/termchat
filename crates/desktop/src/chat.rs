@@ -243,6 +243,12 @@ impl Chat {
     }
 
     fn absorb(&mut self, focused: bool, sound: bool) -> Option<String> {
+        // ADR-028: a device waiting for the fingerprint check asks at once.
+        if self.dialog.is_none()
+            && let Some(i) = self.engine.pending_link()
+        {
+            self.dialog = Some(Dialog::Link(i));
+        }
         for h in std::mem::take(&mut self.engine.happened) {
             match h {
                 Happened::Alert { key, request } => self.alert(key, request, focused, sound),
@@ -369,7 +375,7 @@ impl Chat {
             ui.label(RichText::new("termchat.app").strong().size(16.0));
         });
         ui.add_space(8.0);
-        let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.contacts.len())
+        let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.people())
             .partition(|&i| self.engine.is_request(&self.engine.data.contacts[i].key));
         let mut picked = None;
         let mut picked_group = None;
