@@ -321,6 +321,9 @@ pub type InviteCode = [u8; 16];
 
 pub const INVITE_VERSION: u16 = 3;
 const INVITE_PREFIX: &str = "termchat:";
+/// A new device's link code (ADR-028): the same fields as an invite, under
+/// a prefix of its own, so neither can be taken for the other.
+const LINK_PREFIX: &str = "termchat-link:";
 const MAX_RELAY_URL: usize = 256;
 
 fn check_urls(relay_url: &str, onion_url: Option<&str>) -> Result<(), Error> {
@@ -332,18 +335,32 @@ fn check_urls(relay_url: &str, onion_url: Option<&str>) -> Result<(), Error> {
 
 impl Invite {
     pub fn encode(&self) -> String {
-        format!(
-            "{INVITE_PREFIX}{}",
-            URL_SAFE_NO_PAD.encode(postcard::to_allocvec(self).unwrap_or_default())
-        )
+        self.encode_with(INVITE_PREFIX)
     }
 
     /// Tolerates surrounding whitespace from copy-paste.
     pub fn decode(s: &str) -> Result<Self, Error> {
-        let b64 = s
-            .trim()
-            .strip_prefix(INVITE_PREFIX)
-            .ok_or(Error::Malformed)?;
+        Self::decode_with(s, INVITE_PREFIX)
+    }
+
+    /// A new device's link code (ADR-028).
+    pub fn encode_link(&self) -> String {
+        self.encode_with(LINK_PREFIX)
+    }
+
+    pub fn decode_link(s: &str) -> Result<Self, Error> {
+        Self::decode_with(s, LINK_PREFIX)
+    }
+
+    fn encode_with(&self, prefix: &str) -> String {
+        format!(
+            "{prefix}{}",
+            URL_SAFE_NO_PAD.encode(postcard::to_allocvec(self).unwrap_or_default())
+        )
+    }
+
+    fn decode_with(s: &str, prefix: &str) -> Result<Self, Error> {
+        let b64 = s.trim().strip_prefix(prefix).ok_or(Error::Malformed)?;
         if b64.len() > 8 * MAX_RELAY_URL {
             return Err(Error::TooLarge);
         }
@@ -482,6 +499,30 @@ pub enum Body {
         send_id: QueueId,
         reader: ReaderGrant,
     },
+    /// ADR-028. The primary answers a new device's link code, before anything
+    /// secret: the code, and the identity whose fingerprint both screens show.
+    DeviceLink {
+        code: InviteCode,
+        identity: Identity,
+    },
+    /// The new device: the person saw the same fingerprint on both screens.
+    DeviceLinked,
+    /// The primary to a new device: one contact, to talk to from there.
+    LinkedContact {
+        contact: LinkedContact,
+    },
+    /// To one's own devices only: the device list, each device's label, and
+    /// the nickname contacts know.
+    OwnDevices {
+        list: DeviceList,
+        labels: Vec<(Ed25519Key, String)>,
+        nickname: String,
+    },
+    /// To a contact: the device list, and where each device reads this contact.
+    Devices {
+        list: DeviceList,
+        queues: Vec<DeviceQueue>,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -493,10 +534,98 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 18;
+const KNOWN_KINDS: u32 = 23;
 
-/// What `Understands` says this version reads: 1 = ADR-025, 2 = groups (ADR-027).
-pub const UNDERSTANDS: u16 = 2;
+/// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
+/// (ADR-027), 3 = devices (ADR-028).
+pub const UNDERSTANDS: u16 = 3;
+
+/// Devices of one identity, the primary included (ADR-028).
+pub const MAX_DEVICES: usize = 4;
+
+/// A person's devices, numbered and signed by their identity key (ADR-028).
+/// The first device is the primary: its key is the identity key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceList {
+    pub identity: Ed25519Key,
+    pub no: u64,
+    pub devices: Vec<Device>,
+    #[serde(with = "serde_big_array")]
+    pub signature: Signature,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Device {
+    pub ed25519: Ed25519Key,
+    pub curve25519: Curve25519Key,
+}
+
+impl DeviceList {
+    /// What the identity key signs: everything but the signature.
+    pub fn signed_bytes(&self) -> Vec<u8> {
+        postcard::to_allocvec(&(self.identity, self.no, &self.devices)).unwrap_or_default()
+    }
+
+    pub fn check(&self) -> Result<(), Error> {
+        if self.devices.len() > MAX_DEVICES {
+            return Err(Error::TooLarge);
+        }
+        let first = self.devices.first().ok_or(Error::Malformed)?;
+        let doubled = self
+            .devices
+            .iter()
+            .enumerate()
+            .any(|(i, d)| self.devices[..i].iter().any(|e| e.ed25519 == d.ed25519));
+        if first.ed25519 != self.identity || doubled {
+            return Err(Error::Malformed);
+        }
+        Ok(())
+    }
+}
+
+/// Where one device reads one contact: write to it at `send_id` (ADR-028).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceQueue {
+    pub device: Ed25519Key,
+    pub relay_url: String,
+    pub onion_url: Option<String>,
+    pub send_id: QueueId,
+}
+
+/// A contact, as the primary hands it to a new device (ADR-028).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkedContact {
+    pub identity: Identity,
+    pub nickname: String,
+    /// Our own name for them, if we gave one.
+    pub petname: Option<String>,
+    pub verified: bool,
+    pub understands: u16,
+    /// Their device list, if they have more than one device.
+    pub devices: Option<DeviceList>,
+    /// Where each of their devices reads us.
+    pub queues: Vec<DeviceQueue>,
+}
+
+fn check_queues(queues: &[DeviceQueue]) -> Result<(), Error> {
+    if queues.len() > MAX_DEVICES {
+        return Err(Error::TooLarge);
+    }
+    queues
+        .iter()
+        .try_for_each(|q| check_urls(&q.relay_url, q.onion_url.as_deref()))
+}
+
+/// A device's label, "phone" or "laptop": like a nickname, but may be empty.
+fn check_label(label: &str) -> Result<(), Error> {
+    if label.len() > MAX_NICKNAME_BYTES {
+        return Err(Error::TooLarge);
+    }
+    if label.chars().any(char::is_control) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
 
 /// A group's name, like a nickname.
 pub const MAX_GROUP_NAME_BYTES: usize = 64;
@@ -738,6 +867,28 @@ fn check_body(body: &Body) -> Result<(), Error> {
         }
         Body::GroupRoster { roster } | Body::GroupMove { roster, .. } => roster.check(),
         Body::GroupKey { key, .. } if key.0.len() > MAX_GROUP_KEY_BYTES => Err(Error::TooLarge),
+        Body::LinkedContact { contact } => {
+            check_nickname(&contact.nickname)?;
+            contact.petname.as_deref().map_or(Ok(()), check_nickname)?;
+            contact.devices.as_ref().map_or(Ok(()), DeviceList::check)?;
+            check_queues(&contact.queues)
+        }
+        Body::OwnDevices {
+            list,
+            labels,
+            nickname,
+        } => {
+            list.check()?;
+            check_nickname(nickname)?;
+            if labels.len() > MAX_DEVICES {
+                return Err(Error::TooLarge);
+            }
+            labels.iter().try_for_each(|(_, l)| check_label(l))
+        }
+        Body::Devices { list, queues } => {
+            list.check()?;
+            check_queues(queues)
+        }
         Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
             if note.len() > MAX_NOTE_BYTES =>
         {
@@ -939,22 +1090,9 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::GroupMove {
-            roster: Roster {
-                group: [0; 16],
-                no: 1,
-                admin: [0; 32],
-                name: "g".into(),
-                members: Vec::new(),
-                expires_in: None,
-                signature: [0; 64],
-            },
-            send_id: [0; 16],
-            reader: ReaderGrant {
-                recv_id: [0; 16],
-                send_id: [0; 16],
-                token: [0; 32],
-            },
+        let raw = postcard::to_allocvec(&with(Body::Devices {
+            list: devices(1),
+            queues: Vec::new(),
         }))
         .unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
@@ -1306,6 +1444,170 @@ mod tests {
             code: ErrorCode::UnsupportedVersion,
         };
         assert_eq!(refusal.encode(), [7, 0, 0]);
+    }
+
+    fn devices(n: u8) -> DeviceList {
+        DeviceList {
+            identity: [1; 32],
+            no: 1,
+            devices: (1..=n)
+                .map(|i| Device {
+                    ed25519: [i; 32],
+                    curve25519: [i; 32],
+                })
+                .collect(),
+            signature: [0; 64],
+        }
+    }
+
+    fn queue(device: u8) -> DeviceQueue {
+        DeviceQueue {
+            device: [device; 32],
+            relay_url: "wss://relay.example.org/".into(),
+            onion_url: None,
+            send_id: [device; 16],
+        }
+    }
+
+    #[test]
+    fn adr_028_kinds_roundtrip() {
+        let identity = Identity {
+            ed25519: [1; 32],
+            curve25519: [2; 32],
+            signature: [3; 64],
+        };
+        for body in [
+            Body::DeviceLink {
+                code: [9; 16],
+                identity: identity.clone(),
+            },
+            Body::DeviceLinked,
+            Body::LinkedContact {
+                contact: LinkedContact {
+                    identity,
+                    nickname: "bob".into(),
+                    petname: Some("Bob from work".into()),
+                    verified: true,
+                    understands: UNDERSTANDS,
+                    devices: Some(devices(MAX_DEVICES as u8)),
+                    queues: (1..=MAX_DEVICES as u8).map(queue).collect(),
+                },
+            },
+            Body::OwnDevices {
+                list: devices(2),
+                labels: vec![([1; 32], "phone".into()), ([2; 32], String::new())],
+                nickname: "alice".into(),
+            },
+            Body::Devices {
+                list: devices(3),
+                queues: vec![queue(1), queue(2), queue(3)],
+            },
+        ] {
+            let inner = with(body);
+            assert_eq!(
+                Inner::from_padded(&inner.to_padded().unwrap()).unwrap(),
+                inner
+            );
+        }
+    }
+
+    #[test]
+    fn adr_028_a_bad_device_list_is_refused() {
+        let bad = |list: DeviceList| {
+            with(Body::Devices {
+                list,
+                queues: Vec::new(),
+            })
+            .to_padded()
+            .unwrap_err()
+        };
+        assert_eq!(bad(devices(0)), Error::Malformed);
+        assert_eq!(bad(devices(MAX_DEVICES as u8 + 1)), Error::TooLarge);
+        // The first device is the identity itself.
+        let mut not_first = devices(2);
+        not_first.devices.swap(0, 1);
+        assert_eq!(bad(not_first), Error::Malformed);
+        let mut twice = devices(2);
+        twice.devices[1] = twice.devices[0];
+        assert_eq!(bad(twice), Error::Malformed);
+    }
+
+    #[test]
+    fn adr_028_labels_queues_and_names_keep_their_limits() {
+        let own = |labels: Vec<(Ed25519Key, String)>| {
+            with(Body::OwnDevices {
+                list: devices(1),
+                labels,
+                nickname: "alice".into(),
+            })
+            .to_padded()
+        };
+        assert_eq!(
+            own(vec![([1; 32], "a\u{1b}[2J".into())]),
+            Err(Error::Malformed)
+        );
+        assert_eq!(
+            own(vec![([1; 32], "a".repeat(MAX_NICKNAME_BYTES + 1))]),
+            Err(Error::TooLarge)
+        );
+        assert_eq!(
+            own(vec![([1; 32], String::new()); MAX_DEVICES + 1]),
+            Err(Error::TooLarge)
+        );
+        let too_many = with(Body::Devices {
+            list: devices(1),
+            queues: (0..=MAX_DEVICES as u8).map(queue).collect(),
+        });
+        assert_eq!(too_many.to_padded(), Err(Error::TooLarge));
+        let long_url = with(Body::Devices {
+            list: devices(1),
+            queues: vec![DeviceQueue {
+                relay_url: "x".repeat(MAX_RELAY_URL + 1),
+                ..queue(1)
+            }],
+        });
+        assert_eq!(long_url.to_padded(), Err(Error::TooLarge));
+        let contact = |petname: Option<String>| {
+            with(Body::LinkedContact {
+                contact: LinkedContact {
+                    identity: Identity {
+                        ed25519: [1; 32],
+                        curve25519: [2; 32],
+                        signature: [3; 64],
+                    },
+                    nickname: "bob".into(),
+                    petname,
+                    verified: false,
+                    understands: 2,
+                    devices: None,
+                    queues: vec![queue(1)],
+                },
+            })
+            .to_padded()
+        };
+        assert!(contact(None).is_ok());
+        assert_eq!(contact(Some("\n".into())), Err(Error::Malformed));
+    }
+
+    #[test]
+    fn adr_028_a_link_code_and_an_invite_are_never_taken_for_each_other() {
+        let invite = Invite {
+            version: INVITE_VERSION,
+            relay_url: "wss://relay.example.org/".into(),
+            onion_url: None,
+            identity: Identity {
+                ed25519: [1; 32],
+                curve25519: [2; 32],
+                signature: [3; 64],
+            },
+            queue: [4; 16],
+            code: [9; 16],
+        };
+        let link = invite.encode_link();
+        assert!(link.starts_with("termchat-link:"));
+        assert_eq!(Invite::decode_link(&format!(" {link}\n")).unwrap(), invite);
+        assert_eq!(Invite::decode(&link), Err(Error::Malformed));
+        assert_eq!(Invite::decode_link(&invite.encode()), Err(Error::Malformed));
     }
 
     #[test]

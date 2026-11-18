@@ -1857,6 +1857,12 @@ impl Engine {
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
+            // ADR-028: devices, handled from the engine stage on.
+            Body::DeviceLink { .. }
+            | Body::DeviceLinked
+            | Body::LinkedContact { .. }
+            | Body::OwnDevices { .. }
+            | Body::Devices { .. } => return self.persist(),
             Body::Understands { level } => {
                 let c = &mut self.data.contacts[i];
                 let news = level > c.understands;
