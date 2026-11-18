@@ -825,7 +825,13 @@ pub fn read_document(path: &Path) -> Result<(String, Vec<u8>), String> {
     if !meta.is_file() || meta.len() > u64::from(termchat_proto::MAX_FILE_BYTES) {
         return Err("pick a file of at most 1 MiB".into());
     }
-    let bytes = fs::read(path).map_err(|e| format!("cannot read: {e}"))?;
+    let bytes = fs::read(path).map_err(|e| match e.raw_os_error() {
+        // macOS: a file kept only in iCloud ("dataless") is not on this Mac.
+        Some(11) if cfg!(target_os = "macos") => {
+            "this file is in iCloud, not on this Mac: download it in Finder first".to_string()
+        }
+        _ => format!("cannot read: {e}"),
+    })?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
     Ok((name.ok_or("pick a file, not a folder")?, bytes))
 }
