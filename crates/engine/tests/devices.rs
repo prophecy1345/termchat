@@ -201,3 +201,67 @@ async fn the_new_device_gets_the_contacts_and_both_know_each_others_queues() {
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+fn has(e: &Engine, contact: &[u8; 32], text: &str, mine: bool) -> bool {
+    e.index(contact).is_some_and(|i| {
+        e.data.contacts[i]
+            .messages
+            .iter()
+            .any(|m| m.text == text && m.mine == mine)
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_contact_writes_to_both_devices_and_each_device_sees_what_the_other_sent() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices4-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (alice, bob) = (e[0].me(), e[2].me());
+
+    // Bob learns the laptop and where it reads him.
+    pump(&mut e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        let c = &e[2].data.contacts[i];
+        c.their_devices
+            .as_ref()
+            .is_some_and(|d| d.devices.len() == 2)
+            && c.device_addrs.len() == 1
+    })
+    .await;
+
+    let i = e[2].index(&alice).unwrap();
+    e[2].send(i, "hi alice").unwrap();
+    pump(&mut e, |e| {
+        has(&e[0], &bob, "hi alice", false) && has(&e[1], &bob, "hi alice", false)
+    })
+    .await;
+
+    let j = e[1].index(&bob).unwrap();
+    e[1].send(j, "from the laptop").unwrap();
+    pump(&mut e, |e| {
+        has(&e[2], &alice, "from the laptop", false) && has(&e[0], &bob, "from the laptop", true)
+    })
+    .await;
+
+    let k = e[0].index(&bob).unwrap();
+    e[0].send(k, "from the phone").unwrap();
+    pump(&mut e, |e| {
+        has(&e[2], &alice, "from the phone", false) && has(&e[1], &bob, "from the phone", true)
+    })
+    .await;
+
+    // An edit made on the laptop reaches bob and the phone.
+    let m = e[1].data.contacts[j]
+        .messages
+        .iter()
+        .position(|m| m.text == "from the laptop")
+        .unwrap();
+    e[1].edit_message(j, m, "from the laptop, fixed").unwrap();
+    pump(&mut e, |e| {
+        has(&e[2], &alice, "from the laptop, fixed", false)
+            && has(&e[0], &bob, "from the laptop, fixed", true)
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}

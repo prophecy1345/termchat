@@ -701,9 +701,12 @@ impl Engine {
                 },
                 self.data.onion_url.clone(),
             );
-            if let Some(a) = self.out_addr(i)
-                && !same_url(&a.relay_url, &home)
-            {
+            let c = &self.data.contacts[i];
+            let elsewhere = self.out_addr(i).into_iter().chain(
+                // ADR-028: their other devices', and ours, may read elsewhere.
+                c.device_addrs.iter().chain(&c.siblings).map(|(_, a)| a),
+            );
+            for a in elsewhere.filter(|a| !same_url(&a.relay_url, &home)) {
                 let link = Link {
                     who,
                     relay: a.relay_url.clone(),
@@ -1278,14 +1281,14 @@ impl Engine {
                     text: msg.text.clone(),
                 },
             };
-            self.data.contacts[i].messages[m].status = match self.transmit(&key, body) {
+            self.data.contacts[i].messages[m].status = match self.transmit_all(&key, body) {
                 Ok(id) => Status::Sending(id),
                 Err(e) => Status::Failed(e),
             };
         }
         // Edits, deletes and reactions, in the order they were made.
         while let Some(body) = self.data.contacts[i].outbox.first().cloned() {
-            match self.transmit(&key, body) {
+            match self.transmit_all(&key, body) {
                 Ok(_) => drop(self.data.contacts[i].outbox.remove(0)),
                 Err(e) => return self.note(e),
             }
@@ -1433,7 +1436,7 @@ impl Engine {
                         && self.link_who(&self.data.contacts[i].key) == who
                 };
                 let Some(i) = (0..self.data.contacts.len()).find(|&i| ours(i)) else {
-                    return;
+                    return self.claimed_device_key(&who, send_id, &key);
                 };
                 let who = self.data.contacts[i].key;
                 let slot = self.slot_for(&who);
@@ -1738,8 +1741,20 @@ impl Engine {
             return true;
         }
         let had_session = from.is_some_and(|k| self.core_at(slot).has_session(&k));
-        let result = self.core_at(slot).decrypt(from.as_ref(), envelope);
-        let got = match result {
+        let mut result = self.core_at(slot).decrypt(from.as_ref(), envelope);
+        // ADR-028: the contact's other devices write here too, and so do ours
+        // with copies of what we sent them.
+        let mut via = from;
+        if result.is_err() && !matches!(result, Err(CoreError::Duplicate)) {
+            for k in from.map(|k| self.writers_of(&k)).unwrap_or_default() {
+                let r = self.core_at(slot).decrypt(Some(&k), envelope);
+                if r.is_ok() || matches!(r, Err(CoreError::Duplicate)) {
+                    (result, via) = (r, Some(k));
+                    break;
+                }
+            }
+        }
+        let mut got = match result {
             Ok(got) => got,
             Err(CoreError::Duplicate) => return true,
             // The status bar, not the chat: a relay must not be able to plant
@@ -1751,6 +1766,18 @@ impl Engine {
                 return true;
             }
         };
+        if let (Some(k), Some(v)) = (from, via)
+            && v != k
+        {
+            if self.index(&v).is_some_and(|o| self.data.contacts[o].own) {
+                if let Some(i) = self.index(&k) {
+                    self.own_copy(i, got.body);
+                }
+                return self.persist();
+            }
+            // A device of theirs speaks for them.
+            got.sender = k;
+        }
         let sender = got.sender;
         let known = self.index(&sender);
         // Turned down, blocked, or a contact of another of our identities

@@ -6,7 +6,9 @@
 //! sessions and links as a person, never shown as one.
 
 use super::*;
-use termchat_core::proto::{Device, DeviceList, DeviceQueue, LinkedContact, MAX_DEVICES};
+use termchat_core::proto::{
+    Device, DeviceList, DeviceQueue, LinkedContact, MAX_DEVICES, SignedKey,
+};
 use termchat_core::{fingerprint, verify_devices};
 
 impl Engine {
@@ -357,6 +359,209 @@ impl Engine {
                 self.data.contacts[c].devices_told = 0;
                 self.deliver(c);
             }
+            Body::Devices { list, queues } if !own => self.their_devices(i, list, queues),
+            _ => {}
+        }
+    }
+
+    /// Contact `i`'s device list, from any device of theirs: checked, then
+    /// each device known by its keys and where it reads us.
+    fn their_devices(&mut self, i: usize, list: DeviceList, queues: Vec<DeviceQueue>) {
+        let key = self.data.contacts[i].key;
+        let Some(slot) = self.slot_for(&key) else {
+            return;
+        };
+        let older = self.data.contacts[i]
+            .their_devices
+            .as_ref()
+            .is_some_and(|d| list.no < d.no);
+        if list.identity != key || older || verify_devices(&list).is_err() {
+            return;
+        }
+        let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k);
+        let gone: Vec<Ed25519Key> = self.data.contacts[i]
+            .their_devices
+            .iter()
+            .flat_map(|d| d.devices.iter().map(|x| x.ed25519))
+            .filter(|k| !listed(k) && *k != key)
+            .collect();
+        {
+            let mut core = self.core_at(slot);
+            for k in &gone {
+                core.forget_sessions(k);
+            }
+            for d in list.devices.iter().filter(|d| d.ed25519 != key) {
+                core.add_member(d.ed25519, d.curve25519);
+            }
+        }
+        let c = &mut self.data.contacts[i];
+        c.device_addrs.retain(|(k, _)| listed(k));
+        for q in queues {
+            if q.device == key
+                || !listed(&q.device)
+                || !addr_ok(&q.relay_url, q.onion_url.as_deref())
+            {
+                continue;
+            }
+            c.device_addrs.retain(|(k, _)| *k != q.device);
+            c.device_addrs.push((
+                q.device,
+                Addr {
+                    relay_url: q.relay_url,
+                    onion_url: q.onion_url,
+                    send_id: q.send_id,
+                },
+            ));
+        }
+        c.their_devices = Some(list);
+        if let Err(e) = self.sync_links() {
+            return self.note(e);
+        }
+        self.deliver(i);
+    }
+
+    /// Whoever else may write to our queue for contact `key`: their other
+    /// devices, and ours with copies.
+    pub(super) fn writers_of(&self, key: &Ed25519Key) -> Vec<Ed25519Key> {
+        let Some(c) = self.index(key).map(|i| &self.data.contacts[i]) else {
+            return Vec::new();
+        };
+        let theirs = c.their_devices.iter().flat_map(|d| &d.devices);
+        theirs
+            .map(|d| d.ed25519)
+            .filter(|k| k != key)
+            .chain(c.siblings.iter().map(|(k, _)| *k).filter(|k| self.lists(k)))
+            .collect()
+    }
+
+    /// Where `body` for contact `i` goes besides their primary: each other
+    /// device of theirs, and each of ours.
+    fn copies_of(&self, i: usize) -> Vec<(Ed25519Key, Addr)> {
+        let c = &self.data.contacts[i];
+        let listed = |k: &Ed25519Key| {
+            c.their_devices
+                .as_ref()
+                .is_some_and(|d| d.devices.iter().any(|x| x.ed25519 == *k))
+        };
+        let theirs = c.device_addrs.iter().filter(|(k, _)| listed(k));
+        let ours = c.siblings.iter().filter(|(k, _)| self.lists(k));
+        theirs.chain(ours).cloned().collect()
+    }
+
+    /// `body` to contact `key` on every device of theirs, and a copy to every
+    /// device of ours, each into its own queue (ADR-028). The client id is
+    /// the primary's: sent once one of theirs has it.
+    pub(super) fn transmit_all(&mut self, key: &Ed25519Key, body: Body) -> Result<u64, String> {
+        let id = self.transmit(key, body.clone())?;
+        let Some(i) = self.index(key) else {
+            return Ok(id);
+        };
+        let slot = self.slot_for(key).ok_or(MISSING_PROFILE)?;
+        for (d, addr) in self.copies_of(i) {
+            if !self.core_at(slot).has_session(&d) {
+                if let Some(l) = self.live(key, &addr.relay_url) {
+                    let _ = l.relay.send(ClientFrame::ClaimKey {
+                        send_id: addr.send_id,
+                    });
+                }
+                continue;
+            }
+            let envelope = self.core_at(slot).encrypt(&d, body.clone());
+            let envelope = envelope.map_err(|e| e.to_string())?;
+            let next = &mut self.data.contacts[i].next_client_id;
+            let client_id = *next;
+            *next += 1;
+            if !self.persist() {
+                return Err(self.take_note());
+            }
+            if let Some(l) = self.live(key, &addr.relay_url) {
+                let _ = l.relay.send(ClientFrame::Send {
+                    client_id,
+                    send_id: addr.send_id,
+                    envelope,
+                });
+            }
+        }
+        Ok(id)
+    }
+
+    /// A key claimed from a queue of one of the contact's other devices, or
+    /// of one of ours: a session with that device.
+    pub(super) fn claimed_device_key(
+        &mut self,
+        who: &Ed25519Key,
+        send_id: QueueId,
+        key: &SignedKey,
+    ) {
+        let found = (0..self.data.contacts.len()).find_map(|i| {
+            let c = &self.data.contacts[i];
+            (self.link_who(&c.key) == *who)
+                .then(|| self.copies_of(i))
+                .and_then(|all| all.into_iter().find(|(_, a)| a.send_id == send_id))
+                .map(|(d, _)| (i, d))
+        });
+        let Some((i, d)) = found else {
+            return;
+        };
+        let Some(slot) = self.slot_for(&self.data.contacts[i].key) else {
+            return;
+        };
+        if self.core_at(slot).has_session(&d) {
+            return;
+        }
+        let started = self.core_at(slot).start_session(&d, key);
+        if let Err(e) = started {
+            return self.note(format!("cannot start session: {e}"));
+        }
+        self.persist();
+        self.flush(i);
+    }
+
+    /// What another device of ours sent contact `i`: ours here too.
+    pub(super) fn own_copy(&mut self, i: usize, body: Body) {
+        let c = &mut self.data.contacts[i];
+        match body {
+            Body::Message {
+                id,
+                expires_in,
+                reply_to,
+                text,
+                ..
+            } => {
+                let at = now();
+                c.messages.push(Msg {
+                    mine: true,
+                    text,
+                    at,
+                    expires_at: expires_in.map(|s| at + u64::from(s)),
+                    status: Status::Sent,
+                    file: None,
+                    unfetched: false,
+                    id: Some(id),
+                    reply_to,
+                    ..Default::default()
+                });
+            }
+            Body::Text {
+                expires_in, text, ..
+            } => {
+                let at = now();
+                c.messages.push(Msg {
+                    mine: true,
+                    text,
+                    at,
+                    expires_at: expires_in.map(|s| at + u64::from(s)),
+                    status: Status::Sent,
+                    file: None,
+                    unfetched: false,
+                    ..Default::default()
+                });
+            }
+            body @ (Body::Edit { .. } | Body::Delete { .. } | Body::React { .. }) => {
+                c.own_change(body);
+            }
+            // shortcut: documents and the rest stay on the device that sent
+            // them; copy them too if people miss them on their other devices.
             _ => {}
         }
     }

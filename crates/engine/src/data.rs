@@ -372,6 +372,12 @@ pub struct Contact {
     /// The number of our device list this contact last heard (`Devices`).
     #[serde(default)]
     pub devices_told: u64,
+    /// Their device list, signed by them, if they have more than one device.
+    #[serde(default)]
+    pub their_devices: Option<DeviceList>,
+    /// Where each of their devices but the primary reads us.
+    #[serde(default)]
+    pub device_addrs: Vec<(Ed25519Key, Addr)>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -850,6 +856,38 @@ impl Contact {
                 };
                 m.their_reaction = reaction;
                 m.changes.react = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// One of our own changes, made on another device of ours (ADR-028).
+    pub fn own_change(&mut self, body: Body) -> bool {
+        match body {
+            Body::Edit { id, text } => {
+                let Some(m) = self.find(id, false) else {
+                    return false;
+                };
+                m.replace_text(text);
+                m.edited = true;
+                true
+            }
+            Body::Delete { id } => {
+                let Some(m) = self.find(id, false) else {
+                    return false;
+                };
+                m.wipe();
+                true
+            }
+            Body::React { target, reaction } => {
+                if reaction.is_some_and(|r| r >= termchat_proto::REACTIONS) {
+                    return false;
+                }
+                let Some(m) = self.find(target.id, target.theirs) else {
+                    return false;
+                };
+                m.my_reaction = reaction;
                 true
             }
             _ => false,
