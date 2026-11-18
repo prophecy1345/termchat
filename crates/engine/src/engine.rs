@@ -1,7 +1,7 @@
 //! An unlocked account: the state, the relay link and everything that changes
 //! them. The interface calls methods and drains `happened` afterwards.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -196,6 +196,8 @@ pub struct Engine {
     chunks: BTreeMap<u64, Ed25519Key>,
     /// The relay had no key to give: claim again at this time.
     reclaim: Option<Instant>,
+    /// Single devices of contacts whose key we asked for (ADR-028): once each.
+    pub(super) claiming: BTreeSet<Ed25519Key>,
 }
 
 /// One connection: whose it is (one of our identities, for its invite
@@ -543,6 +545,7 @@ impl Engine {
             chunk_budget: (FILE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
             reclaim: None,
+            claiming: BTreeSet::new(),
         });
         engine.start_links(true)?;
         Ok(engine)
@@ -1929,8 +1932,7 @@ impl Engine {
             | Body::OwnQueue { .. }
             | Body::SiblingQueue { .. }
             | Body::GroupDevices { .. }
-            | Body::OwnGroupJoin { .. }
-            | Body::GroupReaderAsk { .. }) => {
+            | Body::OwnGroupJoin { .. }) => {
                 self.device_body(i, got.request, body);
                 return self.persist();
             }
@@ -2043,6 +2045,7 @@ impl Engine {
     pub fn tick(&mut self) {
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
+            self.claiming.clear();
             for g in 0..self.data.groups.len() {
                 if !self.data.groups[g].left {
                     self.share_key(g);

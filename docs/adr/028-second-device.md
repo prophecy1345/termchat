@@ -119,9 +119,9 @@ Section 4 said what, not how. How it lands on the group queue of ADR-027:
 1. **The roster stays as it is**, one entry per identity, with the reader of the member's primary. Older clients keep reading it.
 2. **`GroupDevices { group, member, list, readers }`**, sent by the admin inside the group: a member's device list as that member signed it, and the reader `send_id` the admin made for each of their linked devices. Members check the list's signature themselves, so they trust the admin only for which reader is whose, as they already do for the roster.
 3. **A reader per device.** When the admin invites a contact who has several devices (the admin has their list from their `Devices`), it asks the relay for one reader per device and sends each device its own `GroupInvite`, over Olm to that device alone. The person accepts on any device; that device tells its own devices with **`OwnGroupJoin { group }`**, and they take their own pending invites without asking again.
-4. **A device linked later** asks for a reader: the member's primary sends the admin **`GroupReaderAsk { group, list }`**, their current device list, over their chat; the admin adds the reader, invites that device, and sends a new `GroupDevices`.
+4. **A device linked later:** the admin hears the member's new list in their `Devices` (section 3), adds a reader, invites that device, and sends a new `GroupDevices`. (The proposal had a separate `GroupReaderAsk` for this; it was dropped, see the implementation notes.)
 5. **Megolm per device.** Each device has its own outbound session and shares its key over Olm with every device of every member: with contacts' devices over their chats, with others' through their readers. A message names its sending device inside the encryption; receivers take it as the member's only if that device is on the member's checked list.
-6. **Removing.** A member removed: every reader of theirs goes, and the group moves as now. A device removed from a member's list: their primary sends the admin the new list (`GroupReaderAsk`), the admin removes that reader and sends `GroupDevices`; everyone starts a new Megolm session.
+6. **Removing.** A member removed: every reader of theirs goes, and the group moves as now. A device removed from a member's list: the admin hears the new list in their `Devices`, moves the group without that device's reader and sends `GroupDevices`; everyone starts a new Megolm session.
 7. **The admin's own linked devices** are members' devices like any other. Adding and removing people stays on the admin's main device: it alone holds the group's admin token.
 8. **Older members.** While any member is below `Understands` level 3, the group works as in 0.12: only primaries take part, and linked devices say so.
 
@@ -129,11 +129,11 @@ What the relay learns: a group queue with one reader per device, so the number o
 
 Not a new cryptographic protocol: Megolm and Olm as in ADR-027, and device lists signed as in section 1.
 
-### Implementation notes for groups (2026-11-18, proposed)
+### Implementation notes for groups (2026-11-18, maintainer)
 
-1. **`GroupReaderAsk` is not needed.** The admin is a contact of every member it invited, so it hears each member's new list in their `Devices` (section 3) and acts on it: new devices get readers and invites, removed ones make the group move without them. The kind stays reserved in 0.13 and is never sent; it can go in the next protocol change.
+1. **No `GroupReaderAsk`** (maintainer, 2026-11-18). The admin is a contact of every member it invited, so it hears each member's new list in their `Devices` (section 3) and acts on it: new devices get readers and invites, removed ones make the group move without them. The kind was never released and is gone.
 2. **A removed device leaves its groups itself** when it hears its own list without itself; the admin cannot write to it any more.
-3. **A device linked later joins by itself** when the invite's roster already holds its identity.
+3. **A device joins only groups its own person joined.** The primary sends a new device `OwnGroupJoin` for each of its groups, and the admin's primary does so before inviting its own devices; an invite with nothing like it waits for the person to accept. A roster naming our identity is not enough: the admin signs the roster and could name anyone.
 4. **The admin sends the roster again** with each `GroupDevices`: a new device reads only from that point on.
 5. **Edits, deletes and reactions** made on another device of ours are not mirrored in groups yet; messages are.
 6. **Limits.** The 32 readers of a group are now devices, not people. A move asks the relay for a reader per device at once; past the relay's queue budget for one IP (20 an hour) it waits, as a large removal already did.

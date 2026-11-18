@@ -694,7 +694,15 @@ impl Engine {
                     };
                     // A linked device of a contact gets its invite alone (ADR-028).
                     match self.index(&who) {
-                        Some(_) => {
+                        Some(o) => {
+                            // Our own device: we are in the group, so it joins.
+                            if self.data.contacts[o].own {
+                                let gid = self.data.groups[g].id;
+                                self.data.contacts[o]
+                                    .outbox
+                                    .push(Body::OwnGroupJoin { group: gid });
+                                self.deliver(o);
+                            }
                             if let Err(e) = self.transmit(&who, body) {
                                 self.note(e);
                             }
@@ -897,7 +905,12 @@ impl Engine {
             return;
         };
         let mine = sender == self.identity_key();
-        if mine && !matches!(body, Body::Message { .. }) {
+        // The admin's roster and device lists still count from our primary.
+        let change = matches!(
+            body,
+            Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } | Body::GroupLeave { .. }
+        );
+        if mine && change {
             // shortcut: edits, deletes and reactions from our other devices
             // are not mirrored in groups; mirror them if people miss them.
             return;
@@ -1001,13 +1014,18 @@ impl Engine {
         let me = self.me();
         self.data.groups[g].set_roster(roster, &me);
         self.know_members(g);
-        // Keys that came before this roster, from members it now names.
+        self.replay_pending_keys(g);
+        self.share_key(g);
+    }
+
+    /// Keys that came before the roster or device list that names their
+    /// sender; those still unnamed wait again.
+    fn replay_pending_keys(&mut self, g: usize) {
         let gid = self.data.groups[g].id;
         let pending = std::mem::take(&mut self.data.groups[g].pending_keys);
         for (sender, key) in pending {
             self.group_key_from(sender, Body::GroupKey { group: gid, key });
         }
-        self.share_key(g);
     }
 
     fn persist_unit(&mut self) {
@@ -1183,6 +1201,21 @@ impl Engine {
         }
         self.subscribe_group(g);
         self.after_members_left(g, &moving.removed);
+        let members: Vec<Ed25519Key> = self.data.groups[g]
+            .members()
+            .iter()
+            .map(|m| m.ed25519)
+            .collect();
+        for who in members {
+            self.group_devices_changed(who);
+        }
+        self.resend_devices(g);
+    }
+
+    /// Admin: every member's device list again, for those who joined or
+    /// moved since it was sent.
+    fn resend_devices(&mut self, g: usize) {
+        let gid = self.data.groups[g].id;
         let entries = self.data.groups[g].member_devices.clone();
         for (member, list, readers) in entries {
             self.send_group_body(
@@ -1399,7 +1432,8 @@ impl Engine {
             {
                 continue;
             }
-            if !self.devices_welcome(g) {
+            // A move under way: new devices wait for it (`finish_move` asks again).
+            if !self.devices_welcome(g) || group.moving.is_some() {
                 continue;
             }
             let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k);
@@ -1474,6 +1508,7 @@ impl Engine {
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
         self.know_members(g);
+        self.replay_pending_keys(g);
         if gone.is_empty() {
             self.share_key(g);
         } else {
@@ -1551,11 +1586,7 @@ impl Engine {
                     reader,
                 });
                 // Another device of ours took this group already (ADR-028).
-                let ours = self.identity_key();
-                let on_it = self.data.group_invites.last().is_some_and(|x| {
-                    !self.is_primary() && x.roster.members.iter().any(|m| m.ed25519 == ours)
-                });
-                if on_it || self.data.pending_group_joins.contains(&group) {
+                if self.data.pending_group_joins.contains(&group) {
                     let n = self.data.group_invites.len() - 1;
                     if let Err(e) = self.take_group_invite(n, false) {
                         self.note(e);
@@ -1582,6 +1613,7 @@ impl Engine {
                 };
                 let (_, grant) = self.data.groups[g].invited.remove(at);
                 self.add_to_roster(g, from, grant.send_id);
+                self.resend_devices(g);
                 self.publish_devices(g, from);
             }
             body @ Body::GroupKey { .. } => self.group_key_from(from, body),

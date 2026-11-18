@@ -349,7 +349,6 @@ Body += DeviceLink { code: [u8; 16], identity: Identity }
       | GroupDevices { group: [u8; 16], member: [u8; 32], list: DeviceList,
                        readers: Vec<([u8; 32], [u8; 16])> }   // admin -> group, inside Megolm
       | OwnGroupJoin { group: [u8; 16] }                       // own devices only
-      | GroupReaderAsk { group: [u8; 16], list: DeviceList }   // reserved, not sent
 ```
 
 Linked devices meet through the primary: each makes a queue for the other

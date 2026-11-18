@@ -632,3 +632,47 @@ async fn a_device_linked_later_joins_and_a_removed_one_reads_no_more() {
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_admins_own_linked_device_joins_its_groups() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices12-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (alice, bob) = (e[0].me(), e[2].me());
+    pump(&mut e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        e[2].data.contacts[i].understands >= 3
+            && e[0]
+                .index(&bob)
+                .is_some_and(|j| e[0].data.contacts[j].understands >= 3)
+    })
+    .await;
+
+    // Alice makes a group on her phone; the laptop joins without asking.
+    let g = e[0].create_group("ours").unwrap();
+    pump(&mut e, |e| {
+        e[1].data.groups.first().is_some_and(|g| g.reader.is_some())
+    })
+    .await;
+    assert!(e[1].data.group_invites.is_empty());
+    let i = e[0].index(&bob).unwrap();
+    e[0].invite_to_group(g, i).unwrap();
+    pump(&mut e, |e| e[2].data.group_invites.len() == 1).await;
+    e[2].accept_group(0).unwrap();
+    pump(&mut e, |e| e[1].data.groups[0].members().len() == 2).await;
+
+    e[1].send_group(0, "from the admin's laptop").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[2], "from the admin's laptop", false, Some(alice))
+            && in_group(&e[0], "from the admin's laptop", true, None)
+    })
+    .await;
+    e[2].send_group(0, "bob to both").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[0], "bob to both", false, Some(bob))
+            && in_group(&e[1], "bob to both", false, Some(bob))
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -241,6 +241,13 @@ impl Engine {
         self.data.devices = Some(list);
         self.tell_own_devices();
         self.hand_over(i);
+        // Our groups: the new device takes its invite to each when it comes.
+        for g in self.data.groups.iter().filter(|g| !g.left) {
+            self.data.contacts[i]
+                .outbox
+                .push(Body::OwnGroupJoin { group: g.id });
+        }
+        self.deliver(i);
         let me = self.me();
         self.group_devices_changed(me);
         // Every contact hears of the new list; the new device learns where
@@ -769,6 +776,15 @@ impl Engine {
         let Some(slot) = self.slot_for(&key) else {
             return;
         };
+        // Devices gone from their list hear nothing more.
+        let c = &mut self.data.contacts[i];
+        let listed = c.their_devices.clone();
+        let listed = |d: &Ed25519Key| {
+            listed
+                .as_ref()
+                .is_some_and(|l| l.devices.iter().any(|x| x.ed25519 == *d))
+        };
+        c.device_outbox.retain(|(d, _)| listed(d));
         let mut n = 0;
         while n < self.data.contacts[i].device_outbox.len() {
             let (d, body) = self.data.contacts[i].device_outbox[n].clone();
@@ -782,6 +798,11 @@ impl Engine {
                 continue;
             };
             if !self.core_at(slot).has_session(&d) {
+                // One claim per device until it answers or the reclaim timer.
+                if !self.claiming.insert(d) {
+                    n += 1;
+                    continue;
+                }
                 if let Some(l) = self.live(&key, &addr.relay_url) {
                     let _ = l.relay.send(ClientFrame::ClaimKey {
                         send_id: addr.send_id,
@@ -846,6 +867,7 @@ impl Engine {
         if self.core_at(slot).has_session(&d) {
             return;
         }
+        self.claiming.remove(&d);
         let started = self.core_at(slot).start_session(&d, key);
         if let Err(e) = started {
             return self.note(format!("cannot start session: {e}"));

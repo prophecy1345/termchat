@@ -227,7 +227,6 @@ Body += DeviceLink { code: [u8; 16], identity: Identity }
       | GroupDevices { group: [u8; 16], member: [u8; 32], list: DeviceList,
                        readers: Vec<([u8; 32], [u8; 16])> }   // администратор -> группе, внутри Megolm
       | OwnGroupJoin { group: [u8; 16] }                       // только своим
-      | GroupReaderAsk { group: [u8; 16], list: DeviceList }   // зарезервировано, не отправляется
 ```
 
 Привязанные устройства знакомятся через основное: каждое создаёт очередь для
