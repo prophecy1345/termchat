@@ -391,8 +391,10 @@ impl Client {
         if !self.contacts.contains_key(&sender) {
             // A stranger may only send a contact request whose identity binds
             // its key to the Curve25519 key of this session.
-            let (Body::ContactRequest { identity, .. } | Body::ContactRequestV2 { identity, .. }) =
-                &inner.body
+            // Or a primary answering a new device's link code (ADR-028).
+            let (Body::ContactRequest { identity, .. }
+            | Body::ContactRequestV2 { identity, .. }
+            | Body::DeviceLink { identity, .. }) = &inner.body
             else {
                 return Err(Error::UnknownSender);
             };

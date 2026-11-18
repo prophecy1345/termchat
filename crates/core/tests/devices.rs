@@ -117,3 +117,38 @@ fn a_device_off_the_list_is_nobody() {
         Error::UnknownSender
     );
 }
+
+#[test]
+fn a_link_answer_binds_the_primarys_key_like_a_request() {
+    let link = |identity| Body::DeviceLink {
+        code: [9; 16],
+        identity,
+    };
+    // A primary with a session to the new device's invite queue.
+    let start = |laptop: &mut Client| {
+        let mut phone = Client::default();
+        let l = laptop.identity().ed25519;
+        phone.add_contact(&laptop.identity()).unwrap();
+        let otk = laptop.one_time_keys(1).remove(0);
+        phone.start_session(&l, &otk).unwrap();
+        (phone, l)
+    };
+    let mut laptop = Client::default();
+
+    // An identity that is not the sender's own is refused.
+    let (mut phone, l) = start(&mut laptop);
+    let env = phone
+        .encrypt(&l, link(Client::default().identity()))
+        .unwrap();
+    assert_eq!(
+        laptop.decrypt(None, &env).unwrap_err(),
+        Error::SenderMismatch
+    );
+
+    // The genuine one arrives as a request from the primary.
+    let (mut phone, l) = start(&mut laptop);
+    let env = phone.encrypt(&l, link(phone.identity())).unwrap();
+    let got = laptop.decrypt(None, &env).unwrap();
+    assert_eq!(got.sender, phone.identity().ed25519);
+    assert!(got.request);
+}

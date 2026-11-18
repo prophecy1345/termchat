@@ -19,10 +19,15 @@ use zeroize::Zeroize;
 
 use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
 
+#[path = "devices.rs"]
+mod devices;
 #[path = "group.rs"]
 mod group;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 use subtle::ConstantTimeEq;
+
+/// The `Understands` level that reads answers, edits and reactions (ADR-025).
+const RICH_LEVEL: u16 = 1;
 
 /// How long a wipe waits for the relay to take the goodbyes (ADR-009).
 const LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1060,6 +1065,10 @@ impl Engine {
     }
 
     fn invite_with(&self, slot: usize, code: InviteCode) -> Result<String, String> {
+        Ok(self.invite_at(slot, code)?.encode())
+    }
+
+    fn invite_at(&self, slot: usize, code: InviteCode) -> Result<Invite, String> {
         let q = self
             .invite_queue(slot)
             .ok_or("not connected to the relay yet; try again in a moment")?;
@@ -1070,8 +1079,7 @@ impl Engine {
             identity: self.core_at(slot).identity(),
             queue: q.send_id,
             code,
-        }
-        .encode())
+        })
     }
 
     pub fn index(&self, key: &Ed25519Key) -> Option<usize> {
@@ -1183,6 +1191,8 @@ impl Engine {
             let (identity, nickname) = (self.core_at(slot).identity(), self.nickname_at(slot));
             let note = String::new();
             let body = match self.data.contacts[i].invite_code {
+                // ADR-028: our answer to a new device's link code.
+                Some(code) if self.data.contacts[i].own => Body::DeviceLink { code, identity },
                 Some(code) => Body::ContactRequestV2 {
                     identity,
                     nickname,
@@ -1239,7 +1249,7 @@ impl Engine {
             }
         }
         let expires_in = self.data.contacts[i].expires_in;
-        let rich = self.data.contacts[i].understands >= proto::UNDERSTANDS;
+        let rich = self.data.contacts[i].understands >= RICH_LEVEL;
         for m in 0..self.data.contacts[i].messages.len() {
             let msg = &self.data.contacts[i].messages[m];
             if msg.status != Status::Queued || msg.file.is_some() {
@@ -1673,6 +1683,17 @@ impl Engine {
     /// code (ADR-013). An incognito identity takes only its own invite's code,
     /// once: then it belongs to that contact (ADR-014).
     fn admit(&mut self, slot: usize, body: &Body) -> bool {
+        // ADR-028: the primary answering this device's link code.
+        if let (0, Body::DeviceLink { code, .. }) = (slot, body) {
+            let ok = self
+                .data
+                .link_code
+                .is_some_and(|mine| bool::from(mine.ct_eq(code)));
+            if ok {
+                self.data.link_code = None;
+            }
+            return ok;
+        }
         if slot == 0 {
             return self.data.invites.admit(body);
         }
@@ -1857,13 +1878,16 @@ impl Engine {
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
-            // ADR-028: devices, handled from the engine stage on.
-            Body::DeviceLink { .. }
+            // ADR-028: devices of one identity.
+            body @ (Body::DeviceLink { .. }
             | Body::DeviceLinked
             | Body::LinkedContact { .. }
             | Body::OwnDevices { .. }
             | Body::Devices { .. }
-            | Body::OwnQueue { .. } => return self.persist(),
+            | Body::OwnQueue { .. }) => {
+                self.device_body(i, got.request, body);
+                return self.persist();
+            }
             Body::Understands { level } => {
                 let c = &mut self.data.contacts[i];
                 let news = level > c.understands;
@@ -2229,7 +2253,7 @@ impl Engine {
     /// Whether chat `i` can answer, edit, delete and react (ADR-025): their
     /// app has said it reads these.
     pub fn rich(&self, i: usize) -> bool {
-        self.data.contacts[i].understands >= proto::UNDERSTANDS
+        self.data.contacts[i].understands >= RICH_LEVEL
     }
 
     /// Message `m` of chat `i` as something to point at (ADR-025).

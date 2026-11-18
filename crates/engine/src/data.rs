@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
 use termchat_proto::{
-    Body, Ed25519Key, GroupId, InviteCode, QueueId, QueueToken, ReaderGrant, Ref, Roster,
-    RosterMember, SecretBytes,
+    Body, DeviceList, Ed25519Key, GroupId, Identity, InviteCode, QueueId, QueueToken, ReaderGrant,
+    Ref, Roster, RosterMember, SecretBytes,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -92,6 +92,15 @@ pub struct Data {
     pub groups: Vec<Group>,
     /// Invites into groups, waiting for an answer.
     pub group_invites: Vec<GroupInvite>,
+    /// Our identity's devices, signed by the primary (ADR-028); `None`: this
+    /// device alone, never linked.
+    pub devices: Option<DeviceList>,
+    /// Each device's label, seen only by our own devices.
+    pub device_labels: Vec<(Ed25519Key, String)>,
+    /// On a linked device: the identity it belongs to, the primary's.
+    pub primary: Option<Identity>,
+    /// A device waiting to be linked: the code its link code carries.
+    pub link_code: Option<InviteCode>,
 }
 
 /// A group (ADR-027). The roster is the last one whose signature checked.
@@ -343,6 +352,16 @@ pub struct Contact {
     /// Edits, deletes and reactions waiting for a session (ADR-025).
     #[serde(default)]
     pub outbox: Vec<Body>,
+    /// One of our own devices, not a person (ADR-028): never shown as a contact.
+    #[serde(default)]
+    pub own: bool,
+    /// Our person confirmed the link with this device: the same fingerprint
+    /// on both screens.
+    #[serde(default)]
+    pub link_ok: bool,
+    /// The other side confirmed it too (`DeviceLinked`).
+    #[serde(default)]
+    pub link_theirs: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
