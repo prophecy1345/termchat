@@ -1,0 +1,30 @@
+---
+// The same header on every page: the home page's sections, then the rest.
+import { REPO, texts, type Lang } from "../i18n";
+
+interface Props {
+  lang: Lang;
+  /** This page in the other language. */
+  other: string;
+  /** On the home page its sections are anchors on the same page. */
+  home?: boolean;
+}
+const { lang, other, home } = Astro.props;
+const t = texts[lang];
+const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+const p = lang === "en" ? "" : "/ru";
+const at = (id: string) => (home ? `#${id}` : url(`${p}/#${id}`));
+---
+
+<a class="brand" href={url(`${p}/`)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
+<nav>
+  <a href={at("features")}>{t.nav.features}</a>
+  <a href={at("desktop")}>{t.nav.desktop}</a>
+  <a href={at("phone")}>{t.nav.phone}</a>
+  <a href={at("protection")}>{t.nav.protection}</a>
+  <a href={at("install")}>{t.nav.install}</a>
+  <a href={url(`${p}/docs/`)}>{t.nav.docs}</a>
+  <a href={url(`${p}/blog/`)}>{t.nav.blog}</a>
+  <a href={REPO}>GitHub</a>
+  <a class="lang" href={url(other)} hreflang={lang === "en" ? "ru" : "en"}>{lang === "en" ? "RU" : "EN"}</a>
+</nav>

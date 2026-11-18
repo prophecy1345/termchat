@@ -1,11 +1,11 @@
 ---
 // A text page: comparison, FAQ, guides. Same look as the privacy policy.
 import "../styles/site.css";
-import { REPO, type Lang } from "../i18n";
+import type { Lang } from "../i18n";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
+import Nav from "./Nav.astro";
 import Backdrop from "./Backdrop.astro";
-import { posts } from "../releases";
 
 interface Props {
   lang: Lang;
@@ -22,12 +22,6 @@ interface Props {
 const { lang, title, description, h1, en, ru, ld, guide } = Astro.props;
 const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
 const p = lang === "en" ? "" : "/ru";
-const blog = (await posts(lang)).length > 0;
-const links = (
-  lang === "en"
-    ? [["/docs/", "Docs"], ["/compare/", "Compare"], ["/faq/", "FAQ"], ["/threat-model/", "Threat model"], ["/changelog/", "Changelog"], ["/blog/", "Blog"]]
-    : [["/docs/", "Документация"], ["/compare/", "Сравнение"], ["/faq/", "Вопросы"], ["/threat-model/", "Модель угроз"], ["/changelog/", "Версии"], ["/blog/", "Блог"]]
-).filter(([path]) => blog || path !== "/blog/");
 const install = lang === "en" ? "Install termchat.app" : "Установить termchat.app";
 ---
 
@@ -39,12 +33,7 @@ const install = lang === "en" ? "Install termchat.app" : "Установить t
   <body>
     <Backdrop />
     <header class="top">
-      <a class="brand" href={url(`${p}/`)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
-      <nav>
-        {links.map(([path, label]) => <a href={url(`${p}${path}`)}>{label}</a>)}
-        <a href={REPO}>GitHub</a>
-        <a class="lang" href={url(lang === "en" ? ru : en)} hreflang={lang === "en" ? "ru" : "en"}>{lang === "en" ? "RU" : "EN"}</a>
-      </nav>
+      <Nav lang={lang} other={lang === "en" ? ru : en} />
     </header>
     <main class:list={["doc", { guide }]}>
       <slot name="aside" />

@@ -3,6 +3,7 @@ import "../styles/site.css";
 import { REPO, type Lang } from "../i18n";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
+import Nav from "./Nav.astro";
 import Backdrop from "./Backdrop.astro";
 
 // The privacy policy Google Play asks for. Keep in step with
@@ -106,7 +107,7 @@ const t = Astro.props.lang === "en" ? en : ru;
   <body>
     <Backdrop />
     <header class="top">
-      <a class="brand" href={url(t.home)}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
+      <Nav lang={Astro.props.lang} other={Astro.props.lang === "en" ? "/ru/privacy/" : "/privacy/"} />
     </header>
     <main>
       <section>

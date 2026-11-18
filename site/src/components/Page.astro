@@ -4,6 +4,7 @@ import { REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
 import Cmd from "./Cmd.astro";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
+import Nav from "./Nav.astro";
 import Backdrop from "./Backdrop.astro";
 
 interface Props {
@@ -46,18 +47,7 @@ const ld = {
     <Backdrop />
 
     <header class="top">
-      <a class="brand" href={url(t.lang === "en" ? "/" : "/ru/")}><img src={url("/logo.svg")} alt="" width="26" height="26" /> termchat.app</a>
-      <nav>
-        <a href="#features">{t.nav.features}</a>
-        <a href="#desktop">{t.nav.desktop}</a>
-        <a href="#phone">{t.nav.phone}</a>
-        <a href="#protection">{t.nav.protection}</a>
-        <a href="#install">{t.nav.install}</a>
-        <a href={url(`${p}/docs/`)}>{t.nav.docs}</a>
-        <a href={url(`${p}/blog/`)}>{t.nav.blog}</a>
-        <a href={REPO}>GitHub</a>
-        <a class="lang" href={url(t.other.href)} hreflang={t.other.href === "/" ? "en" : "ru"}>{t.other.label}</a>
-      </nav>
+      <Nav lang={t.lang} other={t.other.href} home />
     </header>
 
     <main>
