@@ -3,7 +3,10 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
-## 0.15.0
+## 0.15.1
+
+0.15.0 was tagged but never released: in the terminal, Ctrl+L and Ctrl+G
+did nothing in a group. 0.15.1 has the fix and everything below.
 
 - Documents in groups (ADR-027): send one into a group as into a chat,
   up to 1 MiB and one at a time; every member gets it and saves it by

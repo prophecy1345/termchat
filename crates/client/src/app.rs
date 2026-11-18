@@ -718,11 +718,12 @@ impl Main {
             (true, KeyCode::Char('r')) if self.group_index().is_some() => {
                 self.popup = Some(Popup::Members(0))
             }
-            (true, KeyCode::Char('e' | 'b' | 'x' | 'f' | 'l' | 'g' | 'y' | 's'))
+            (true, KeyCode::Char('e' | 'b' | 'x' | 'f' | 'y' | 's'))
                 if self.group_index().is_some() =>
             {
-                self.status =
-                    "not in a group: Ctrl+R for members, Ctrl+T timer, Ctrl+D leave".into()
+                self.status = "not in a group: Ctrl+R for members, Ctrl+T timer, Ctrl+D leave, \
+                     Ctrl+L send a file, Ctrl+G save one"
+                    .into()
             }
             (false, KeyCode::Esc) if self.compose != Compose::New => {
                 if matches!(self.compose, Compose::Edit(_)) {
@@ -1653,6 +1654,41 @@ fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// In an open group, Ctrl+L and Ctrl+G are documents, not "not in a
+    /// group" (ADR-027 amendment; a bug caught before 0.15.0 went out).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ctrl_l_in_a_group_opens_the_file_form() {
+        use crossterm::event::{KeyEvent, KeyModifiers};
+        let dir = std::env::temp_dir().join(format!("termchat-app-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap_or_default();
+        let setup = termchat_engine::Setup {
+            relay_url: "ws://127.0.0.1:9/",
+            onion_url: None,
+            tor: false,
+            nickname: "alice",
+            password: "correct horse battery staple violin",
+        };
+        let Ok(engine) = Engine::setup(&dir.join("state"), &setup) else {
+            panic!("setup");
+        };
+        let mut main = Main::new(engine, &dir);
+        assert!(main.engine.create_group("docs").is_ok());
+        main.selected = main.engine.data.people();
+        let mut settings = Settings::default();
+        let ctrl_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL);
+        assert_eq!(main.group_index(), Some(0), "the group is open");
+        // Whatever setup showed (the backup reminder) is dismissed first.
+        main.popup = None;
+        main.on_key(ctrl_l, true, &mut settings);
+        assert!(
+            matches!(&main.popup, Some(Popup::Form(f)) if f.kind == Kind::SendFile),
+            "{}",
+            main.status
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn timer_step_names_the_next_press() {
