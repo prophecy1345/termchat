@@ -3,6 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.15.0
+
+- Documents in groups (ADR-027): send one into a group as into a chat,
+  up to 1 MiB and one at a time; every member gets it and saves it by
+  hand, never opened. Terminal: Ctrl+L and Ctrl+G in the group; the
+  file button on the desktop, 📎 on Android.
+- `termchat daemon`: a command it turns away now says why, instead of
+  "Broken pipe".
+
 ## 0.14.0
 
 For scripts and servers (ADR-029, Linux and macOS):
