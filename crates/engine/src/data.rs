@@ -362,6 +362,16 @@ pub struct Contact {
     /// The other side confirmed it too (`DeviceLinked`).
     #[serde(default)]
     pub link_theirs: bool,
+    /// Our other devices' queues for this contact (`OwnQueue`): copies of
+    /// what we send them go there.
+    #[serde(default)]
+    pub siblings: Vec<(Ed25519Key, Addr)>,
+    /// Our own devices told where this device reads this contact.
+    #[serde(default)]
+    pub siblings_told: Vec<Ed25519Key>,
+    /// The number of our device list this contact last heard (`Devices`).
+    #[serde(default)]
+    pub devices_told: u64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

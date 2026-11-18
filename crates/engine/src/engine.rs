@@ -1210,6 +1210,11 @@ impl Engine {
                 Err(e) => return self.note(e),
             }
         }
+        // A linked device's queue reaches the contact in `Devices` below: a
+        // `QueueOffer` would move where they write to the whole identity.
+        if self.data.contacts[i].offer_pending && !self.is_primary() && !self.data.contacts[i].own {
+            self.data.contacts[i].offer_pending = false;
+        }
         if self.data.contacts[i].offer_pending
             && let Some(addr) = self.data.contacts[i].mine.as_ref().map(Queue::addr)
         {
@@ -1229,7 +1234,11 @@ impl Engine {
             self.persist();
             return;
         }
-        if c.accept_pending {
+        // ADR-028: this device, to the contact and to our other devices.
+        if let Err(e) = self.tell_devices(i) {
+            return self.note(e);
+        }
+        if self.data.contacts[i].accept_pending {
             let body = Body::ContactAccept {
                 nickname: self.nickname_at(slot),
             };
@@ -2212,6 +2221,10 @@ impl Engine {
         }
         if self.needs_invite(c) {
             return Err(NEEDS_INVITE.into());
+        }
+        // ADR-028: an app before devices hears only from the primary.
+        if !self.is_primary() && !c.own && c.understands < proto::UNDERSTANDS {
+            return Err("their app knows no second devices yet: write from your main one, or ask them to update".into());
         }
         Ok(c)
     }

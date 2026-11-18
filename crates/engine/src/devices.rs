@@ -6,7 +6,7 @@
 //! sessions and links as a person, never shown as one.
 
 use super::*;
-use termchat_core::proto::{Device, DeviceList, MAX_DEVICES};
+use termchat_core::proto::{Device, DeviceList, DeviceQueue, LinkedContact, MAX_DEVICES};
 use termchat_core::{fingerprint, verify_devices};
 
 impl Engine {
@@ -147,7 +147,124 @@ impl Engine {
         }
         self.data.devices = Some(list);
         self.tell_own_devices();
+        self.hand_over(i);
+        // Every contact hears of the new list; the new device learns where
+        // we read each of them.
+        for c in 0..self.data.contacts.len() {
+            if !self.data.contacts[c].own {
+                self.deliver(c);
+            }
+        }
         self.note("device linked");
+    }
+
+    /// The people we talk to, to new device `i`: never our own devices, nor
+    /// the contacts of an incognito identity (each is an identity of its own).
+    fn hand_over(&mut self, i: usize) {
+        let mut bodies = Vec::new();
+        for c in &self.data.contacts {
+            let Some(theirs) = c.theirs.as_ref() else {
+                continue;
+            };
+            if c.own || c.profile.is_some() || c.blocked || c.left || self.is_request(&c.key) {
+                continue;
+            }
+            let core = self.core();
+            let Some(curve25519) = core.curve_of(&c.key) else {
+                continue;
+            };
+            let nickname = core.nickname(&c.key).unwrap_or("?").to_string();
+            drop(core);
+            bodies.push(Body::LinkedContact {
+                contact: LinkedContact {
+                    // Over Olm from our primary: the new device trusts the
+                    // keys without the contact's own signature, which we keep
+                    // nowhere.
+                    identity: proto::Identity {
+                        ed25519: c.key,
+                        curve25519,
+                        signature: [0; 64],
+                    },
+                    nickname,
+                    petname: c.petname.clone(),
+                    verified: c.verified,
+                    understands: c.understands,
+                    devices: None,
+                    queues: vec![DeviceQueue {
+                        device: c.key,
+                        relay_url: theirs.relay_url.clone(),
+                        onion_url: theirs.onion_url.clone(),
+                        send_id: theirs.send_id,
+                    }],
+                },
+            });
+        }
+        self.data.contacts[i].outbox.extend(bodies);
+        self.deliver(i);
+    }
+
+    /// What contact `i` and our other devices should know of this device,
+    /// once our queue for them exists: our device list and address, for the
+    /// contact (`Devices`); where we read them, for each own device (`OwnQueue`).
+    pub(super) fn tell_devices(&mut self, i: usize) -> Result<(), String> {
+        let Some(list) = self.data.devices.clone() else {
+            return Ok(());
+        };
+        let c = &self.data.contacts[i];
+        let Some(addr) = c.mine.as_ref().map(Queue::addr) else {
+            return Ok(());
+        };
+        if c.own || c.profile.is_some() {
+            return Ok(());
+        }
+        let (key, me) = (c.key, self.me());
+        let queue = DeviceQueue {
+            device: me,
+            relay_url: addr.relay_url,
+            onion_url: addr.onion_url,
+            send_id: addr.send_id,
+        };
+        if c.devices_told < list.no && c.understands >= proto::UNDERSTANDS {
+            // Every address we know: the contact may not read a device of
+            // ours before it has our list, so each device repeats the others'.
+            let mut queues = vec![queue.clone()];
+            for (d, a) in &c.siblings {
+                if list.devices.iter().any(|x| x.ed25519 == *d) {
+                    queues.push(DeviceQueue {
+                        device: *d,
+                        relay_url: a.relay_url.clone(),
+                        onion_url: a.onion_url.clone(),
+                        send_id: a.send_id,
+                    });
+                }
+            }
+            let body = Body::Devices {
+                list: list.clone(),
+                queues,
+            };
+            self.transmit(&key, body)?;
+            self.data.contacts[i].devices_told = list.no;
+        }
+        // shortcut: only devices with a channel to us hear (the primary and
+        // the devices it linked); linked devices among themselves come later.
+        for d in list.devices.iter().filter(|d| d.ed25519 != me) {
+            let Some(o) = self
+                .index(&d.ed25519)
+                .filter(|&o| self.data.contacts[o].own)
+            else {
+                continue;
+            };
+            if self.data.contacts[i].siblings_told.contains(&d.ed25519) {
+                continue;
+            }
+            self.data.contacts[o].outbox.push(Body::OwnQueue {
+                contact: key,
+                queue: queue.clone(),
+            });
+            self.data.contacts[i].siblings_told.push(d.ed25519);
+            self.deliver(o);
+        }
+        Ok(())
     }
 
     /// Our device list, labels and nickname, to each of our devices.
@@ -213,7 +330,77 @@ impl Engine {
                         .push(Happened::Notice("This device is linked.".into()));
                 }
             }
+            Body::LinkedContact { contact } if own && !self.is_primary() => {
+                if self.data.contacts[i].key
+                    == self.data.primary.as_ref().map_or([0; 32], |p| p.ed25519)
+                {
+                    self.take_contact(contact);
+                }
+            }
+            Body::OwnQueue { contact, queue } if own => {
+                let from = self.data.contacts[i].key;
+                let Some(c) = self.index(&contact) else {
+                    return;
+                };
+                if queue.device != from || self.data.contacts[c].own {
+                    return;
+                }
+                let addr = Addr {
+                    relay_url: queue.relay_url,
+                    onion_url: queue.onion_url,
+                    send_id: queue.send_id,
+                };
+                let s = &mut self.data.contacts[c].siblings;
+                s.retain(|(k, _)| *k != from);
+                s.push((from, addr));
+                // The contact hears this address from us too (`tell_devices`).
+                self.data.contacts[c].devices_told = 0;
+                self.deliver(c);
+            }
             _ => {}
         }
+    }
+
+    /// A contact our primary handed over: we write to them as it does, from
+    /// a queue of our own.
+    fn take_contact(&mut self, l: LinkedContact) {
+        let key = l.identity.ed25519;
+        if key == self.me() || self.index(&key).is_some() {
+            return;
+        }
+        let Some(theirs) = l.queues.iter().find(|q| q.device == key) else {
+            return;
+        };
+        let theirs = Addr {
+            relay_url: theirs.relay_url.clone(),
+            onion_url: theirs.onion_url.clone(),
+            send_id: theirs.send_id,
+        };
+        if !addr_ok(&theirs.relay_url, theirs.onion_url.as_deref()) {
+            return;
+        }
+        {
+            let mut core = self.core();
+            core.add_member(key, l.identity.curve25519);
+            core.set_nickname(&key, l.nickname);
+        }
+        self.data.contacts.push(Contact {
+            key,
+            petname: l.petname,
+            verified: l.verified,
+            understands: l.understands,
+            // They already know what we read; the primary told them.
+            told: proto::UNDERSTANDS,
+            theirs: Some(theirs),
+            added_at: now(),
+            next_client_id: getrandom::u64().unwrap_or(0) >> 2,
+            ..Default::default()
+        });
+        self.persist();
+        if let Err(e) = self.sync_links() {
+            return self.note(e);
+        }
+        self.ensure_queue(key);
+        self.claim(key);
     }
 }

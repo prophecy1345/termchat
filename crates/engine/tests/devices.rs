@@ -117,3 +117,87 @@ async fn a_code_the_device_did_not_give_links_nothing() {
     assert!(e[1].data.primary.is_none());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `a` adds `b`'s invite, `b` accepts; both apps read everything.
+async fn befriend(e: &mut [Box<Engine>], a: usize, b: usize) {
+    let invite = e[b].invite().unwrap();
+    e[a].add(&invite, false).unwrap();
+    pump(e, |e| {
+        e[b].data.contacts.iter().any(|c| e[b].is_request(&c.key))
+    })
+    .await;
+    let i = e[b]
+        .data
+        .contacts
+        .iter()
+        .position(|c| e[b].is_request(&c.key))
+        .unwrap();
+    e[b].accept(i);
+    let (ka, kb) = (e[a].me(), e[b].me());
+    pump(e, |e| {
+        let knows = |x: &Engine, k| {
+            x.index(&k).is_some_and(|i| {
+                x.data.contacts[i].understands >= termchat_core::proto::UNDERSTANDS
+            })
+        };
+        knows(&e[a], kb) && knows(&e[b], ka)
+    })
+    .await;
+}
+
+/// Phone and laptop linked; bob a contact of the phone from before.
+async fn linked_with_bob(dir: &Path, url: &str) -> Vec<Box<Engine>> {
+    let mut e = vec![
+        engine(dir, "alice", url),
+        engine(dir, "new", url),
+        engine(dir, "bob", url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    befriend(&mut e, 0, 2).await;
+    let code = e[1].link_code().unwrap();
+    let at_phone = e[0].add_device(&code).unwrap();
+    pump(&mut e, |e| e[1].pending_link().is_some()).await;
+    let at_laptop = e[1].pending_link().unwrap();
+    e[1].confirm_link(at_laptop);
+    e[0].confirm_link(at_phone);
+    pump(&mut e, |e| e[1].data.devices.is_some()).await;
+    e
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_new_device_gets_the_contacts_and_both_know_each_others_queues() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (phone, laptop, bob) = (e[0].me(), e[1].me(), e[2].me());
+
+    pump(&mut e, |e| {
+        e[1].index(&bob).is_some_and(|i| {
+            let c = &e[1].data.contacts[i];
+            c.mine.is_some() && c.siblings.iter().any(|(k, _)| *k == phone)
+        })
+    })
+    .await;
+    let i = e[1].index(&bob).unwrap();
+    let c = &e[1].data.contacts[i];
+    assert!(e[1].name(c).starts_with("bob"), "{}", e[1].name(c));
+    assert!(c.theirs.is_some() && !c.own);
+    // The phone learns where the laptop reads bob.
+    pump(&mut e, |e| {
+        let i = e[0].index(&bob).unwrap();
+        e[0].data.contacts[i]
+            .siblings
+            .iter()
+            .any(|(k, _)| *k == laptop)
+    })
+    .await;
+    // Bob heard the list from both devices.
+    pump(&mut e, |e| {
+        let i = e[0].index(&bob).unwrap();
+        let j = e[1].index(&bob).unwrap();
+        e[0].data.contacts[i].devices_told == 1 && e[1].data.contacts[j].devices_told == 1
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}

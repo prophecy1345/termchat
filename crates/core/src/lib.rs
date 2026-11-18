@@ -688,6 +688,13 @@ impl Client {
         });
     }
 
+    /// A contact's nickname, as our primary knows it (ADR-028).
+    pub fn set_nickname(&mut self, contact: &Ed25519Key, nickname: String) {
+        if let Some(c) = self.contacts.get_mut(contact) {
+            c.nickname = Some(nickname);
+        }
+    }
+
     /// A contact's Curve25519 key, for a roster.
     pub fn curve_of(&self, contact: &Ed25519Key) -> Option<Curve25519Key> {
         self.contacts.get(contact).map(|c| c.curve25519)
