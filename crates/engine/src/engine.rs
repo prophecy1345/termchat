@@ -2458,7 +2458,9 @@ impl Engine {
                 let last = f.complete();
                 self.chunk_budget.0 -= 1.0;
                 sent = true;
-                let result = self.transmit(&key, body);
+                // ADR-028: every device of theirs; ours hear of the first chunk.
+                let first = matches!(body, Body::File { index: 0, .. });
+                let result = self.transmit_each(&key, body, first);
                 let msg = &mut self.data.contacts[i].messages[m];
                 match result {
                     Ok(id) if last => msg.status = Status::Sending(id),

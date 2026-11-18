@@ -551,12 +551,29 @@ impl Engine {
     /// device of ours, each into its own queue (ADR-028). The client id is
     /// the primary's: sent once one of theirs has it.
     pub(super) fn transmit_all(&mut self, key: &Ed25519Key, body: Body) -> Result<u64, String> {
+        self.transmit_each(key, body, true)
+    }
+
+    /// `transmit_all`, with copies to our own devices only if `ours`: a
+    /// document's later chunks go to the contact's devices alone.
+    pub(super) fn transmit_each(
+        &mut self,
+        key: &Ed25519Key,
+        body: Body,
+        ours: bool,
+    ) -> Result<u64, String> {
         let id = self.transmit(key, body.clone())?;
         let Some(i) = self.index(key) else {
             return Ok(id);
         };
         let slot = self.slot_for(key).ok_or(MISSING_PROFILE)?;
-        for (d, addr) in self.copies_of(i) {
+        let ours_too = |d: &Ed25519Key| ours || !self.lists(d);
+        let targets: Vec<_> = self
+            .copies_of(i)
+            .into_iter()
+            .filter(|(d, _)| ours_too(d))
+            .collect();
+        for (d, addr) in targets {
             if !self.core_at(slot).has_session(&d) {
                 if let Some(l) = self.live(key, &addr.relay_url) {
                     let _ = l.relay.send(ClientFrame::ClaimKey {
@@ -659,8 +676,34 @@ impl Engine {
             body @ (Body::Edit { .. } | Body::Delete { .. } | Body::React { .. }) => {
                 c.own_change(body);
             }
-            // shortcut: documents and the rest stay on the device that sent
-            // them; copy them too if people miss them on their other devices.
+            // A document we sent from another device: its line, not its
+            // bytes, which stay on the device that sent it (first chunk only).
+            Body::File {
+                id,
+                name,
+                size,
+                index: 0,
+                ..
+            } => {
+                let total =
+                    u16::try_from(termchat_core::proto::file_chunks(size)).unwrap_or(u16::MAX);
+                c.messages.push(Msg {
+                    mine: true,
+                    text: name.clone(),
+                    at: now(),
+                    expires_at: None,
+                    status: Status::Sent,
+                    file: Some(FileMsg {
+                        id,
+                        name,
+                        size,
+                        done: total,
+                        data: None,
+                    }),
+                    unfetched: false,
+                    ..Default::default()
+                });
+            }
             _ => {}
         }
     }

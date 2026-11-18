@@ -336,3 +336,45 @@ async fn labels_reach_our_devices_and_only_the_primary_sets_them() {
     assert!(e[2].data.device_labels.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+fn has_file(e: &Engine, contact: &[u8; 32], name: &str, mine: bool) -> bool {
+    e.index(contact).is_some_and(|i| {
+        e.data.contacts[i].messages.iter().any(|m| {
+            m.mine == mine
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.name == name && f.complete())
+        })
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn documents_reach_every_device_and_ours_see_what_we_sent() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices7-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (alice, bob) = (e[0].me(), e[2].me());
+    pump(&mut e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        e[2].data.contacts[i].device_addrs.len() == 1
+    })
+    .await;
+
+    // Two chunks and a bit, to both of alice's devices.
+    let i = e[2].index(&alice).unwrap();
+    e[2].send_file(i, "notes.txt", vec![7u8; 33_000]).unwrap();
+    pump(&mut e, |e| {
+        has_file(&e[0], &bob, "notes.txt", false) && has_file(&e[1], &bob, "notes.txt", false)
+    })
+    .await;
+
+    // From the laptop: bob gets it whole, the phone sees it as sent.
+    let j = e[1].index(&bob).unwrap();
+    e[1].send_file(j, "plan.pdf", vec![1u8; 20_000]).unwrap();
+    pump(&mut e, |e| {
+        has_file(&e[2], &alice, "plan.pdf", false) && has_file(&e[0], &bob, "plan.pdf", true)
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
