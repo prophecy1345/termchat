@@ -123,6 +123,8 @@ pub struct MessageView {
     pub my_reaction: Option<u8>,
     /// In a group: who wrote it, when not us (ADR-027).
     pub author: Option<String>,
+    /// The colour of that name, as an index into the theme's slots.
+    pub author_slot: Option<u32>,
     /// In a group: each reaction once, with how many chose it.
     pub counts: Vec<ReactionCount>,
 }
@@ -456,6 +458,10 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
             (Some(g), Some(k)) if !m.mine => {
                 Some(engine::clean(g.name_of(&k).unwrap_or("someone")))
             }
+            _ => None,
+        },
+        author_slot: match (group, m.author) {
+            (Some(_), Some(k)) if !m.mine => Some(termchat_engine::themes::name_slot(&k) as u32),
             _ => None,
         },
         counts,

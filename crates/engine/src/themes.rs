@@ -23,6 +23,16 @@ pub const SLOTS: [&str; 17] = [
     "peach",
 ];
 
+/// Colours for members' names in a group, as [`SLOTS`] indices: mauve,
+/// green, yellow, teal, peach. Not accent (that is you) nor red (errors).
+pub const NAME_COLOURS: [usize; 5] = [11, 12, 13, 15, 16];
+
+/// The slot of a member's name colour. It comes from their key, so it is the
+/// same on every device and in every theme, with nothing to store or send.
+pub fn name_slot(key: &[u8; 32]) -> usize {
+    NAME_COLOURS[usize::from(key[0]) % NAME_COLOURS.len()]
+}
+
 /// The first is the terminal client's default; the Android app starts with "termchat".
 #[rustfmt::skip]
 pub const THEMES: &[(&str, [u32; 17])] = &[
@@ -45,3 +55,17 @@ pub const THEMES: &[(&str, [u32; 17])] = &[
     ("vesper", [0xffc799, 0x1a1a1a, 0x101010, 0x232323, 0x232323, 0x282828, 0x101010, 0x5c5c5c, 0x7e7e7e, 0xffffff, 0xa0a0a0, 0xffd1a8, 0x99ffe4, 0xffc799, 0xff8080, 0x66ddcc, 0xffc799]),
     ("termchat", [0xc3e66e, 0x161616, 0x1e1f21, 0x3a4222, 0x2a2b2f, 0x2c2d30, 0x161616, 0x6c6d70, 0x8c8d90, 0xe8e8e6, 0xb8b8b6, 0xb4a0e5, 0xc3e66e, 0xe6d36e, 0xe5675f, 0x7fd3c3, 0xf2a65a]),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_colour_is_steady_and_spreads_over_the_set() {
+        let key = |b: u8| [b; 32];
+        assert_eq!(name_slot(&key(7)), name_slot(&key(7)));
+        let seen: std::collections::BTreeSet<usize> = (0..5).map(|b| name_slot(&key(b))).collect();
+        assert_eq!(seen.len(), NAME_COLOURS.len());
+        assert!((0..=255).all(|b| NAME_COLOURS.contains(&name_slot(&key(b)))));
+    }
+}

@@ -334,7 +334,7 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
     val gone = Tc.mono.copy(color = Tc.dim, fontStyle = FontStyle.Italic)
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (msg.mine) Alignment.End else Alignment.Start) {
         // ADR-027: in a group, who wrote it.
-        msg.author?.let { Text(it, style = Tc.small.copy(color = Tc.slots.getOrNull(11) ?: Tc.lime), modifier = Modifier.padding(start = 2.dp, bottom = 2.dp)) }
+        msg.author?.let { Text(it, style = Tc.small.copy(color = Tc.slots.getOrNull((msg.authorSlot ?: 11u).toInt()) ?: Tc.lime), modifier = Modifier.padding(start = 2.dp, bottom = 2.dp)) }
         Box {
             Column(
                 Modifier

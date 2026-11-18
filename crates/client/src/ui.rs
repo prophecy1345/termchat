@@ -712,7 +712,17 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             }
             let (who, colour) = match msg.mine {
                 true => ("you".to_string(), t.accent),
-                false => (author(msg), t.mauve),
+                false => {
+                    let slot = msg.author.map(|k| termchat_engine::themes::name_slot(&k));
+                    let colour = match slot {
+                        Some(12) => t.green,
+                        Some(13) => t.yellow,
+                        Some(15) => t.teal,
+                        Some(16) => t.peach,
+                        _ => t.mauve,
+                    };
+                    (author(msg), colour)
+                }
             };
             lines.push(Line::from(vec![
                 Span::styled(who, Style::new().fg(colour).add_modifier(Modifier::BOLD)),

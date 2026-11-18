@@ -44,6 +44,8 @@ pub struct Pal {
     pub pink: Color32,
     /// Each reaction's colour (ADR-025, `reactions::COLOURS`).
     pub reactions: [Color32; 7],
+    /// All 17 colours of the theme, for members' names (`themes::name_slot`).
+    pub slots: [Color32; 17],
 }
 
 impl Pal {
@@ -73,6 +75,7 @@ impl Pal {
             pink: crate::synth::mix(rgb(11), rgb(14), 0.5),
             warn: rgb(16),
             reactions: reactions::COLOURS.map(rgb),
+            slots: std::array::from_fn(rgb),
         }
     }
 
@@ -1155,10 +1158,11 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
             && last_author != Some(m.author)
         {
             let who = m.author.and_then(|k| g.name_of(&k)).unwrap_or("someone");
+            let colour = m.author.map_or(p.mauve, |k| p.slots[themes::name_slot(&k)]);
             ui.label(
                 RichText::new(termchat_engine::clean(who))
                     .small()
-                    .color(p.mauve),
+                    .color(colour),
             );
         }
         last_author = Some(m.author);
