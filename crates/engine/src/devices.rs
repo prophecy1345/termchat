@@ -422,6 +422,9 @@ impl Engine {
                 self.data.devices = Some(list);
                 self.data.device_labels = labels;
                 self.data.nickname = nickname;
+                if on_it {
+                    self.meet_siblings();
+                }
                 let note = match (first, on_it) {
                     (true, _) => "This device is linked.",
                     (false, false) => {
@@ -459,8 +462,111 @@ impl Engine {
                 self.deliver(c);
             }
             Body::Devices { list, queues } if !own => self.their_devices(i, list, queues),
+            Body::SiblingQueue { device, queue } if own => self.sibling_queue(i, device, queue),
             _ => {}
         }
+    }
+
+    /// On a linked device: a channel to each other linked device we have
+    /// none with yet. Its address goes through the primary (`introduce`).
+    fn meet_siblings(&mut self) {
+        let (me, primary) = (self.me(), self.data.primary.as_ref().map(|p| p.ed25519));
+        let Some(list) = self.data.devices.clone() else {
+            return;
+        };
+        for d in list.devices {
+            if d.ed25519 == me || Some(d.ed25519) == primary || self.index(&d.ed25519).is_some() {
+                continue;
+            }
+            self.core().add_member(d.ed25519, d.curve25519);
+            self.data.contacts.push(Contact {
+                key: d.ed25519,
+                own: true,
+                link_ok: true,
+                link_theirs: true,
+                added_at: now(),
+                next_client_id: getrandom::u64().unwrap_or(0) >> 2,
+                ..Default::default()
+            });
+            self.persist();
+            if let Err(e) = self.sync_links() {
+                return self.note(e);
+            }
+            self.ensure_queue(d.ed25519);
+        }
+    }
+
+    /// On a linked device, once our queue for another linked device exists:
+    /// its address, to the primary to pass on.
+    pub(super) fn introduce(&mut self, i: usize) {
+        let c = &self.data.contacts[i];
+        let primary = self.data.primary.as_ref().map(|p| p.ed25519);
+        if !c.own || c.theirs.is_some() || Some(c.key) == primary {
+            return;
+        }
+        let (Some(addr), Some(primary)) = (c.mine.as_ref().map(Queue::addr), primary) else {
+            return;
+        };
+        let Some(p) = self.index(&primary) else {
+            return;
+        };
+        let body = Body::SiblingQueue {
+            device: c.key,
+            queue: DeviceQueue {
+                device: self.me(),
+                relay_url: addr.relay_url,
+                onion_url: addr.onion_url,
+                send_id: addr.send_id,
+            },
+        };
+        self.data.contacts[p].outbox.push(body);
+        self.deliver(p);
+    }
+
+    /// A `SiblingQueue` from own device `i`: on the primary, passed on to the
+    /// device it is for; on a linked device, the other's address to write to.
+    fn sibling_queue(&mut self, i: usize, device: Ed25519Key, queue: DeviceQueue) {
+        let from = self.data.contacts[i].key;
+        if self.is_primary() {
+            if queue.device != from
+                || device == self.me()
+                || !self.lists(&from)
+                || !self.lists(&device)
+            {
+                return;
+            }
+            if let Some(o) = self.index(&device).filter(|&o| self.data.contacts[o].own) {
+                self.data.contacts[o]
+                    .outbox
+                    .push(Body::SiblingQueue { device, queue });
+                self.deliver(o);
+            }
+            return;
+        }
+        let primary = self.data.primary.as_ref().map(|p| p.ed25519);
+        if Some(from) != primary || device != self.me() || !self.lists(&queue.device) {
+            return;
+        }
+        if !addr_ok(&queue.relay_url, queue.onion_url.as_deref()) {
+            return;
+        }
+        self.meet_siblings();
+        let Some(o) = self
+            .index(&queue.device)
+            .filter(|&o| self.data.contacts[o].own)
+        else {
+            return;
+        };
+        self.data.contacts[o].theirs = Some(Addr {
+            relay_url: queue.relay_url,
+            onion_url: queue.onion_url,
+            send_id: queue.send_id,
+        });
+        self.persist();
+        if let Err(e) = self.sync_links() {
+            return self.note(e);
+        }
+        self.claim(queue.device);
     }
 
     /// Contact `i`'s device list, from any device of theirs: checked, then

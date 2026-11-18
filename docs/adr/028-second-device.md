@@ -108,6 +108,6 @@ Planning the implementation found that the bundle of section 3 does not fit: a l
 2. **`OwnQueue { contact, queue }`.** A device that makes its queue for contact X tells its other devices over the channel. Copies of what any device sends X then go only to those per-contact queues (section 3).
 3. **Each device announces itself to a contact** with `Devices`: the signed list, and only its own address for that contact. The contact keeps one address per device.
 4. **Sent** means that at least one of the recipient's devices has the message on its relay.
-5. **First release: linked devices talk to the primary only** (maintainer, 2026-11-18). With three or four devices, contacts still write to every device, but a copy of what a linked device sends reaches the primary and not the other linked devices. A later release has the primary introduce linked devices to each other.
+5. **First release: linked devices talk to the primary only** (maintainer, 2026-11-18). With three or four devices, contacts still write to every device, but a copy of what a linked device sends reaches the primary and not the other linked devices. Since 0.13 the primary introduces linked devices to each other: each sends the other its queue through the primary (`SiblingQueue`), and copies then go directly.
 
 The relay learns one thing more: two devices of one person write to each other, at linking and when a contact is added, not with every message.

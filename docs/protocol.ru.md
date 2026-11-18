@@ -223,7 +223,12 @@ Body += DeviceLink { code: [u8; 16], identity: Identity }
       | OwnDevices { list: DeviceList, labels: Vec<([u8; 32], String)>, nickname: String }  // только своим
       | Devices { list: DeviceList, queues: Vec<DeviceQueue> }                             // контактам
       | OwnQueue { contact: [u8; 32], queue: DeviceQueue }                                 // только своим
+      | SiblingQueue { device: [u8; 32], queue: DeviceQueue }   // привязанное -> основное -> привязанное
 ```
+
+Привязанные устройства знакомятся через основное: каждое создаёт очередь для
+другого и отправляет её адрес в `SiblingQueue` основному, а то проверяет, что
+оба в списке, и передаёт дальше.
 
 Список подписан ключом личности над `"termchat-devices-v1" ||
 postcard(identity, no, devices)`. Первое устройство — основное: его ключ и есть

@@ -1560,6 +1560,8 @@ impl Engine {
         self.persist();
         self.subscribe(who, &q);
         self.deliver(i);
+        // ADR-028: a linked device's address for another goes via the primary.
+        self.introduce(i);
     }
 
     /// The relay no longer knows `who`'s queue. An invite queue takes the
@@ -1917,7 +1919,8 @@ impl Engine {
             | Body::LinkedContact { .. }
             | Body::OwnDevices { .. }
             | Body::Devices { .. }
-            | Body::OwnQueue { .. }) => {
+            | Body::OwnQueue { .. }
+            | Body::SiblingQueue { .. }) => {
                 self.device_body(i, got.request, body);
                 return self.persist();
             }

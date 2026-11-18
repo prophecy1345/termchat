@@ -345,7 +345,12 @@ Body += DeviceLink { code: [u8; 16], identity: Identity }
       | OwnDevices { list: DeviceList, labels: Vec<([u8; 32], String)>, nickname: String }  // own devices only
       | Devices { list: DeviceList, queues: Vec<DeviceQueue> }                             // to contacts
       | OwnQueue { contact: [u8; 32], queue: DeviceQueue }                                 // own devices only
+      | SiblingQueue { device: [u8; 32], queue: DeviceQueue }   // linked device -> primary -> linked device
 ```
+
+Linked devices meet through the primary: each makes a queue for the other
+and sends its address in `SiblingQueue` to the primary, which checks both are
+on the list and passes it on.
 
 The list is signed by the identity key over `"termchat-devices-v1" ||
 postcard(identity, no, devices)`. The first device is the primary: its key is

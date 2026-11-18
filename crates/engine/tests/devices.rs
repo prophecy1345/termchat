@@ -378,3 +378,61 @@ async fn documents_reach_every_device_and_ours_see_what_we_sent() {
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn linked_devices_meet_each_other_and_see_each_others_copies() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices8-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    e.push(engine(&dir, "tablet", &url));
+    pump(&mut e, |e| e[3].data.invite_queue.is_some()).await;
+    let code = e[3].link_code().unwrap();
+    let at_phone = e[0].add_device(&code).unwrap();
+    pump(&mut e, |e| e[3].pending_link().is_some()).await;
+    let at_tablet = e[3].pending_link().unwrap();
+    e[3].confirm_link(at_tablet);
+    e[0].confirm_link(at_phone);
+    pump(&mut e, |e| {
+        e[3].data
+            .devices
+            .as_ref()
+            .is_some_and(|d| d.devices.len() == 3)
+    })
+    .await;
+
+    // Laptop and tablet find each other through the phone.
+    let (laptop, tablet, bob) = (e[1].me(), e[3].me(), e[2].me());
+    pump(&mut e, |e| {
+        let met = |x: &Engine, k| {
+            x.index(&k)
+                .is_some_and(|i| x.data.contacts[i].theirs.is_some())
+        };
+        met(&e[1], tablet) && met(&e[3], laptop)
+    })
+    .await;
+    // And each learns where the other reads bob.
+    pump(&mut e, |e| {
+        let knows = |x: &Engine, k| {
+            x.index(&bob)
+                .is_some_and(|i| x.data.contacts[i].siblings.iter().any(|(s, _)| *s == k))
+        };
+        knows(&e[1], tablet) && knows(&e[3], laptop)
+    })
+    .await;
+    let j = e[1].index(&bob).unwrap();
+    e[1].send(j, "from the laptop, seen on the tablet").unwrap();
+    pump(&mut e, |e| {
+        has(&e[3], &bob, "from the laptop, seen on the tablet", true)
+            && has(&e[0], &bob, "from the laptop, seen on the tablet", true)
+    })
+    .await;
+    // None of our devices shows up as a person.
+    assert!(
+        e.iter()
+            .take(2)
+            .chain(e.iter().skip(3))
+            .all(|x| x.data.people() == 1)
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

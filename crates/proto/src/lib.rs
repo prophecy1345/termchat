@@ -529,6 +529,12 @@ pub enum Body {
         contact: Ed25519Key,
         queue: DeviceQueue,
     },
+    /// Between linked devices, through the primary (ADR-028): "`queue` is
+    /// where its device reads `device`". The primary passes it on to `device`.
+    SiblingQueue {
+        device: Ed25519Key,
+        queue: DeviceQueue,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -540,7 +546,7 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 24;
+const KNOWN_KINDS: u32 = 25;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028).
@@ -895,7 +901,9 @@ fn check_body(body: &Body) -> Result<(), Error> {
             list.check()?;
             check_queues(queues)
         }
-        Body::OwnQueue { queue, .. } => check_queues(std::slice::from_ref(queue)),
+        Body::OwnQueue { queue, .. } | Body::SiblingQueue { queue, .. } => {
+            check_queues(std::slice::from_ref(queue))
+        }
         Body::ContactRequest { note, .. } | Body::ContactRequestV2 { note, .. }
             if note.len() > MAX_NOTE_BYTES =>
         {
@@ -1097,8 +1105,8 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::OwnQueue {
-            contact: [5; 32],
+        let raw = postcard::to_allocvec(&with(Body::SiblingQueue {
+            device: [5; 32],
             queue: queue(1),
         }))
         .unwrap();
@@ -1512,6 +1520,10 @@ mod tests {
             Body::OwnQueue {
                 contact: [5; 32],
                 queue: queue(2),
+            },
+            Body::SiblingQueue {
+                device: [6; 32],
+                queue: queue(3),
             },
         ] {
             let inner = with(body);

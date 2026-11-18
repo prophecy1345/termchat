@@ -34,7 +34,7 @@ One identity can live on up to four devices, for example your phone and your lap
 ## What you see on each device
 
 - Messages from a contact appear on every device.
-- What you send from one device appears on your other devices as yours. With three or four devices, a message sent from a linked device appears on it and on the main device, not yet on the other linked ones.
+- What you send from one device appears on your other devices as yours.
 - A contact whose app is older than 0.12 hears only your main device. Writing to them from a linked device says they need to update first.
 
 ## Labels, removing, losing a device
