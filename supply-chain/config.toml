@@ -1653,6 +1653,10 @@ criteria = "safe-to-deploy"
 version = "3.0.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.pollster]]
+version = "0.4.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.poly1305]]
 version = "0.9.1"
 criteria = "safe-to-deploy"
@@ -1855,6 +1859,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rfc6979]]
 version = "0.4.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.rfd]]
+version = "0.17.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ring]]

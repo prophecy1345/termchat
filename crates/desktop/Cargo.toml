@@ -20,6 +20,9 @@ workspace = true
 eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "system_fonts", "wayland", "x11"] }
 # The invite as a QR code for the Android app's scanner; no image library.
 qrcode = { version = "0.14.1", default-features = false }
+# The system's Open and Save dialogs (Finder, Explorer, the xdg portal on
+# Linux, so no GTK): typing a path was the terminal's way, not a window's.
+rfd = "0.17.2"
 termchat-core = { path = "../core" }
 termchat-engine = { path = "../engine", default-features = false }
 tokio = { version = "1.53.3", features = ["rt-multi-thread"] }

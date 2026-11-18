@@ -987,11 +987,19 @@ impl Chat {
                     "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about \
                      10 s, 1 MiB about 3 min. The relay sees roughly how big it is.",
                 );
-                ui.add(
-                    egui::TextEdit::singleline(path)
-                        .hint_text("~/Documents/contract.pdf")
-                        .desired_width(f32::INFINITY),
-                );
+                ui.horizontal(|ui| {
+                    // The system's own Open dialog; the field stays for the keyboard.
+                    if ui.button("Choose…").clicked()
+                        && let Some(file) = rfd::FileDialog::new().pick_file()
+                    {
+                        *path = file.display().to_string();
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(path)
+                            .hint_text("~/Documents/contract.pdf, or drop a file on the window")
+                            .desired_width(f32::INFINITY),
+                    );
+                });
                 error_line(ui, p, error);
                 let (go, stay) = buttons(ui, p, "Send");
                 if go {
@@ -1032,6 +1040,13 @@ impl Chat {
                 ui.horizontal(|ui| {
                     ui.label("Into folder");
                     ui.text_edit_singleline(folder);
+                    if ui.button("Choose…").clicked()
+                        && let Some(dir) = rfd::FileDialog::new()
+                            .set_directory(data::expand(folder))
+                            .pick_folder()
+                    {
+                        *folder = dir.display().to_string();
+                    }
                 });
                 error_line(ui, p, error);
                 let mut keep = true;

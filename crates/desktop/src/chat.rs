@@ -353,6 +353,17 @@ impl Chat {
     /// Draws the window. True: the user asked to lock.
     pub fn ui(&mut self, ui: &mut egui::Ui, p: &Pal, s: &mut Settings) -> bool {
         let mut lock = false;
+        // A file dropped on the window: the send dialog, for a look first.
+        let dropped = ui.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        if let Some(path) = dropped
+            && self.dialog.is_none()
+            && (self.open.is_some() || self.open_group().is_some())
+        {
+            self.dialog = Some(Dialog::SendFile {
+                path: path.display().to_string(),
+                error: String::new(),
+            });
+        }
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(p.surface).inner_margin(6))
             .show(ui, |ui| self.status_bar(ui, p));
