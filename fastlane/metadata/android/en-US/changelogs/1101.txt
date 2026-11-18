@@ -1,0 +1,1 @@
+Groups: inviting a contact right after accepting their request no longer says their app is older; the invite waits a moment and goes as soon as their app answers.

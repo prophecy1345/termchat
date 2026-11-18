@@ -3,6 +3,12 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.11.1
+
+- Groups: inviting a contact right after accepting their request said
+  "their app is older" until they had answered. The invite now waits a
+  moment and goes as soon as their app says it knows groups.
+
 ## 0.11.0
 
 - Groups: each member's name has a colour of its own, taken from their
