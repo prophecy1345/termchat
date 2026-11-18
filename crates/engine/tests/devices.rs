@@ -436,3 +436,54 @@ async fn linked_devices_meet_each_other_and_see_each_others_copies() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Bob makes a group and invites alice, who has a phone and a laptop: each
+/// device gets a reader; alice accepts on the phone, the laptop follows.
+async fn group_with_alice_on_two_devices(e: &mut [Box<Engine>]) -> usize {
+    let alice = e[0].me();
+    pump(e, |e| {
+        let i = e[2].index(&alice).unwrap();
+        e[2].data.contacts[i]
+            .their_devices
+            .as_ref()
+            .is_some_and(|d| d.devices.len() == 2)
+    })
+    .await;
+    let g = e[2].create_group("trip").unwrap();
+    pump(e, |e| e[2].data.groups[0].reader.is_some()).await;
+    let i = e[2].index(&alice).unwrap();
+    e[2].invite_to_group(g, i).unwrap();
+    pump(e, |e| e[0].data.group_invites.len() == 1).await;
+    e[0].accept_group(0).unwrap();
+    pump(e, |e| {
+        e[1].data.groups.first().is_some_and(|g| g.reader.is_some())
+    })
+    .await;
+    g
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_device_of_a_member_gets_a_reader_and_the_laptop_follows_the_phone() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices9-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    group_with_alice_on_two_devices(&mut e).await;
+    let (alice, laptop) = (e[0].me(), e[1].me());
+    assert!(
+        e[1].data.group_invites.is_empty(),
+        "the laptop took its invite itself"
+    );
+    // Bob and alice's phone know alice's devices and the laptop's reader.
+    pump(&mut e, |e| {
+        [&e[0], &e[2]].iter().all(|x| {
+            x.data.groups.first().is_some_and(|g| {
+                g.member_devices
+                    .iter()
+                    .any(|(m, _, r)| *m == alice && r.iter().any(|(d, _)| *d == laptop))
+            })
+        })
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}

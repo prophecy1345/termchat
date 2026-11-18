@@ -353,6 +353,17 @@ impl Engine {
         Ok(())
     }
 
+    /// `body` to each of our own devices that we have a channel with.
+    pub(super) fn tell_own(&mut self, body: Body) {
+        for o in 0..self.data.contacts.len() {
+            let key = self.data.contacts[o].key;
+            if self.data.contacts[o].own && self.lists(&key) {
+                self.data.contacts[o].outbox.push(body.clone());
+                self.deliver(o);
+            }
+        }
+    }
+
     /// Our device list, labels and nickname, to each of our devices.
     fn tell_own_devices(&mut self) {
         let Some(list) = self.data.devices.clone() else {
@@ -463,6 +474,25 @@ impl Engine {
             }
             Body::Devices { list, queues } if !own => self.their_devices(i, list, queues),
             Body::SiblingQueue { device, queue } if own => self.sibling_queue(i, device, queue),
+            // Another device of ours joined: take our own invite, now or when it comes.
+            Body::OwnGroupJoin { group } if own => {
+                match self
+                    .data
+                    .group_invites
+                    .iter()
+                    .position(|x| x.roster.group == group)
+                {
+                    Some(n) => {
+                        if let Err(e) = self.take_group_invite(n, false) {
+                            self.note(e);
+                        }
+                    }
+                    None if !self.data.pending_group_joins.contains(&group) => {
+                        self.data.pending_group_joins.push(group);
+                    }
+                    None => {}
+                }
+            }
             _ => {}
         }
     }
@@ -705,6 +735,76 @@ impl Engine {
             }
         }
         Ok(id)
+    }
+
+    /// `body` to one device of contact `key`: now if there is a session with
+    /// it, else once there is (`flush_devices`).
+    pub(super) fn transmit_device(&mut self, key: &Ed25519Key, device: Ed25519Key, body: Body) {
+        let Some(i) = self.index(key) else {
+            return;
+        };
+        self.data.contacts[i].device_outbox.push((device, body));
+        self.persist();
+        self.flush_devices(i);
+    }
+
+    /// What waits for single devices of contact `i` and can go now.
+    pub(super) fn flush_devices(&mut self, i: usize) {
+        let key = self.data.contacts[i].key;
+        let Some(slot) = self.slot_for(&key) else {
+            return;
+        };
+        let mut n = 0;
+        while n < self.data.contacts[i].device_outbox.len() {
+            let (d, body) = self.data.contacts[i].device_outbox[n].clone();
+            let addr = self.data.contacts[i]
+                .device_addrs
+                .iter()
+                .find(|(k, _)| *k == d)
+                .map(|(_, a)| a.clone());
+            let Some(addr) = addr else {
+                n += 1;
+                continue;
+            };
+            if !self.core_at(slot).has_session(&d) {
+                if let Some(l) = self.live(&key, &addr.relay_url) {
+                    let _ = l.relay.send(ClientFrame::ClaimKey {
+                        send_id: addr.send_id,
+                    });
+                }
+                n += 1;
+                continue;
+            }
+            let envelope = self.core_at(slot).encrypt(&d, body);
+            let Ok(envelope) = envelope else {
+                n += 1;
+                continue;
+            };
+            let next = &mut self.data.contacts[i].next_client_id;
+            let client_id = *next;
+            *next += 1;
+            self.data.contacts[i].device_outbox.remove(n);
+            if !self.persist() {
+                return;
+            }
+            if let Some(l) = self.live(&key, &addr.relay_url) {
+                let _ = l.relay.send(ClientFrame::Send {
+                    client_id,
+                    send_id: addr.send_id,
+                    envelope,
+                });
+            }
+        }
+    }
+
+    /// The contact with device `device` on their list, if any.
+    pub(super) fn owner_of_device(&self, device: &Ed25519Key) -> Option<usize> {
+        self.data.contacts.iter().position(|c| {
+            !c.own
+                && c.their_devices
+                    .as_ref()
+                    .is_some_and(|d| d.devices.iter().any(|x| x.ed25519 == *device))
+        })
     }
 
     /// A key claimed from a queue of one of the contact's other devices, or

@@ -214,10 +214,20 @@ impl Engine {
             return Ok(());
         }
         self.data.groups[g].awaiting.retain(|k| *k != key);
+        // ADR-028: a reader for each of their devices, primary first.
+        let devices: Vec<Ed25519Key> = self.data.contacts[i]
+            .their_devices
+            .iter()
+            .flat_map(|d| d.devices.iter().map(|x| x.ed25519))
+            .filter(|k| *k != key)
+            .collect();
         self.data.groups[g].asking.push(key);
+        self.data.groups[g].asking.extend(&devices);
         self.persist();
         if let Some((group_id, token)) = self.data.groups[g].admin {
-            self.group_send(g, ClientFrame::AddReader { group_id, token });
+            for _ in 0..=devices.len() {
+                self.group_send(g, ClientFrame::AddReader { group_id, token });
+            }
         }
         Ok(())
     }
@@ -245,6 +255,13 @@ impl Engine {
 
     /// Takes invite `n`: we join the group, share our key, tell the admin.
     pub fn accept_group(&mut self, n: usize) -> Result<usize, String> {
+        self.take_group_invite(n, true)
+    }
+
+    /// Takes invite `n`. `announce`: our person chose it here, so the admin
+    /// hears it and our other devices take theirs (ADR-028); a device that
+    /// follows another of ours says nothing.
+    pub(super) fn take_group_invite(&mut self, n: usize, announce: bool) -> Result<usize, String> {
         let inv = self
             .data
             .group_invites
@@ -281,9 +298,13 @@ impl Engine {
             "you joined: messages from before are not shared with new members".into(),
         );
         self.know_members(g);
-        if let Err(e) = self.transmit(&inv.from, Body::GroupJoin { group: id }) {
-            self.note(e);
+        if announce {
+            if let Err(e) = self.transmit(&inv.from, Body::GroupJoin { group: id }) {
+                self.note(e);
+            }
+            self.tell_own(Body::OwnGroupJoin { group: id });
         }
+        self.data.pending_group_joins.retain(|x| *x != id);
         self.persist();
         self.sync_links()?;
         self.share_key(g);
@@ -654,8 +675,19 @@ impl Engine {
                         send_id: group.send_id,
                         reader: grant,
                     };
-                    if let Err(e) = self.transmit(&who, body) {
-                        self.note(e);
+                    // A linked device of a contact gets its invite alone (ADR-028).
+                    match self.index(&who) {
+                        Some(_) => {
+                            if let Err(e) = self.transmit(&who, body) {
+                                self.note(e);
+                            }
+                        }
+                        None => {
+                            if let Some(c) = self.owner_of_device(&who) {
+                                let key = self.data.contacts[c].key;
+                                self.transmit_device(&key, who, body);
+                            }
+                        }
                     }
                 }
             }
@@ -865,6 +897,12 @@ impl Engine {
                 self.happened.push(Happened::GroupAlert { group: id });
             }
             Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
+            Body::GroupDevices {
+                member,
+                list,
+                readers,
+                ..
+            } => self.take_member_devices(g, sender, member, list, readers),
             // Edits and deletes reach only the sender's own messages.
             Body::Edit { id, text } => {
                 if let Some(m) = self.data.groups[g]
@@ -1204,6 +1242,66 @@ impl Engine {
     /// A body for everyone in group `g` that is not a message one sees.
     /// Sends `body` to the group now, or keeps it in the group's outbox
     /// until the link is up: right after a start it is not yet.
+    /// Admin: member `who`'s device list and the readers made for their
+    /// linked devices, to everyone in the group (ADR-028).
+    fn publish_devices(&mut self, g: usize, who: Ed25519Key) {
+        let Some(list) = self
+            .index(&who)
+            .and_then(|i| self.data.contacts[i].their_devices.clone())
+        else {
+            return;
+        };
+        let group = &mut self.data.groups[g];
+        let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k && *k != who);
+        let readers: Vec<(Ed25519Key, QueueId)> = group
+            .invited
+            .iter()
+            .filter(|(k, _)| listed(k))
+            .map(|(k, grant)| (*k, grant.send_id))
+            .collect();
+        group.invited.retain(|(k, _)| !listed(k));
+        group.member_devices.retain(|(m, ..)| *m != who);
+        group
+            .member_devices
+            .push((who, list.clone(), readers.clone()));
+        let gid = group.id;
+        self.send_group_body(
+            g,
+            Body::GroupDevices {
+                group: gid,
+                member: who,
+                list,
+                readers,
+            },
+        );
+        self.persist();
+    }
+
+    /// `GroupDevices` from the admin: kept once the member signed the list.
+    fn take_member_devices(
+        &mut self,
+        g: usize,
+        sender: Ed25519Key,
+        member: Ed25519Key,
+        list: proto::DeviceList,
+        readers: Vec<(Ed25519Key, QueueId)>,
+    ) {
+        let group = &self.data.groups[g];
+        let admin = group.roster.as_ref().map(|r| r.admin);
+        let on_roster = group.members().iter().any(|m| m.ed25519 == member);
+        if Some(sender) != admin
+            || !on_roster
+            || list.identity != member
+            || termchat_core::verify_devices(&list).is_err()
+        {
+            return;
+        }
+        let group = &mut self.data.groups[g];
+        group.member_devices.retain(|(m, ..)| *m != member);
+        group.member_devices.push((member, list, readers));
+        self.persist();
+    }
+
     fn send_group_body(&mut self, g: usize, body: Body) {
         if !self.group_link_up(g) {
             self.data.groups[g].outbox.push(body);
@@ -1263,6 +1361,7 @@ impl Engine {
                 self.data
                     .group_invites
                     .retain(|x| x.roster.group != roster.group);
+                let group = roster.group;
                 self.data.group_invites.push(GroupInvite {
                     from,
                     roster,
@@ -1271,6 +1370,14 @@ impl Engine {
                     send_id,
                     reader,
                 });
+                // Another device of ours took this group already (ADR-028).
+                if self.data.pending_group_joins.contains(&group) {
+                    let n = self.data.group_invites.len() - 1;
+                    if let Err(e) = self.take_group_invite(n, false) {
+                        self.note(e);
+                    }
+                    return self.persist_unit();
+                }
                 self.system(i, format!("invites you to the group \"{}\"", clean(&name)));
             }
             Body::GroupJoin { group } => {
@@ -1291,6 +1398,7 @@ impl Engine {
                 };
                 let (_, grant) = self.data.groups[g].invited.remove(at);
                 self.add_to_roster(g, from, grant.send_id);
+                self.publish_devices(g, from);
             }
             body @ Body::GroupKey { .. } => self.group_key_from(from, body),
             Body::GroupMove {

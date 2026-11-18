@@ -101,7 +101,14 @@ pub struct Data {
     pub primary: Option<Identity>,
     /// A device waiting to be linked: the code its link code carries.
     pub link_code: Option<InviteCode>,
+    /// Groups another device of ours joined, whose invite to this device
+    /// has not come yet (ADR-028).
+    pub pending_group_joins: Vec<GroupId>,
 }
+
+/// A group member's devices (ADR-028): the member, their signed list, and
+/// the reader made for each linked device.
+pub type MemberDevices = (Ed25519Key, DeviceList, Vec<(Ed25519Key, QueueId)>);
 
 /// A group (ADR-027). The roster is the last one whose signature checked.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -148,6 +155,9 @@ pub struct Group {
     pub moving: Option<GroupMoving>,
     /// Group messages that came before their sender's key, to read later.
     pub early: Vec<Vec<u8>>,
+    /// ADR-028: each member's device list, as they signed it, and the reader
+    /// made for each of their linked devices.
+    pub member_devices: Vec<MemberDevices>,
     /// Session keys from members not on our roster yet: a newcomer's key can
     /// come over their chat before the admin's roster that names them.
     pub pending_keys: Vec<(Ed25519Key, SecretBytes)>,
@@ -375,6 +385,9 @@ pub struct Contact {
     /// Their device list, signed by them, if they have more than one device.
     #[serde(default)]
     pub their_devices: Option<DeviceList>,
+    /// For one device of theirs only, waiting for a session with it.
+    #[serde(default)]
+    pub device_outbox: Vec<(Ed25519Key, Body)>,
     /// Where each of their devices but the primary reads us.
     #[serde(default)]
     pub device_addrs: Vec<(Ed25519Key, Addr)>,

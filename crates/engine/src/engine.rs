@@ -1286,6 +1286,8 @@ impl Engine {
                 Err(e) => Status::Failed(e),
             };
         }
+        // ADR-028: what waits for single devices of theirs.
+        self.flush_devices(i);
         // Edits, deletes and reactions, in the order they were made.
         while let Some(body) = self.data.contacts[i].outbox.first().cloned() {
             match self.transmit_all(&key, body) {
