@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.15.2
+
+- Desktop: Send a file has Choose… for the system's Open dialog, and a
+  file dropped on the window opens the send dialog with it. Save has
+  Choose… for the folder. The path fields stay for the keyboard.
+- A file macOS keeps only in iCloud now says to download it in Finder
+  first, instead of "Resource deadlock avoided".
+
 ## 0.15.1
 
 0.15.0 was tagged but never released: in the terminal, Ctrl+L and Ctrl+G
