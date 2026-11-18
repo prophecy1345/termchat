@@ -87,3 +87,17 @@ Megolm and Olm from vodozemac, used together as Matrix uses them: Megolm for gro
 3. No history for new members.
 4. The group queue lives on the admin's relay.
 5. The relay operator seeing a group's size is accepted.
+
+## Amendment of 2026-11-18 (proposed): documents in groups
+
+The plaintext inside Megolm already allows `File` (ADR-017); the apps did not send it. How it lands on the group queue:
+
+1. **The same chunks as in a chat:** `Body::File`, 16 KB each, at most 1 MB a document, inside the group's Megolm session. Nothing new on the wire.
+2. **One document at a time per sender,** at the chat pace (a burst of 10 chunks, then one every 3 s): a 1 MB document takes about 3 minutes. The group queue's send limit (a burst of 30, then one every 2 s) is shared by everyone who writes there, so a slower pace leaves room for their texts.
+3. **Receivers** put chunks together per sender device, in order, as for a contact; a document shows when whole and is saved only by hand, never opened (ADR-017). It counts towards the 8 MB of unsaved documents a device keeps.
+4. **The group's disappearing timer** applies to documents as to texts. Members who join later do not get earlier documents (no history, as for texts).
+5. **Edit and delete** work as for a document in a chat: the sender can delete it for everyone.
+
+What the relay sees: a run of full-size envelopes from one member, and its stored bytes are the document's size times the number of readers (a 1 MB document in a group of 32 devices is 32 MB until read). The per-reader queue limit (10 MB) caps what a reader who is away for long can miss.
+
+Not a new cryptographic protocol: Megolm as in this ADR, chunks as in ADR-017.
