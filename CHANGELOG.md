@@ -3,6 +3,28 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.12.0
+
+One identity on up to four devices (ADR-028).
+
+- Link a new device to your main one with a link code: Ctrl+P, l in the
+  terminal, Settings, Link to my main device on the desktop, the menu on
+  Android. Add it on the main device under Devices, by pasting or
+  scanning the code. Both screens show the identity's fingerprint;
+  nothing goes further until you confirm it is the same on both.
+- Each device has keys of its own; your fingerprint does not change.
+  Contacts write to every device, and what you send from one appears on
+  the others. Your contacts move to the new device; history does not.
+- The main device names devices ("phone", "laptop") and removes a lost
+  one. Labels stay on your own devices; contacts see only how many you
+  have.
+- For now groups stay on the main device, documents reach a contact's
+  main device only, and with three or four devices a linked one's copies
+  reach the main device but not the other linked ones.
+- Contacts on an app before 0.12 hear only your main device.
+- Groups: an invite taken while the group moved to a new queue left the
+  member in the old one, unable to read; it now moves them.
+
 ## 0.11.1
 
 - Groups: inviting a contact right after accepting their request said
