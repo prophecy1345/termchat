@@ -11,7 +11,7 @@ use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
 use termchat_proto::{
     Body, Ed25519Key, GroupId, InviteCode, QueueId, QueueToken, ReaderGrant, Ref, Roster,
-    RosterMember,
+    RosterMember, SecretBytes,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -136,6 +136,9 @@ pub struct Group {
     pub moving: Option<GroupMoving>,
     /// Group messages that came before their sender's key, to read later.
     pub early: Vec<Vec<u8>>,
+    /// Session keys from members not on our roster yet: a newcomer's key can
+    /// come over their chat before the admin's roster that names them.
+    pub pending_keys: Vec<(Ed25519Key, SecretBytes)>,
     /// We left, or were removed: read-only.
     pub left: bool,
 }

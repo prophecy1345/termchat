@@ -11,6 +11,8 @@ use zeroize::Zeroizing;
 
 /// Group messages kept while their sender's key is on its way.
 const MAX_EARLY: usize = 50;
+/// Keys from members a roster has not named yet; a group has at most 32.
+const MAX_PENDING_KEYS: usize = 32;
 
 /// The link that carries a group's queue: its own, like a contact's.
 pub(super) fn link_who(id: &GroupId) -> Ed25519Key {
@@ -766,6 +768,14 @@ impl Engine {
             .iter()
             .any(|m| m.ed25519 == sender)
         {
+            // A newcomer's key before the roster that names them: keep it
+            // until then (`take_roster`), the latest one per sender.
+            let pending = &mut self.data.groups[g].pending_keys;
+            pending.retain(|(k, _)| *k != sender);
+            if pending.len() < MAX_PENDING_KEYS {
+                pending.push((sender, key));
+                self.persist();
+            }
             return;
         }
         if self
@@ -883,6 +893,12 @@ impl Engine {
         let me = self.me();
         self.data.groups[g].set_roster(roster, &me);
         self.know_members(g);
+        // Keys that came before this roster, from members it now names.
+        let gid = self.data.groups[g].id;
+        let pending = std::mem::take(&mut self.data.groups[g].pending_keys);
+        for (sender, key) in pending {
+            self.group_key_from(sender, Body::GroupKey { group: gid, key });
+        }
         self.share_key(g);
     }
 

@@ -321,3 +321,69 @@ async fn the_admins_timer_holds_for_all_and_a_pending_invite_survives_a_move() {
     pump(&mut e, |e| said(&e[0], 0, "carol left the group")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Like `pump`, but only the engines marked in `on` run, for `secs`.
+async fn pump_only(e: &mut [Box<Engine>; 3], on: [bool; 3], secs: u64) {
+    let until = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < until {
+        let [a, b, c] = e;
+        tokio::select! {
+            Some(ev) = a.events.recv(), if on[0] => a.on_relay(ev),
+            Some(ev) = b.events.recv(), if on[1] => b.on_relay(ev),
+            Some(ev) = c.events.recv(), if on[2] => c.on_relay(ev),
+            () = tokio::time::sleep(Duration::from_millis(50)) => {}
+        }
+        for (x, run) in e.iter_mut().zip(on) {
+            if run {
+                x.tick();
+                x.happened.clear();
+            }
+        }
+    }
+}
+
+/// A new member's key can reach a member over their chat before the admin's
+/// roster that names the newcomer. It must wait for the roster, not be lost.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_key_that_comes_before_the_roster_is_kept() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-groups3-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = [
+        engine(&dir, "alice", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    settle(&mut e).await;
+    // Everyone knows everyone: Carol's key goes to Bob over their chat.
+    befriend(&mut e, 1, 0).await;
+    befriend(&mut e, 2, 0).await;
+    befriend(&mut e, 2, 1).await;
+
+    let g = e[0].create_group("trip").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+    let i = e[0].index(&e[1].me()).unwrap();
+    e[0].invite_to_group(g, i).unwrap();
+    pump(&mut e, |e| e[1].data.group_invites.len() == 1).await;
+    e[1].accept_group(0).unwrap();
+    pump(&mut e, |e| {
+        e[..2].iter().all(|x| {
+            x.data
+                .groups
+                .first()
+                .is_some_and(|g| g.members().len() == 2)
+        })
+    })
+    .await;
+
+    let i = e[0].index(&e[2].me()).unwrap();
+    e[0].invite_to_group(g, i).unwrap();
+    pump(&mut e, |e| e[2].data.group_invites.len() == 1).await;
+    e[2].accept_group(0).unwrap();
+    e[2].send_group(0, "hi, I'm in").unwrap();
+    // The admin is slow: Bob hears from Carol before the new roster.
+    pump_only(&mut e, [false, true, true], 2).await;
+    pump(&mut e, |e| said(&e[1], 0, "hi, I'm in")).await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
