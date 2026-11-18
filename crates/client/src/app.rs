@@ -979,7 +979,7 @@ impl Main {
         if e.is_primary() && e.data.devices.is_none() && e.data.people() == 0 {
             rows.push(('l', "link to my main device".into()));
         }
-        if e.is_primary() {
+        if e.is_primary() || e.data.devices.is_some() {
             rows.push(('v', "devices".into()));
         }
         rows
@@ -1441,16 +1441,17 @@ impl Main {
             },
             Popup::Devices(at) => {
                 let rows = self.engine.device_rows();
+                let main = self.engine.is_primary();
                 match k.code {
                     KeyCode::Up => Some(Popup::Devices(at.saturating_sub(1))),
                     KeyCode::Down => {
                         Some(Popup::Devices((at + 1).min(rows.len().saturating_sub(1))))
                     }
-                    KeyCode::Char('a') => Some(Popup::AddDevice(Input::default())),
-                    KeyCode::Char('r') => rows
+                    KeyCode::Char('a') if main => Some(Popup::AddDevice(Input::default())),
+                    KeyCode::Char('r') if main => rows
                         .get(at)
                         .map(|(k, l)| Popup::RenameDevice(*k, Input::from(l.as_str()))),
-                    KeyCode::Char('x') => rows
+                    KeyCode::Char('x') if main => rows
                         .get(at)
                         .map(|(k, _)| *k)
                         .filter(|k| *k != self.engine.me())

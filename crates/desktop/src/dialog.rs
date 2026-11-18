@@ -600,6 +600,10 @@ impl Chat {
                 ui.heading("Devices");
                 ui.add_space(6.0);
                 ui.label("Up to four, this one included. Contacts write to each of them.");
+                let main = self.engine.is_primary();
+                if !main {
+                    ui.label("Your main device adds, renames and removes them.");
+                }
                 ui.add_space(12.0);
                 let me = self.engine.me();
                 let mut remove = None;
@@ -624,10 +628,10 @@ impl Chat {
                             ui.label(RichText::new(under).monospace().small().color(p.dim));
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if k != me && ui.button("Remove…").clicked() {
+                            if main && k != me && ui.button("Remove…").clicked() {
                                 remove = Some(k);
                             }
-                            if ui.button("Rename…").clicked() {
+                            if main && ui.button("Rename…").clicked() {
                                 rename = Some((k, old));
                             }
                         });
@@ -637,8 +641,9 @@ impl Chat {
                 let mut add = false;
                 let close = ui
                     .horizontal(|ui| {
-                        add = crate::synth::button(ui, p, "Add a device", egui::vec2(170.0, 32.0))
-                            .clicked();
+                        add = main
+                            && crate::synth::button(ui, p, "Add a device", egui::vec2(170.0, 32.0))
+                                .clicked();
                         ui.add(egui::Button::new("Close").min_size(egui::vec2(100.0, 32.0)))
                             .clicked()
                     })
@@ -889,7 +894,9 @@ impl Chat {
                 let linkable = e.is_primary() && e.data.devices.is_none() && e.data.people() == 0;
                 let mut device = None;
                 ui.columns(2, |cols| {
-                    if e.is_primary() && wide(&mut cols[0], p, "Devices…") {
+                    if (e.is_primary() || e.data.devices.is_some())
+                        && wide(&mut cols[0], p, "Devices…")
+                    {
                         device = Some(Dialog::Devices);
                     }
                     if linkable && wide(&mut cols[1], p, "Link to my main device") {

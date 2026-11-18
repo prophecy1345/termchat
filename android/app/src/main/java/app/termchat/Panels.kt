@@ -438,17 +438,20 @@ fun Devices(m: Model) = Panel(m, "Devices") {
             .onFailure { error = it.message ?: "$it" }
     }
     val scan = rememberLauncherForActivityResult(ScanContract()) { r -> r.contents?.let { add(it) } }
+    val main = a.isPrimary()
     Text("Up to four, this one included. Contacts write to each of them; labels stay on your own devices.", style = Tc.small)
+    if (!main) Text("Your main device adds, renames and removes them.", style = Tc.small)
     a.devices().forEachIndexed { n, d ->
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text((d.label.ifEmpty { "device" }) + if (d.me) " (this one)" else "", style = Tc.mono)
                 Text(d.fingerprint.take(11) + if (d.main) " · MAIN" else "", style = Tc.small)
             }
-            Text("Rename", style = Tc.small.copy(color = Tc.lime), modifier = Modifier.clickable { renaming = n.toUInt(); label = d.label }.padding(8.dp))
-            if (!d.me) Text("Remove", style = Tc.small.copy(color = Tc.danger), modifier = Modifier.clickable { removing = n.toUInt() }.padding(8.dp))
+            if (main) Text("Rename", style = Tc.small.copy(color = Tc.lime), modifier = Modifier.clickable { renaming = n.toUInt(); label = d.label }.padding(8.dp))
+            if (main && !d.me) Text("Remove", style = Tc.small.copy(color = Tc.danger), modifier = Modifier.clickable { removing = n.toUInt() }.padding(8.dp))
         }
     }
+    if (!main) return@Panel
     Line()
     Text("Add a device: on it, Link to my main device; scan or paste its code here.", style = Tc.small)
     Flat("Scan QR code") {

@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private lateinit var model: Model
@@ -68,6 +69,13 @@ private fun Root(m: Model) {
             Screen.Bridges -> Bridges(m)
             Screen.Devices -> Devices(m)
             Screen.LinkCode -> LinkCode(m)
+        }
+    }
+    // A note is news, not a state: it goes after a while.
+    LaunchedEffect(m.note) {
+        if (m.note.isNotEmpty()) {
+            delay(6000)
+            m.note = ""
         }
     }
     // ADR-028: a device waiting for the fingerprint check asks over any screen.

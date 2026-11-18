@@ -45,7 +45,7 @@ fun Chats(m: Model) {
                     item("Add contact") { m.screen = Screen.Add }
                     if (a.isPrimary()) item("New group") { newGroup = true }
                     if (a.canLink()) item("Link to my main device") { m.screen = Screen.LinkCode }
-                    if (a.isPrimary()) item("Devices") { m.screen = Screen.Devices }
+                    if (a.isPrimary() || a.devices().size > 1) item("Devices") { m.screen = Screen.Devices }
                     item("Settings" + if (a.backedUp()) "" else "  ●") { m.screen = Screen.Settings }
                     item("What's new" + if (update != null) "  ●" else "") { m.screen = Screen.News }
                     item("Lock") { m.lock() }

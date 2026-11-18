@@ -1625,12 +1625,17 @@ fn popup_pane(
                 .collect();
             let mut lines = menu_rows(t, &rows, *at, 52);
             lines.push(Line::from(""));
-            let buttons = [
-                ("a add a device", true, key(KeyCode::Char('a'))),
-                ("r rename", false, key(KeyCode::Char('r'))),
-                ("x remove", false, key(KeyCode::Char('x'))),
-                ("esc close", false, esc),
-            ];
+            let mut buttons = Vec::new();
+            if m.engine.is_primary() {
+                buttons.push(("a add a device", true, key(KeyCode::Char('a'))));
+                buttons.push(("r rename", false, key(KeyCode::Char('r'))));
+                buttons.push(("x remove", false, key(KeyCode::Char('x'))));
+            } else {
+                lines.push(Line::from(
+                    "Your main device adds, renames and removes them.",
+                ));
+            }
+            buttons.push(("esc close", false, esc));
             window(f, t, h, "devices", lines, &buttons, 56, false);
         }
         Popup::AddDevice(s) => {
