@@ -111,3 +111,20 @@ Planning the implementation found that the bundle of section 3 does not fit: a l
 5. **First release: linked devices talk to the primary only** (maintainer, 2026-11-18). With three or four devices, contacts still write to every device, but a copy of what a linked device sends reaches the primary and not the other linked devices. Since 0.13 the primary introduces linked devices to each other: each sends the other its queue through the primary (`SiblingQueue`), and copies then go directly.
 
 The relay learns one thing more: two devices of one person write to each other, at linking and when a contact is added, not with every message.
+
+## Amendment of 2026-11-18 (proposed): groups on linked devices
+
+Section 4 said what, not how. How it lands on the group queue of ADR-027:
+
+1. **The roster stays as it is**, one entry per identity, with the reader of the member's primary. Older clients keep reading it.
+2. **`GroupDevices { group, member, list, readers }`**, sent by the admin inside the group: a member's device list as that member signed it, and the reader `send_id` the admin made for each of their linked devices. Members check the list's signature themselves, so they trust the admin only for which reader is whose, as they already do for the roster.
+3. **A reader per device.** When the admin invites a contact who has several devices (the admin has their list from their `Devices`), it asks the relay for one reader per device and sends each device its own `GroupInvite`, over Olm to that device alone. The person accepts on any device; that device tells its own devices with **`OwnGroupJoin { group }`**, and they take their own pending invites without asking again.
+4. **A device linked later** asks for a reader: the member's primary sends the admin **`GroupReaderAsk { group, device }`** over their chat; the admin adds the reader, invites that device, and sends a new `GroupDevices`.
+5. **Megolm per device.** Each device has its own outbound session and shares its key over Olm with every device of every member: with contacts' devices over their chats, with others' through their readers. A message names its sending device inside the encryption; receivers take it as the member's only if that device is on the member's checked list.
+6. **Removing.** A member removed: every reader of theirs goes, and the group moves as now. A device removed from a member's list: their primary sends the admin a new list (`GroupReaderAsk` with the list), the admin removes that reader and sends `GroupDevices`; everyone starts a new Megolm session.
+7. **The admin's own linked devices** are members' devices like any other. Adding and removing people stays on the admin's main device: it alone holds the group's admin token.
+8. **Older members.** While any member is below `Understands` level 3, the group works as in 0.12: only primaries take part, and linked devices say so.
+
+What the relay learns: a group queue with one reader per device, so the number of members' devices, as for chats. It still cannot read the names, the lists or the messages.
+
+Not a new cryptographic protocol: Megolm and Olm as in ADR-027, and device lists signed as in section 1.
