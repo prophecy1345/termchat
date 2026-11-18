@@ -1,0 +1,1 @@
+Groups: each member's name has a colour of its own, the same on every device. Fixed: a new member's messages could stay unreadable for someone in the group when their key came before the admin's member list.

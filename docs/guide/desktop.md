@@ -27,7 +27,7 @@ A small private group of up to 32 people, by invitation only. Nobody can find it
 - **Create:** **+ New** above the list of groups, then a name. You are its admin.
 - **Invite:** **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
 - **Join:** the invite comes in your chat with the admin, with **Join** and **Decline**.
-- **In the group:** each run of messages shows who wrote it; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer.
+- **In the group:** each run of messages shows who wrote it, each name in a colour of its own; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer.
 - **Members:** **Members** lists everyone with their fingerprints; the admin removes people there (**Remove…**). The group moves to a new queue; they read nothing from then on.
 - **Leave:** **Leave**. The others are told; the chat stays with you, read-only.
 

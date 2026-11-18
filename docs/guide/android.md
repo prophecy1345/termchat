@@ -23,7 +23,7 @@ A small private group of up to 32 people, by invitation only. Nobody can find it
 - **Create:** ⋮ → **New group**, then a name. You are its admin.
 - **Invite:** ⋮ → **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
 - **Join:** the contact shows **GROUP INVITE** in the list; their chat has **Join** and **Decline**.
-- **In the group:** each message shows who wrote it; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (⋮ → **Disappearing**).
+- **In the group:** each message shows who wrote it, each name in a colour of its own; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (⋮ → **Disappearing**).
 - **Members:** tap the group's name, or ⋮ → **Members**. The admin removes people there (**Remove**): the group moves to a new queue, and they read nothing from then on.
 - **Leave:** ⋮ → **Leave**. The others are told; the chat stays, read-only.
 

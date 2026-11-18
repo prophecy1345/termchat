@@ -80,7 +80,7 @@ A small private group of up to 32 people, by invitation only ([ADR-027](https://
 - **New group:** **Ctrl+P**, then **g**, and a name. You are its admin.
 - **Invite:** in the group, **Ctrl+R** opens the members, **a** lists contacts you can invite. Only your own contacts, on a version that knows groups.
 - **Join:** the invite comes in your chat with the admin; **Ctrl+Y** there joins.
-- **In the group:** answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (**Ctrl+T**).
+- **In the group:** answers, edits, deletes and reactions work as in a chat. Each member's name has a colour of its own, the same on every device. Only the admin sets the timer (**Ctrl+T**).
 - **Remove:** **Ctrl+R**, pick the member, **x**. The group moves to a new queue; they read nothing from then on.
 - **Leave:** **Ctrl+D**. The others are told; the chat stays with you, read-only.
 

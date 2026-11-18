@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.11.0
+
+- Groups: each member's name has a colour of its own, taken from their
+  key: the same on every device and in every theme.
+- Groups: a new member's messages could stay unreadable for someone in
+  the group for good. Their key could come before the admin's new member
+  list and was dropped; it now waits for the list.
+
 ## 0.10.0
 
 Small private groups (ADR-027).
