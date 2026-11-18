@@ -7,7 +7,7 @@ description: "Use one termchat.app identity on up to four devices: link a new de
 
 Русская версия: [devices.ru.md](devices.ru.md).
 
-One identity can live on up to four devices, for example your phone and your laptop. Contacts see one person with one fingerprint, and their messages reach every device. Each device has keys of its own; the first one, your **main device**, vouches for the others ([ADR-028](https://github.com/prophecy1345/termsage/blob/main/docs/adr/028-second-device.md)).
+One identity can live on up to four devices, for example your phone and your laptop. Contacts see one person with one fingerprint, and their messages reach every device. Each device has keys of its own; the first one, your **main device**, vouches for the others ([ADR-028](https://github.com/prophecy1345/termchat/blob/main/docs/adr/028-second-device.md)).
 
 ## Link a new device
 

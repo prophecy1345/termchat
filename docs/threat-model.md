@@ -89,6 +89,9 @@ that (ADR-023).
   Members who are not each other's contacts trust the admin's signed list
   for who the others are, until they compare safety numbers. A new member
   reads nothing from before they joined; a removed one nothing after.
+  With linked devices, a reader is a device, so the operator sees how many
+  devices the members have. A document sent to a group is a run of
+  full-size envelopes from one member, stored once per reader until read.
 - **Several devices** (ADR-028). Every device has keys of its own and reads
   everything sent to you, so each one is a way in: a stolen unlocked laptop
   reads like your phone would. Remove a lost device from the main one; it then

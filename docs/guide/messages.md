@@ -34,10 +34,10 @@ A contact on 0.8 or older cannot read these. Until their app says it can, yours 
 
 ## Documents
 
-Files of up to 1 MiB, end-to-end encrypted like messages. 200 KB takes about 10 seconds, 1 MiB about 3 minutes. Files work only between accepted contacts.
+Files of up to 1 MiB, end-to-end encrypted like messages. 200 KB takes about 10 seconds, 1 MiB about 3 minutes. Files work only between accepted contacts, and in groups.
 
-- **Send:** **Ctrl+L** in the terminal (type the path), **File** in the desktop app, 📎 on Android.
-- **Receive:** the file waits in the chat as "unsaved". **Ctrl+G** in the terminal saves the newest one into a folder you type (`~/Downloads` by default; the folder must exist), or discards it if you type `DISCARD`. The desktop app has **Save…** under it, Android **Save** and **Discard**.
+- **Send:** **Ctrl+L** in the terminal (type the path); in the desktop app **File**, then **Choose…** for the system dialog, or drop a file on the window; 📎 on Android. In chats and in groups alike.
+- **Receive:** the file waits in the chat as "unsaved". **Ctrl+G** in the terminal saves the newest one into a folder you type (`~/Downloads` by default; the folder must exist), or discards it if you type `DISCARD`. The desktop app has **Save…** under it (**Choose…** picks the folder), Android **Save** and **Discard**.
 
 termchat.app never opens, previews or renders a file, and never overwrites one when saving. Files from contacts can be harmful: check before you open them. A saved file lives outside termchat.app, and wiping does not erase it.
 
