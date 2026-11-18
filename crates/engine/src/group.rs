@@ -13,6 +13,8 @@ use zeroize::Zeroizing;
 const MAX_EARLY: usize = 50;
 /// Keys from members a roster has not named yet; a group has at most 32.
 const MAX_PENDING_KEYS: usize = 32;
+/// The `Understands` level that knows groups (ADR-027).
+const GROUPS_LEVEL: u16 = 2;
 
 /// The link that carries a group's queue: its own, like a contact's.
 pub(super) fn link_who(id: &GroupId) -> Ed25519Key {
@@ -176,7 +178,10 @@ impl Engine {
         if c.profile.is_some() {
             return Err("groups use your main identity; this contact knows another".into());
         }
-        if c.understands < proto::UNDERSTANDS {
+        // 0: nothing heard yet, as from someone whose request we just took;
+        // their level comes with their first answer.
+        let unheard = c.understands == 0;
+        if !unheard && c.understands < GROUPS_LEVEL {
             return Err("their app is older; groups come after they update".into());
         }
         let key = c.key;
@@ -195,6 +200,16 @@ impl Engine {
         {
             return Err("a group has at most 32 members".into());
         }
+        if unheard {
+            // shortcut: an app too old to say its level at all keeps this waiting
+            // for good; such apps predate 0.9 and must update anyway.
+            if !self.data.groups[g].awaiting.contains(&key) {
+                self.data.groups[g].awaiting.push(key);
+            }
+            self.persist();
+            return Ok(());
+        }
+        self.data.groups[g].awaiting.retain(|k| *k != key);
         self.data.groups[g].asking.push(key);
         self.persist();
         if let Some((group_id, token)) = self.data.groups[g].admin {
@@ -204,6 +219,19 @@ impl Engine {
     }
 
     /// Drops invite `n` unanswered; the admin is not told.
+    /// Contact `i` said what their app reads: invites waiting for that go.
+    pub(super) fn invite_awaiting(&mut self, i: usize) {
+        let key = self.data.contacts[i].key;
+        for g in 0..self.data.groups.len() {
+            if self.data.groups[g].awaiting.contains(&key) {
+                self.data.groups[g].awaiting.retain(|k| *k != key);
+                if let Err(e) = self.invite_to_group(g, i) {
+                    self.note(e);
+                }
+            }
+        }
+    }
+
     pub fn decline_group(&mut self, n: usize) {
         if n < self.data.group_invites.len() {
             self.data.group_invites.remove(n);

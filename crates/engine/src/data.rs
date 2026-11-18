@@ -120,6 +120,9 @@ pub struct Group {
     pub asking: Vec<Ed25519Key>,
     /// Admin: contacts invited, with the reader made for them.
     pub invited: Vec<(Ed25519Key, ReaderGrant)>,
+    /// Admin: contacts invited before their app said what it reads; the
+    /// invite goes when it does.
+    pub awaiting: Vec<Ed25519Key>,
     /// UnifiedPush endpoint for our reader (ADR-012).
     #[serde(default)]
     pub push: Option<String>,

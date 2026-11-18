@@ -1865,6 +1865,7 @@ impl Engine {
                     c.told = 0;
                     if !got.request {
                         self.deliver(i);
+                        self.invite_awaiting(i);
                     }
                 }
                 return self.persist();

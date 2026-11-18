@@ -387,3 +387,39 @@ async fn a_key_that_comes_before_the_roster_is_kept() {
     pump(&mut e, |e| said(&e[1], 0, "hi, I'm in")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A contact who just added our invite says what their app reads only once
+/// our acceptance reaches them. An invite to a group in between waits for
+/// that instead of calling their app old.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invite_right_after_accepting_waits_for_their_level() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-groups4-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = [
+        engine(&dir, "alice", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    settle(&mut e).await;
+    let g = e[0].create_group("now").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+
+    // Bob adds Alice's invite; Alice accepts and invites him at once.
+    let invite = e[0].invite().unwrap();
+    e[1].add(&invite, false).unwrap();
+    pump(&mut e, |e| {
+        e[0].data
+            .contacts
+            .iter()
+            .any(|c| e[0].is_request(&c.key) && c.theirs.is_some())
+    })
+    .await;
+    let i = e[0].index(&e[1].me()).unwrap();
+    e[0].accept(i);
+    assert_eq!(e[0].data.contacts[i].understands, 0);
+    e[0].invite_to_group(g, i).unwrap();
+    pump(&mut e, |e| e[1].data.group_invites.len() == 1).await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
