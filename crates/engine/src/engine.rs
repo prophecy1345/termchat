@@ -1920,7 +1920,10 @@ impl Engine {
             | Body::OwnDevices { .. }
             | Body::Devices { .. }
             | Body::OwnQueue { .. }
-            | Body::SiblingQueue { .. }) => {
+            | Body::SiblingQueue { .. }
+            | Body::GroupDevices { .. }
+            | Body::OwnGroupJoin { .. }
+            | Body::GroupReaderAsk { .. }) => {
                 self.device_body(i, got.request, body);
                 return self.persist();
             }

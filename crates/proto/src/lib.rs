@@ -535,6 +535,24 @@ pub enum Body {
         device: Ed25519Key,
         queue: DeviceQueue,
     },
+    /// From the admin, inside the group (ADR-028): a member's device list,
+    /// as they signed it, and the reader made for each linked device.
+    GroupDevices {
+        group: GroupId,
+        member: Ed25519Key,
+        list: DeviceList,
+        readers: Vec<(Ed25519Key, QueueId)>,
+    },
+    /// To one's own devices: we joined `group`; take your own invite to it.
+    OwnGroupJoin {
+        group: GroupId,
+    },
+    /// A member's primary to the admin, over their chat: my devices now;
+    /// make readers for new ones, drop those of devices gone.
+    GroupReaderAsk {
+        group: GroupId,
+        list: DeviceList,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -546,7 +564,7 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 25;
+const KNOWN_KINDS: u32 = 28;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028).
@@ -901,6 +919,14 @@ fn check_body(body: &Body) -> Result<(), Error> {
             list.check()?;
             check_queues(queues)
         }
+        Body::GroupDevices { list, readers, .. } => {
+            list.check()?;
+            if readers.len() > MAX_DEVICES {
+                return Err(Error::TooLarge);
+            }
+            Ok(())
+        }
+        Body::GroupReaderAsk { list, .. } => list.check(),
         Body::OwnQueue { queue, .. } | Body::SiblingQueue { queue, .. } => {
             check_queues(std::slice::from_ref(queue))
         }
@@ -1105,9 +1131,9 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::SiblingQueue {
-            device: [5; 32],
-            queue: queue(1),
+        let raw = postcard::to_allocvec(&with(Body::GroupReaderAsk {
+            group: [5; 16],
+            list: devices(1),
         }))
         .unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
@@ -1525,6 +1551,19 @@ mod tests {
                 device: [6; 32],
                 queue: queue(3),
             },
+            Body::GroupDevices {
+                group: [7; 16],
+                member: [1; 32],
+                list: devices(MAX_DEVICES as u8),
+                readers: (2..=MAX_DEVICES as u8)
+                    .map(|d| ([d; 32], [d; 16]))
+                    .collect(),
+            },
+            Body::OwnGroupJoin { group: [7; 16] },
+            Body::GroupReaderAsk {
+                group: [7; 16],
+                list: devices(2),
+            },
         ] {
             let inner = with(body);
             assert_eq!(
@@ -1582,6 +1621,18 @@ mod tests {
             queues: (0..=MAX_DEVICES as u8).map(queue).collect(),
         });
         assert_eq!(too_many.to_padded(), Err(Error::TooLarge));
+        let many_readers = with(Body::GroupDevices {
+            group: [7; 16],
+            member: [1; 32],
+            list: devices(1),
+            readers: vec![([2; 32], [2; 16]); MAX_DEVICES + 1],
+        });
+        assert_eq!(many_readers.to_padded(), Err(Error::TooLarge));
+        let bad_ask = with(Body::GroupReaderAsk {
+            group: [7; 16],
+            list: devices(0),
+        });
+        assert_eq!(bad_ask.to_padded(), Err(Error::Malformed));
         let long_url = with(Body::Devices {
             list: devices(1),
             queues: vec![DeviceQueue {
