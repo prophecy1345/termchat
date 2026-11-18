@@ -795,6 +795,23 @@ impl Account {
         Ok(self.with_group(group, |e, g| e.send_group(g, &text))??)
     }
 
+    /// Queues a document of at most 1 MiB into a group (ADR-027 amendment).
+    pub fn send_group_file(&self, group: u32, name: String, bytes: Vec<u8>) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.send_group_file(g, &name, bytes))??)
+    }
+
+    /// The bytes of received group document `msg`, for "Save as".
+    pub fn group_file_bytes(&self, group: u32, msg: u32) -> Result<Option<Vec<u8>>> {
+        self.with_group(group, |e, g| {
+            e.group_file_bytes(g, msg as usize).map(|(_, b)| b)
+        })
+    }
+
+    /// Forgets the bytes of received group document `msg`.
+    pub fn forget_group_file(&self, group: u32, msg: u32) -> Result<()> {
+        self.with_group(group, |e, g| e.discard_group_file(g, msg as usize))
+    }
+
     pub fn reply_group(&self, group: u32, msg: u32, text: String) -> Result<()> {
         Ok(self.with_group(group, |e, g| e.reply_group(g, msg as usize, &text))??)
     }

@@ -977,7 +977,11 @@ impl Chat {
                 !close
             }
             Dialog::SendFile { path, error } => {
-                let Some(i) = open else { return false };
+                // A chat, or a group (ADR-027 amendment).
+                let group = self.open_group();
+                if open.is_none() && group.is_none() {
+                    return false;
+                }
                 ui.heading("Send a file");
                 ui.label(
                     "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about \
@@ -991,8 +995,14 @@ impl Chat {
                 error_line(ui, p, error);
                 let (go, stay) = buttons(ui, p, "Send");
                 if go {
-                    let sent = data::read_document(&data::expand(path))
-                        .and_then(|(name, bytes)| self.engine.send_file(i, &name, bytes));
+                    let sent =
+                        data::read_document(&data::expand(path)).and_then(|(name, bytes)| {
+                            match (group, open) {
+                                (Some(g), _) => self.engine.send_group_file(g, &name, bytes),
+                                (None, Some(i)) => self.engine.send_file(i, &name, bytes),
+                                (None, None) => Err("nothing open".into()),
+                            }
+                        });
                     match sent {
                         Ok(()) => return false,
                         Err(e) => *error = e,
@@ -1001,8 +1011,13 @@ impl Chat {
                 stay
             }
             Dialog::SaveFile { m, folder, error } => {
-                let Some(i) = open else { return false };
-                let Some((name, _)) = self.engine.file_bytes(i, *m) else {
+                let group = self.open_group();
+                let bytes = match (group, open) {
+                    (Some(g), _) => self.engine.group_file_bytes(g, *m),
+                    (None, Some(i)) => self.engine.file_bytes(i, *m),
+                    (None, None) => None,
+                };
+                let Some((name, _)) = bytes else {
                     return false;
                 };
                 ui.heading("Save a file");
@@ -1022,7 +1037,13 @@ impl Chat {
                 let mut keep = true;
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
-                        match self.engine.save_file(i, *m, &data::expand(folder)) {
+                        let dir = data::expand(folder);
+                        let saved = match (group, open) {
+                            (Some(g), _) => self.engine.save_group_file(g, *m, &dir),
+                            (None, Some(i)) => self.engine.save_file(i, *m, &dir),
+                            (None, None) => Err("nothing open".into()),
+                        };
+                        match saved {
                             Ok(path) => {
                                 self.status = format!("saved to {}", path.display());
                                 keep = false;
@@ -1031,7 +1052,11 @@ impl Chat {
                         }
                     }
                     if ui.button("Discard").clicked() {
-                        self.engine.discard_file(i, *m);
+                        match (group, open) {
+                            (Some(g), _) => self.engine.discard_group_file(g, *m),
+                            (None, Some(i)) => self.engine.discard_file(i, *m),
+                            (None, None) => {}
+                        }
                         keep = false;
                     }
                     keep &= !ui.button("Later").clicked();

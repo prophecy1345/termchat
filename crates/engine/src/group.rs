@@ -3,7 +3,7 @@
 //! A child of `engine`, for its private state.
 
 use super::*;
-use crate::data::{Group, GroupInvite, GroupMoving};
+use crate::data::{FileMsg, Group, GroupInvite, GroupMoving};
 use termchat_core::proto::{
     Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Ref, Roster, RosterMember, SecretBytes,
 };
@@ -351,6 +351,154 @@ impl Engine {
         Ok(())
     }
 
+    /// A document of up to 1 MiB into group `g` (ADR-027 amendment): sent in
+    /// chunks at the chat pace, one at a time.
+    pub fn send_group_file(&mut self, g: usize, name: &str, bytes: Vec<u8>) -> Result<(), String> {
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if group.left {
+            return Err("you are not in this group any more".into());
+        }
+        let name = name.trim();
+        proto::check_file_name(name).map_err(|_| "this file name cannot be sent")?;
+        if bytes.is_empty() {
+            return Err("the file is empty".into());
+        }
+        let size = match u32::try_from(bytes.len()) {
+            Ok(n) if n <= proto::MAX_FILE_BYTES => n,
+            _ => return Err("files are limited to 1 MiB".into()),
+        };
+        let busy = |m: &Msg| m.mine && m.file.as_ref().is_some_and(|f| f.data.is_some());
+        if group.messages.iter().any(busy) {
+            return Err("wait until the previous file is sent".into());
+        }
+        let mut id = [0; 4];
+        getrandom::fill(&mut id).map_err(|e| e.to_string())?;
+        let at = now();
+        let expires_in = group.timer();
+        self.data.groups[g].messages.push(Msg {
+            mine: true,
+            text: name.to_string(),
+            at,
+            expires_at: expires_in.map(|s| at + u64::from(s)),
+            status: Status::Queued,
+            file: Some(FileMsg {
+                id: u32::from_le_bytes(id),
+                name: name.to_string(),
+                size,
+                done: 0,
+                data: Some(bytes),
+            }),
+            unfetched: false,
+            ..Default::default()
+        });
+        self.persist();
+        self.send_chunks();
+        Ok(())
+    }
+
+    /// Chunks of our documents in groups, from the shared budget: `true`
+    /// if one went out.
+    pub(super) fn send_group_chunks(&mut self) -> bool {
+        let mut sent = false;
+        for g in 0..self.data.groups.len() {
+            let group = &self.data.groups[g];
+            let queued = |m: &Msg| m.mine && m.status == Status::Queued && m.file.is_some();
+            let Some(m) = group.messages.iter().position(queued) else {
+                continue;
+            };
+            if group.left || !self.group_link_up(g) {
+                continue;
+            }
+            let (gid, expires_in) = (group.id, group.timer());
+            while self.chunk_budget.0 >= 1.0 {
+                let Some(f) = self.data.groups[g].messages[m].file.as_mut() else {
+                    break;
+                };
+                let Some(body) = f.next_chunk(expires_in) else {
+                    break;
+                };
+                let Ok(bytes) = self.core().group_encrypt(gid, body) else {
+                    break;
+                };
+                // Counted before the send, so a restart never repeats a chunk.
+                let group = &mut self.data.groups[g];
+                let Some(f) = group.messages[m].file.as_mut() else {
+                    break;
+                };
+                f.done += 1;
+                let last = f.complete();
+                let client_id = group.next_client_id;
+                group.next_client_id += 1;
+                self.chunk_budget.0 -= 1.0;
+                sent = true;
+                if !self.persist() {
+                    return sent;
+                }
+                let frame = ClientFrame::Send {
+                    client_id,
+                    send_id: self.data.groups[g].send_id,
+                    envelope: Envelope {
+                        version: proto::VERSION,
+                        olm_type: OLM_TYPE_MEGOLM,
+                        body: bytes,
+                    },
+                };
+                self.group_send(g, frame);
+                if last {
+                    let msg = &mut self.data.groups[g].messages[m];
+                    msg.status = Status::Sending(client_id);
+                    if let Some(f) = msg.file.as_mut() {
+                        f.data = None;
+                    }
+                    break;
+                }
+            }
+        }
+        sent
+    }
+
+    /// Name and bytes of received document `m` of group `g`, whole and not
+    /// yet saved or discarded.
+    pub fn group_file_bytes(&self, g: usize, m: usize) -> Option<(String, Vec<u8>)> {
+        let msg = self.data.groups.get(g)?.messages.get(m)?;
+        let f = msg.file.as_ref().filter(|f| !msg.mine && f.complete())?;
+        Some((f.name.clone(), f.data.clone()?))
+    }
+
+    /// The newest received document of group `g` that waits to be saved.
+    pub fn unsaved_group_file(&self, g: usize) -> Option<usize> {
+        let group = self.data.groups.get(g)?;
+        group.messages.iter().rposition(|m| {
+            !m.mine
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.complete() && f.data.is_some())
+        })
+    }
+
+    /// Forgets the bytes of received document `m`; the line stays.
+    pub fn discard_group_file(&mut self, g: usize, m: usize) {
+        let msg = self
+            .data
+            .groups
+            .get_mut(g)
+            .and_then(|x| x.messages.get_mut(m));
+        if let Some(f) = msg.filter(|m| !m.mine).and_then(|m| m.file.as_mut()) {
+            f.data = None;
+            self.persist();
+        }
+    }
+
+    /// Writes received document `m` of group `g` into `dir`, mode 0600,
+    /// under a name not taken yet, then forgets its bytes (ADR-017).
+    pub fn save_group_file(&mut self, g: usize, m: usize, dir: &Path) -> Result<PathBuf, String> {
+        let (name, bytes) = self.group_file_bytes(g, m).ok_or("no file to save")?;
+        let path = data::save_new(dir, &safe_name(&name), &bytes)
+            .map_err(|e| format!("cannot save: {e}"))?;
+        self.discard_group_file(g, m);
+        Ok(path)
+    }
+
     /// `text` in group `g` as an answer to message `m`.
     pub fn reply_group(&mut self, g: usize, m: usize, text: &str) -> Result<(), String> {
         let target = self.group_target(g, m)?;
@@ -457,7 +605,11 @@ impl Engine {
         let expires_in = self.data.groups[g].timer();
         for m in 0..self.data.groups[g].messages.len() {
             let msg = &self.data.groups[g].messages[m];
-            if msg.status != Status::Queued || self.data.groups[g].send_id == [0; 16] {
+            // Documents go chunk by chunk, at their own pace (`send_chunks`).
+            if msg.status != Status::Queued
+                || msg.file.is_some()
+                || self.data.groups[g].send_id == [0; 16]
+            {
                 continue;
             }
             let body = Body::Message {
@@ -946,6 +1098,18 @@ impl Engine {
                 }
                 let id = group.id;
                 self.happened.push(Happened::GroupAlert { group: id });
+            }
+            // shortcut: a document sent from another device of ours does not
+            // show here; mirror it as chats do (`own_copy`) if people miss it.
+            body @ Body::File { .. } if !mine => {
+                if self.data.take_group_chunk(g, sender, body, now()) {
+                    let group = &mut self.data.groups[g];
+                    if self.open_group != Some(group.id) {
+                        group.unread += 1;
+                    }
+                    let id = group.id;
+                    self.happened.push(Happened::GroupAlert { group: id });
+                }
             }
             Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
             Body::GroupDevices {

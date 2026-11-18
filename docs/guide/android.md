@@ -27,7 +27,7 @@ A small private group of up to 32 people, by invitation only. Nobody can find it
 - **Members:** tap the group's name, or ⋮ → **Members**. The admin removes people there (**Remove**): the group moves to a new queue, and they read nothing from then on.
 - **Leave:** ⋮ → **Leave**. The others are told; the chat stays, read-only.
 
-A new member does not see what was said before they joined. Groups carry no files yet.
+A new member does not see what was said before they joined. Documents go to the group as in a chat (up to 1 MiB, saved only by hand).
 
 ## Messages while the app is closed
 

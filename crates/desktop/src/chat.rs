@@ -874,12 +874,10 @@ impl Chat {
                     // File and the timer sit on the field's bottom edge.
                     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                         ui.horizontal(|ui| {
-                            // Groups carry text only for now.
-                            if matches!(at, Open::Chat(_))
-                                && ui
-                                    .add(egui::Button::new(file_text).corner_radius(2))
-                                    .on_hover_text("Send a file, up to 1 MiB")
-                                    .clicked()
+                            if ui
+                                .add(egui::Button::new(file_text).corner_radius(2))
+                                .on_hover_text("Send a file, up to 1 MiB")
+                                .clicked()
                             {
                                 self.dialog = Some(Dialog::SendFile {
                                     path: String::new(),

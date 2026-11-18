@@ -547,85 +547,115 @@ impl Data {
     /// One received chunk for contact `i` (ADR-017): in order, one file per
     /// contact at a time. `true` once the file is whole.
     pub fn take_chunk(&mut self, i: usize, chunk: Body, at: u64) -> bool {
-        let Body::File {
-            id,
-            name,
-            size,
-            index,
-            expires_in,
-            data,
-        } = chunk
-        else {
-            return false;
-        };
-        let open = |m: &Msg| {
-            !m.mine
-                && m.file
-                    .as_ref()
-                    .is_some_and(|f| f.data.is_some() && !f.complete())
-        };
-        let note = |text: String| Msg {
-            mine: false,
-            text,
-            at,
-            expires_at: None,
-            status: Status::System,
-            file: None,
-            unfetched: false,
-            ..Default::default()
-        };
-        let Some(c) = self.contacts.get_mut(i) else {
-            return false;
-        };
-        if let Some(m) = c.messages.iter().rposition(open) {
-            if let Some(f) = c.messages[m].file.as_mut()
-                && (f.id, &f.name, f.size, f.done) == (id, &name, size, index)
-                && let Some(bytes) = f.data.as_mut()
-            {
-                bytes.extend_from_slice(&data);
-                f.done += 1;
-                return f.complete();
-            }
-            let broken = std::mem::take(&mut c.messages.remove(m).text);
-            c.messages
-                .push(note(format!("{broken} did not arrive whole")));
+        let unsaved = self.unsaved();
+        match self.contacts.get_mut(i) {
+            Some(c) => take_into(&mut c.messages, None, unsaved, chunk, at),
+            None => false,
         }
-        if index != 0 {
-            return false;
+    }
+
+    /// One chunk in group `g` from member `author` (ADR-027 amendment).
+    pub fn take_group_chunk(&mut self, g: usize, author: Ed25519Key, chunk: Body, at: u64) -> bool {
+        let unsaved = self.unsaved();
+        match self.groups.get_mut(g) {
+            Some(group) => take_into(&mut group.messages, Some(author), unsaved, chunk, at),
+            None => false,
         }
-        let unsaved: usize = (self.contacts.iter())
-            .flat_map(|c| &c.messages)
+    }
+
+    /// Bytes of received files not saved or discarded yet, chats and groups.
+    fn unsaved(&self) -> usize {
+        let chats = self.contacts.iter().flat_map(|c| &c.messages);
+        let groups = self.groups.iter().flat_map(|g| &g.messages);
+        chats
+            .chain(groups)
             .filter(|m| !m.mine)
             .filter_map(|m| m.file.as_ref()?.data.as_ref())
             .map(Vec::len)
-            .sum();
-        let c = &mut self.contacts[i];
-        if unsaved + size as usize > MAX_UNSAVED {
-            c.messages.push(note(format!(
-                "{name} was dropped: too many unsaved files, save or discard some"
-            )));
-            return false;
-        }
-        let file = FileMsg {
-            id,
-            name: name.clone(),
-            size,
-            done: 1,
-            data: Some(data),
-        };
-        let whole = file.complete();
-        c.messages.push(Msg {
-            mine: false,
-            text: name,
-            at,
-            expires_at: expires_in.map(|s| at + u64::from(s)),
-            status: Status::Received,
-            file: Some(file),
-            unfetched: true,
-            ..Default::default()
-        });
-        whole
+            .sum()
     }
+}
+
+/// A chunk into `msgs`: the file it continues, by `author` in a group, or a
+/// new one at index 0. `true` once the file is whole.
+// shortcut: a group file is put together per member, not per device; two
+// devices of one member sending files at once break each other's.
+fn take_into(
+    msgs: &mut Vec<Msg>,
+    author: Option<Ed25519Key>,
+    unsaved: usize,
+    chunk: Body,
+    at: u64,
+) -> bool {
+    let Body::File {
+        id,
+        name,
+        size,
+        index,
+        expires_in,
+        data,
+    } = chunk
+    else {
+        return false;
+    };
+    let open = |m: &Msg| {
+        !m.mine
+            && m.author == author
+            && m.file
+                .as_ref()
+                .is_some_and(|f| f.data.is_some() && !f.complete())
+    };
+    let note = |text: String| Msg {
+        mine: false,
+        text,
+        at,
+        expires_at: None,
+        status: Status::System,
+        file: None,
+        unfetched: false,
+        ..Default::default()
+    };
+    if let Some(m) = msgs.iter().rposition(open) {
+        if let Some(f) = msgs[m].file.as_mut()
+            && (f.id, &f.name, f.size, f.done) == (id, &name, size, index)
+            && let Some(bytes) = f.data.as_mut()
+        {
+            bytes.extend_from_slice(&data);
+            f.done += 1;
+            return f.complete();
+        }
+        let broken = std::mem::take(&mut msgs.remove(m).text);
+        msgs.push(note(format!("{broken} did not arrive whole")));
+    }
+    if index != 0 {
+        return false;
+    }
+    if unsaved + size as usize > MAX_UNSAVED {
+        msgs.push(note(format!(
+            "{name} was dropped: too many unsaved files, save or discard some"
+        )));
+        return false;
+    }
+    let file = FileMsg {
+        id,
+        name: name.clone(),
+        size,
+        done: 1,
+        data: Some(data),
+    };
+    let whole = file.complete();
+    msgs.push(Msg {
+        mine: false,
+        text: name,
+        at,
+        expires_at: expires_in.map(|s| at + u64::from(s)),
+        status: Status::Received,
+        file: Some(file),
+        author,
+        unfetched: true,
+        ..Default::default()
+    });
+    whole
 }
 
 /// Creates `name` in `dir`, or `name (1)`, `name (2)`... if taken, mode 0600,

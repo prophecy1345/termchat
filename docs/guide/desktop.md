@@ -31,7 +31,7 @@ A small private group of up to 32 people, by invitation only. Nobody can find it
 - **Members:** **Members** lists everyone with their fingerprints; the admin removes people there (**Remove…**). The group moves to a new queue; they read nothing from then on.
 - **Leave:** **Leave**. The others are told; the chat stays with you, read-only.
 
-A new member does not see what was said before they joined. Groups carry no files yet.
+A new member does not see what was said before they joined. Documents go to the group as in a chat (up to 1 MiB, saved only by hand).
 
 ## Invites with a QR code
 

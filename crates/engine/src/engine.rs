@@ -2493,6 +2493,8 @@ impl Engine {
                 break;
             }
         }
+        // ADR-027 amendment: documents in groups, from the same budget.
+        sent |= self.send_group_chunks();
         if sent {
             self.persist();
         }

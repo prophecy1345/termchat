@@ -88,7 +88,7 @@ Megolm and Olm from vodozemac, used together as Matrix uses them: Megolm for gro
 4. The group queue lives on the admin's relay.
 5. The relay operator seeing a group's size is accepted.
 
-## Amendment of 2026-11-18 (proposed): documents in groups
+## Amendment of 2026-11-18 (maintainer): documents in groups
 
 The plaintext inside Megolm already allows `File` (ADR-017); the apps did not send it. How it lands on the group queue:
 

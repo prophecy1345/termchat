@@ -1,5 +1,7 @@
 package app.termchat
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,6 +37,27 @@ fun Group(m: Model, index: UInt) {
     LaunchedEffect(m.version) { a.openGroup(index) }
     val fail: (Throwable) -> Unit = { m.note = it.message ?: "$it" }
     val context = androidx.compose.ui.platform.LocalContext.current
+    // Documents in the group (ADR-027 amendment), as in a chat.
+    val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val (name, bytes) = readDocument(context, uri)
+            a.sendGroupFile(index, name, bytes)
+        }.onSuccess { m.note = "" }.onFailure(fail)
+        m.changed()
+    }
+    var saving by remember { mutableStateOf<UInt?>(null) }
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val msg = saving ?: return@rememberLauncherForActivityResult
+        saving = null
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val bytes = a.groupFileBytes(index, msg) ?: error("this file is gone")
+            context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(bytes) }
+            a.forgetGroupFile(index, msg)
+        }.onSuccess { m.note = "Saved. termchat never opens files; check it before you do." }.onFailure(fail)
+        m.changed()
+    }
 
     Column(Modifier.fillMaxSize()) {
         GroupHeader(m, g) { dialog = it }
@@ -59,7 +82,15 @@ fun Group(m: Model, index: UInt) {
                             m.changed()
                         }
                     }
-                }, group = true) {}
+                }, group = true) { keep ->
+                    if (keep) {
+                        saving = at
+                        save.launch(msg.fileName ?: "file")
+                    } else {
+                        runCatching { a.forgetGroupFile(index, at) }
+                        m.changed()
+                    }
+                }
             }
         }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
@@ -75,6 +106,11 @@ fun Group(m: Model, index: UInt) {
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (g.expiresIn != null) Text("⏱ ${span(g.expiresIn)}", style = Tc.small.copy(color = Tc.lime))
+            Box(
+                Modifier.size(48.dp).border(1.dp, Tc.line, corner)
+                    .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
+                contentAlignment = Alignment.Center,
+            ) { Text("📎", style = Tc.name) }
             Field(text, { text = it }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false)
             Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime) {
                 runCatching {

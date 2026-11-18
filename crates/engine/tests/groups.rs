@@ -492,3 +492,89 @@ async fn an_invite_taken_during_a_move_still_lands_in_the_new_queue() {
     pump(&mut e, |e| said(&e[0], 0, "made it")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+fn has_doc(e: &Engine, name: &str, from: Option<[u8; 32]>) -> Option<usize> {
+    e.data.groups.first().and_then(|g| {
+        g.messages.iter().position(|m| {
+            m.author == from
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.name == name && f.complete())
+        })
+    })
+}
+
+/// ADR-027 amendment: a document in a group reaches every member, also one
+/// the sender does not know, and is saved only by hand.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_document_in_a_group_reaches_every_member() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-groups6-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = [
+        engine(&dir, "alice", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    settle(&mut e).await;
+    befriend(&mut e, 1, 0).await;
+    befriend(&mut e, 2, 0).await;
+    let g = e[0].create_group("files").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+    for who in [1, 2] {
+        let i = e[0].index(&e[who].me()).unwrap();
+        e[0].invite_to_group(g, i).unwrap();
+    }
+    pump(&mut e, |e| {
+        e[1].data.group_invites.len() == 1 && e[2].data.group_invites.len() == 1
+    })
+    .await;
+    e[1].accept_group(0).unwrap();
+    e[2].accept_group(0).unwrap();
+    pump(&mut e, |e| {
+        e.iter().all(|x| {
+            x.data
+                .groups
+                .first()
+                .is_some_and(|g| g.members().len() == 3)
+        })
+    })
+    .await;
+    e[1].send_group(0, "ready").unwrap();
+    pump(&mut e, |e| {
+        said(&e[0], 0, "ready") && said(&e[2], 0, "ready")
+    })
+    .await;
+
+    // Bob, whom Carol does not know, sends 13 chunks: 10 at once, then one
+    // every 3 s. Carol talks meanwhile.
+    let bob = e[1].me();
+    let bytes: Vec<u8> = (0..200_000u32).map(|n| (n % 251) as u8).collect();
+    e[1].send_group_file(0, "plan.pdf", bytes.clone()).unwrap();
+    assert!(
+        e[1].send_group_file(0, "second.pdf", vec![1]).is_err(),
+        "one at a time"
+    );
+    e[2].send_group(0, "got it?").unwrap();
+    pump(&mut e, |e| {
+        has_doc(&e[0], "plan.pdf", Some(bob)).is_some()
+            && has_doc(&e[2], "plan.pdf", Some(bob)).is_some()
+            && said(&e[0], 0, "got it?")
+            && e[1].data.groups[0].messages.iter().any(|m| {
+                m.mine && m.file.is_some() && m.status == termchat_engine::data::Status::Sent
+            })
+    })
+    .await;
+    assert!(e[0].data.groups[0].unread > 0);
+
+    // Saved by hand, byte for byte, then forgotten.
+    let m = e[2].unsaved_group_file(0).unwrap();
+    let path = e[2].save_group_file(0, m, &dir).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(e[2].unsaved_group_file(0), None);
+    let m = e[0].unsaved_group_file(0).unwrap();
+    e[0].discard_group_file(0, m);
+    assert!(e[0].group_file_bytes(0, m).is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

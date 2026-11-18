@@ -798,8 +798,18 @@ impl Main {
                 }
             }
             (true, KeyCode::Char('e')) => self.engine.edit(i, |c| c.no_history = !c.no_history),
-            (true, KeyCode::Char('l')) if key.is_some() => {
+            (true, KeyCode::Char('l')) if key.is_some() || self.group_index().is_some() => {
                 self.popup = Some(Popup::Form(Form::new(Kind::SendFile)))
+            }
+            // Documents in a group (ADR-027 amendment).
+            (true, KeyCode::Char('g')) if self.group_index().is_some() => {
+                match self
+                    .group_index()
+                    .and_then(|g| self.engine.unsaved_group_file(g))
+                {
+                    Some(_) => self.popup = Some(Popup::Form(Form::new(Kind::SaveFile))),
+                    None => self.status = "no unsaved file in this group".into(),
+                }
             }
             (true, KeyCode::Char('g')) if key.is_some() => match self.engine.unsaved_file(i) {
                 Some(_) => self.popup = Some(Popup::Form(Form::new(Kind::SaveFile))),
@@ -1559,8 +1569,26 @@ impl Main {
             }
             Kind::SendFile => {
                 let (name, bytes) = data::read_document(&form::expand(&f.fields[0]))?;
-                self.engine.send_file(self.selected, &name, bytes)?;
+                match self.group_index() {
+                    Some(g) => self.engine.send_group_file(g, &name, bytes)?,
+                    None => self.engine.send_file(self.selected, &name, bytes)?,
+                }
                 Ok(format!("Sending {name}; progress shows in the chat."))
+            }
+            Kind::SaveFile if self.group_index().is_some() => {
+                let g = self.group_index().ok_or("no group open")?;
+                let m = self
+                    .engine
+                    .unsaved_group_file(g)
+                    .ok_or("no unsaved file in this group")?;
+                if f.fields[0].trim() == "DISCARD" {
+                    self.engine.discard_group_file(g, m);
+                    return Ok("File discarded.".into());
+                }
+                let path = self
+                    .engine
+                    .save_group_file(g, m, &form::expand(&f.fields[0]))?;
+                Ok(format!("Saved to {}.", path.display()))
             }
             Kind::SaveFile => {
                 let i = self.selected;

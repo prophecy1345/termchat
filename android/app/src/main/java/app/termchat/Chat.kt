@@ -39,6 +39,26 @@ import app.termchat.engine.reactions
 /** ADR-017: the largest document, as in the Rust core. */
 private const val MAX_FILE = 1 shl 20
 
+/** A picked document's name and bytes, at most 1 MiB (ADR-017): opaque, never opened. */
+internal fun readDocument(context: android.content.Context, uri: android.net.Uri): Pair<String, ByteArray> {
+    val r = context.contentResolver
+    val name = r.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+        if (it.moveToFirst()) it.getString(0) else null
+    } ?: "file"
+    val bytes = r.openInputStream(uri)!!.use { s ->
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        while (true) {
+            val n = s.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > MAX_FILE) error("files are limited to 1 MiB")
+        }
+        out.toByteArray()
+    }
+    return name to bytes
+}
+
 /** ADR-025: the seven reactions as arcade sprites, from the Rust core. */
 internal val REACTIONS = reactions()
 
@@ -71,21 +91,7 @@ fun Chat(m: Model, index: UInt) {
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
-            val r = context.contentResolver
-            val name = r.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-                if (it.moveToFirst()) it.getString(0) else null
-            } ?: "file"
-            val bytes = r.openInputStream(uri)!!.use { s ->
-                val out = java.io.ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                while (true) {
-                    val n = s.read(buf)
-                    if (n < 0) break
-                    out.write(buf, 0, n)
-                    if (out.size() > MAX_FILE) error("files are limited to 1 MiB")
-                }
-                out.toByteArray()
-            }
+            val (name, bytes) = readDocument(context, uri)
             a.sendFile(index, name, bytes)
         }.onSuccess { m.note = "" }.onFailure { m.note = it.message ?: "$it" }
         m.changed()
