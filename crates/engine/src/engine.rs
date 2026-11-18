@@ -1862,7 +1862,8 @@ impl Engine {
             | Body::DeviceLinked
             | Body::LinkedContact { .. }
             | Body::OwnDevices { .. }
-            | Body::Devices { .. } => return self.persist(),
+            | Body::Devices { .. }
+            | Body::OwnQueue { .. } => return self.persist(),
             Body::Understands { level } => {
                 let c = &mut self.data.contacts[i];
                 let news = level > c.understands;

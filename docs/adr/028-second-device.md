@@ -101,3 +101,12 @@ For contacts: a contact sees how many devices a person has and their keys, never
 ## Amendment of 2026-11-18 (maintainer): a queue per device
 
 Planning the implementation found that the bundle of section 3 does not fit: a long message or a document chunk times the number of devices passes the frame and envelope limits, and every reader would receive every copy. Section 3 now gives each device its own queue per contact and sends one ordinary Olm message per device. The relay protocol and the envelope stay as they are.
+
+## Implementation notes of 2026-11-18 (maintainer)
+
+1. **A channel between one's own devices.** When a device is linked, its link queue becomes its queue for the primary, and the primary makes a queue for it and sends it with `QueueOffer`, as two contacts do. Linking, the contacts handed over, `OwnDevices` and `OwnQueue` go over this channel; messages to contacts never do.
+2. **`OwnQueue { contact, queue }`.** A device that makes its queue for contact X tells its other devices over the channel. Copies of what any device sends X then go only to those per-contact queues (section 3).
+3. **Each device announces itself to a contact** with `Devices`: the signed list, and only its own address for that contact. The contact keeps one address per device.
+4. **Sent** means that at least one of the recipient's devices has the message on its relay.
+
+The relay learns one thing more: two devices of one person write to each other, at linking and when a contact is added, not with every message.
