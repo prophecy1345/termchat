@@ -1,0 +1,1 @@
+For servers: termchat daemon keeps a script identity open, so scripts send and answer without a password and within a second. Nothing changes in the Android app itself.

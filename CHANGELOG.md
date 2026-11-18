@@ -3,6 +3,22 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.14.0
+
+For scripts and servers (ADR-029, Linux and macOS):
+
+- `termchat daemon` keeps a server identity open. While it runs, `send`,
+  `send-file`, `recv`, `contacts`, `invite` and `add` go through it: no
+  password per command, an answer within a second instead of a new
+  connection (10-30 s over Tor), and several commands at once. A bot
+  can now answer "status" from your phone. See Scripts and servers in
+  the guide for a systemd unit.
+- The daemon listens only on a socket in the state folder and lets in
+  only its own user. While it runs it holds the password in memory:
+  give it a server identity, never your main one.
+- `send` no longer reports a message as sent too early when older
+  messages in a chat with a timer disappear while it waits.
+
 ## 0.13.0
 
 - Groups on every device (ADR-028): accept an invite on one device and
