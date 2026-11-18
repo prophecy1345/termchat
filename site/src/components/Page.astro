@@ -50,6 +50,7 @@ const ld = {
       <nav>
         <a href="#features">{t.nav.features}</a>
         <a href="#desktop">{t.nav.desktop}</a>
+        <a href="#phone">{t.nav.phone}</a>
         <a href="#protection">{t.nav.protection}</a>
         <a href="#install">{t.nav.install}</a>
         <a href={url(`${p}/docs/`)}>{t.nav.docs}</a>
@@ -136,6 +137,17 @@ const ld = {
           ))}
         </div>
         <p class="more"><a href="#install" data-tab="os-desktop">{t.desktopInstall} →</a></p>
+      </section>
+
+      <section id="phone">
+        <h2>{t.phoneTitle}</h2>
+        <p class="sub">{t.phoneLead}</p>
+        <div class="phone-shots">
+          {["list", "chat", "group", "group-dracula"].map((n, i) => (
+            <img src={url(`/phone-${n}.jpg`)} alt={t.phoneAlts[i]} width="540" height="1200" loading="lazy" />
+          ))}
+        </div>
+        <p class="more"><a href="#install" data-tab="os-android">{t.desktopInstall} →</a></p>
       </section>
 
       <section id="protection">

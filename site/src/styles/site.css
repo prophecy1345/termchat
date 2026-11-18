@@ -450,6 +450,29 @@ h2::before {
   box-shadow: 0 30px 80px rgb(0 0 0 / 0.5), 0 0 60px rgb(203 166 247 / 0.12);
 }
 
+.phone-shots {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  max-width: 56rem;
+  margin: 0 auto 2rem;
+}
+
+.phone-shots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--surface0);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgb(0 0 0 / 0.45);
+}
+
+@media (max-width: 640px) {
+  .phone-shots {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* Cards */
 .feature-group + .feature-group {
   margin-top: 2rem;
