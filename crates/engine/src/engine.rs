@@ -1800,16 +1800,13 @@ impl Engine {
                 self.persist();
                 return true;
             }
-            None => {
-                self.data.contacts.push(Contact {
-                    key: sender,
-                    added_at: now(),
-                    profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
-                    next_client_id: getrandom::u64().unwrap_or(0) >> 2,
-                    ..Default::default()
-                });
-                self.data.contacts.len() - 1
-            }
+            None => self.data.push_person(Contact {
+                key: sender,
+                added_at: now(),
+                profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
+                next_client_id: getrandom::u64().unwrap_or(0) >> 2,
+                ..Default::default()
+            }),
         };
         if got.new_session && had_session {
             self.system(
@@ -2240,6 +2237,10 @@ impl Engine {
     /// Contact `i`, if we may write to them.
     fn writable(&self, i: usize) -> Result<&Contact, String> {
         let c = self.data.contacts.get(i).ok_or("add a contact first")?;
+        // Our own devices (ADR-028) are no one to write to.
+        if c.own {
+            return Err("add a contact first".into());
+        }
         if c.blocked {
             return Err("contact is blocked; unblock them to write".into());
         }
@@ -2780,16 +2781,13 @@ impl Engine {
         self.data.rejected.retain(|k| *k != key);
         let i = match existing {
             Some(i) => i,
-            None => {
-                self.data.contacts.push(Contact {
-                    key,
-                    added_at: now(),
-                    profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
-                    next_client_id: getrandom::u64().unwrap_or(0) >> 2,
-                    ..Default::default()
-                });
-                self.data.contacts.len() - 1
-            }
+            None => self.data.push_person(Contact {
+                key,
+                added_at: now(),
+                profile: (slot > 0).then(|| self.data.profiles[slot - 1].key),
+                next_client_id: getrandom::u64().unwrap_or(0) >> 2,
+                ..Default::default()
+            }),
         };
         let c = &mut self.data.contacts[i];
         c.request_pending = true;
@@ -2826,7 +2824,7 @@ impl Engine {
         let digits: String = q.chars().filter(|c| !c.is_whitespace()).collect();
         let by_fingerprint = digits.len() >= 5 && digits.chars().all(|c| c.is_ascii_digit());
         let lower = q.to_lowercase();
-        let hits: Vec<usize> = (0..self.data.contacts.len())
+        let hits: Vec<usize> = (0..self.data.people())
             .filter(|&i| {
                 let c = &self.data.contacts[i];
                 match by_fingerprint {
@@ -2865,7 +2863,7 @@ impl Engine {
     /// in the apps (ADR-007).
     pub fn take_new(&mut self, from: Option<usize>) -> Vec<(usize, Msg, Fetched)> {
         let mut out = Vec::new();
-        for i in 0..self.data.contacts.len() {
+        for i in 0..self.data.people() {
             if from.is_some_and(|f| f != i) || self.is_request(&self.data.contacts[i].key) {
                 continue;
             }
@@ -2961,7 +2959,7 @@ impl Engine {
     pub fn resort(&mut self) {
         self.data
             .contacts
-            .sort_by_key(|c| std::cmp::Reverse(c.last_at()));
+            .sort_by_key(|c| (c.own, std::cmp::Reverse(c.last_at())));
     }
 }
 

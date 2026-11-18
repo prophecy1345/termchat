@@ -122,6 +122,10 @@ impl Engine {
 
     /// A new group with us as its admin and only member, on our relay.
     pub fn create_group(&mut self, name: &str) -> Result<usize, String> {
+        // ADR-028: groups come to linked devices in a later release.
+        if !self.is_primary() {
+            return Err("groups are on your main device for now".into());
+        }
         let name = name.trim();
         proto::check_group_name(name)
             .map_err(|_| "a group name is 1 to 64 bytes, no control characters")?;

@@ -360,7 +360,7 @@ async fn add(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
 }
 
 fn contacts(e: &Engine) {
-    for c in &e.data.contacts {
+    for c in e.data.contacts.iter().filter(|c| !c.own) {
         let state = match () {
             _ if e.is_request(&c.key) => "request",
             _ if c.left => "left",

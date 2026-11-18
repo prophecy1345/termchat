@@ -154,6 +154,22 @@ impl Engine {
         !self.is_primary() && self.data.devices.is_some() && !self.lists(&self.me())
     }
 
+    /// Our devices for a list on screen: key and label, the primary first.
+    pub fn device_rows(&self) -> Vec<(Ed25519Key, String)> {
+        let label = |k: &Ed25519Key| {
+            let l = self.data.device_labels.iter().find(|(x, _)| x == k);
+            l.map(|(_, l)| clean(l)).unwrap_or_default()
+        };
+        match &self.data.devices {
+            Some(d) => d
+                .devices
+                .iter()
+                .map(|x| (x.ed25519, label(&x.ed25519)))
+                .collect(),
+            None => vec![(self.me(), label(&self.me()))],
+        }
+    }
+
     /// Whether our device list names `key`.
     fn lists(&self, key: &Ed25519Key) -> bool {
         self.data
@@ -341,7 +357,10 @@ impl Engine {
         match body {
             // Let in only by our link code (`admit`): the primary answers.
             Body::DeviceLink { identity, .. } if request && self.data.primary.is_none() => {
-                self.data.contacts[i].own = true;
+                // Our own device goes after the people (`Data::people`).
+                let mut c = self.data.contacts.remove(i);
+                c.own = true;
+                self.data.contacts.push(c);
                 self.data.primary = Some(identity);
                 self.happened.push(Happened::Notice(
                     "Your main device answered: compare the fingerprints on both screens.".into(),
@@ -640,7 +659,7 @@ impl Engine {
             core.add_member(key, l.identity.curve25519);
             core.set_nickname(&key, l.nickname);
         }
-        self.data.contacts.push(Contact {
+        self.data.push_person(Contact {
             key,
             petname: l.petname,
             verified: l.verified,

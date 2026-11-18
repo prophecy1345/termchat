@@ -131,6 +131,16 @@ pub enum Popup {
     RemoveMember(Ed25519Key),
     /// Leave the open group?
     LeaveGroup,
+    /// ADR-028: this device's link code, to paste on the main device.
+    LinkCode(String),
+    /// Our devices, with the highlighted row.
+    Devices(usize),
+    /// A new device's link code being pasted.
+    AddDevice(Input),
+    /// The fingerprint to compare on both screens, for own device `i`.
+    Link(usize),
+    /// Remove this device?
+    RemoveDevice(Ed25519Key),
 }
 
 /// What Enter does with the typed text (ADR-025).
@@ -226,7 +236,14 @@ impl App {
     /// The terminal window title: an unread count, never a name (ADR-008).
     pub fn title(&self) -> String {
         let unread: usize = match &self.screen {
-            Screen::Main(m) => m.engine.data.contacts.iter().map(|c| c.unread).sum(),
+            Screen::Main(m) => m
+                .engine
+                .data
+                .contacts
+                .iter()
+                .filter(|c| !c.own)
+                .map(|c| c.unread)
+                .sum(),
             _ => 0,
         };
         match unread {
@@ -599,6 +616,12 @@ impl Main {
         if let Some(g) = self.group_index() {
             self.engine.data.groups[g].unread = 0;
         }
+        // ADR-028: a device waiting for the fingerprint check asks at once.
+        if self.popup.is_none()
+            && let Some(i) = self.engine.pending_link()
+        {
+            self.popup = Some(Popup::Link(i));
+        }
         for h in std::mem::take(&mut self.engine.happened) {
             match h {
                 Happened::Alert { key, request } => self.alerts.push((key, request)),
@@ -630,7 +653,7 @@ impl Main {
         if let Some(g) =
             group.and_then(|id| self.engine.data.groups.iter().position(|g| g.id == id))
         {
-            self.selected = self.engine.data.contacts.len() + g;
+            self.selected = self.engine.data.people() + g;
         }
     }
 
@@ -650,7 +673,9 @@ impl Main {
     }
 
     pub fn current(&self) -> Option<&Contact> {
-        self.engine.data.contacts.get(self.selected)
+        // Our own devices (ADR-028) come after the people and are never open.
+        let people = &self.engine.data.contacts[..self.engine.data.people()];
+        people.get(self.selected)
     }
 
     fn on_key(&mut self, k: KeyEvent, ctrl: bool, settings: &mut Settings) {
@@ -741,7 +766,7 @@ impl Main {
                     Some(n) if key.is_some_and(|k| !self.engine.is_request(&k)) => {
                         match self.engine.accept_group(n) {
                             Ok(g) => {
-                                let at = self.engine.data.contacts.len() + g;
+                                let at = self.engine.data.people() + g;
                                 self.select(at);
                             }
                             Err(e) => self.status = e,
@@ -787,7 +812,7 @@ impl Main {
     /// The open group, if a group is open (ADR-027): groups follow the
     /// contacts in the list.
     pub fn group_index(&self) -> Option<usize> {
-        let g = self.selected.checked_sub(self.engine.data.contacts.len())?;
+        let g = self.selected.checked_sub(self.engine.data.people())?;
         (g < self.engine.data.groups.len()).then_some(g)
     }
 
@@ -892,7 +917,7 @@ impl Main {
     }
 
     fn select(&mut self, i: usize) {
-        let n = self.engine.data.contacts.len();
+        let n = self.engine.data.people();
         if i >= n && i < n + self.engine.data.groups.len() {
             self.selected = i;
             self.scroll = 0;
@@ -934,7 +959,7 @@ impl Main {
         } else {
             "  ●"
         };
-        vec![
+        let mut rows = vec![
             ('s', "settings".into()),
             ('k', "keys".into()),
             ('m', "manual".into()),
@@ -946,7 +971,16 @@ impl Main {
             ('a', "add contact".into()),
             ('b', format!("back up your identity{nag}")),
             ('g', "new group".into()),
-        ]
+        ];
+        // ADR-028: a new device links itself; the main one manages them.
+        let e = &self.engine;
+        if e.is_primary() && e.data.devices.is_none() && e.data.people() == 0 {
+            rows.push(('l', "link to my main device".into()));
+        }
+        if e.is_primary() {
+            rows.push(('v', "devices".into()));
+        }
+        rows
     }
 
     /// Rows of a settings tab: label and whether it is ticked.
@@ -1169,6 +1203,14 @@ impl Main {
                 }
                 Ok(Some('b')) => Some(Popup::Form(Form::new(Kind::Backup))),
                 Ok(Some('g')) => Some(Popup::NewGroup(Input::default())),
+                Ok(Some('l')) => match self.engine.link_code() {
+                    Ok(code) => Some(Popup::LinkCode(code)),
+                    Err(e) => {
+                        self.status = e;
+                        None
+                    }
+                },
+                Ok(Some('v')) => Some(Popup::Devices(0)),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1296,7 +1338,7 @@ impl Main {
                 None
             }
             Popup::Delete => {
-                if k.code == KeyCode::Char('y') && i < self.engine.data.contacts.len() {
+                if k.code == KeyCode::Char('y') && i < self.engine.data.people() {
                     self.engine.delete(i);
                     self.selected = i.saturating_sub(1);
                 }
@@ -1325,7 +1367,7 @@ impl Main {
             Popup::NewGroup(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
                 true => match self.engine.create_group(&s) {
                     Ok(g) => {
-                        let at = self.engine.data.contacts.len() + g;
+                        let at = self.engine.data.people() + g;
                         self.select(at);
                         None
                     }
@@ -1387,6 +1429,63 @@ impl Main {
                 }
                 None
             }
+            Popup::LinkCode(code) => match k.code {
+                KeyCode::Char('c') => {
+                    copy_to_clipboard(&code);
+                    self.status = "link code copied (if your terminal supports OSC 52)".into();
+                    Some(Popup::LinkCode(code))
+                }
+                _ => None,
+            },
+            Popup::Devices(at) => {
+                let rows = self.engine.device_rows();
+                match k.code {
+                    KeyCode::Up => Some(Popup::Devices(at.saturating_sub(1))),
+                    KeyCode::Down => {
+                        Some(Popup::Devices((at + 1).min(rows.len().saturating_sub(1))))
+                    }
+                    KeyCode::Char('a') => Some(Popup::AddDevice(Input::default())),
+                    KeyCode::Char('x') => rows
+                        .get(at)
+                        .map(|(k, _)| *k)
+                        .filter(|k| *k != self.engine.me())
+                        .map(Popup::RemoveDevice),
+                    KeyCode::Esc => None,
+                    _ => Some(Popup::Devices(at)),
+                }
+            }
+            Popup::AddDevice(mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
+                true => match self.engine.add_device(&s) {
+                    Ok(i) => Some(Popup::Link(i)),
+                    Err(e) => {
+                        self.status = e;
+                        None
+                    }
+                },
+                false => Some(Popup::AddDevice(s)),
+            },
+            Popup::Link(i) => match k.code {
+                KeyCode::Char('y') => {
+                    self.engine.confirm_link(i);
+                    self.status = "confirmed: linking finishes when the other screen agrees".into();
+                    None
+                }
+                KeyCode::Char('n') => {
+                    self.engine.delete(i);
+                    self.status = "linking cancelled".into();
+                    None
+                }
+                _ => Some(Popup::Link(i)),
+            },
+            Popup::RemoveDevice(key) => {
+                if k.code == KeyCode::Char('y') {
+                    match self.engine.remove_device(&key) {
+                        Ok(()) => self.status = "device removed".into(),
+                        Err(e) => self.status = e,
+                    }
+                }
+                None
+            }
             Popup::LeaveGroup => {
                 if k.code == KeyCode::Char('y')
                     && let Some(g) = self.group_index()
@@ -1406,6 +1505,7 @@ impl Main {
                 false => Some(Popup::Rename(s)),
             },
             Popup::Add(_)
+            | Popup::AddDevice(_)
             | Popup::NewGroup(_)
             | Popup::Rename(_)
             | Popup::Incognito(_)

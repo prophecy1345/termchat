@@ -456,6 +456,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         .data
         .contacts
         .iter()
+        .take(m.engine.data.people())
         .enumerate()
         .map(|(i, c)| {
             let request = m.engine.is_request(&c.key);
@@ -491,7 +492,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         })
         .collect();
     // ADR-027: groups follow the contacts, marked #, with their size.
-    let n = m.engine.data.contacts.len();
+    let n = m.engine.data.people();
     let mut items = items;
     items.extend(m.engine.data.groups.iter().enumerate().map(|(gi, g)| {
         let colour = match (g.left, g.unread > 0) {
@@ -1580,6 +1581,86 @@ fn popup_pane(
                 ("esc keep", false, esc),
             ];
             window(f, t, h, "remove from the group", lines, &buttons, 64, true);
+        }
+        Popup::LinkCode(code) => {
+            let mut lines = plain(
+                "On your main device: Ctrl+P, v devices, a add, and paste this code.\nThen compare the fingerprint both screens show.\n",
+            );
+            lines.push(Line::styled(code.as_str(), strong));
+            let buttons = [
+                ("c copy", true, key(KeyCode::Char('c'))),
+                ("esc close", false, esc),
+            ];
+            window(
+                f,
+                t,
+                h,
+                "link to my main device",
+                lines,
+                &buttons,
+                76,
+                false,
+            );
+        }
+        Popup::Devices(at) => {
+            let me = m.engine.me();
+            let rows: Vec<(char, String)> = m
+                .engine
+                .device_rows()
+                .iter()
+                .enumerate()
+                .map(|(n, (k, label))| {
+                    let mut s = match label.is_empty() {
+                        true => fingerprint(k)[..11].to_string(),
+                        false => format!("{label}  {}", &fingerprint(k)[..11]),
+                    };
+                    if n == 0 {
+                        s.push_str("  main");
+                    }
+                    if *k == me {
+                        s.push_str("  (this device)");
+                    }
+                    ('·', s)
+                })
+                .collect();
+            let mut lines = menu_rows(t, &rows, *at, 52);
+            lines.push(Line::from(""));
+            let buttons = [
+                ("a add a device", true, key(KeyCode::Char('a'))),
+                ("x remove", false, key(KeyCode::Char('x'))),
+                ("esc close", false, esc),
+            ];
+            window(f, t, h, "devices", lines, &buttons, 56, false);
+        }
+        Popup::AddDevice(s) => {
+            let lines = vec![
+                Line::from("On the new device: Ctrl+P, l. Paste its code here and press Enter."),
+                Line::from(""),
+                field(t, s, Some(s.cursor_chars()), 66),
+            ];
+            let buttons = [("↵ add", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "add a device", lines, &buttons, 70, false);
+        }
+        Popup::Link(_) => {
+            let mut lines = plain(
+                "Both screens show this fingerprint. Go on only if they are the same:\nsomeone who copied the link code would show another one.\n",
+            );
+            lines.push(Line::styled(m.engine.link_fingerprint(), strong));
+            let buttons = [
+                ("y the same", true, key(KeyCode::Char('y'))),
+                ("n cancel", false, key(KeyCode::Char('n'))),
+            ];
+            window(f, t, h, "link a device", lines, &buttons, 72, false);
+        }
+        Popup::RemoveDevice(_) => {
+            let lines = plain(
+                "Remove this device?\nIt keeps what it has, and reads and sends nothing more.",
+            );
+            let buttons = [
+                ("y remove", true, key(KeyCode::Char('y'))),
+                ("esc keep", false, esc),
+            ];
+            window(f, t, h, "remove a device", lines, &buttons, 60, true);
         }
         Popup::LeaveGroup => {
             let lines =

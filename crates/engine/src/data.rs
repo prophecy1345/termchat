@@ -669,6 +669,19 @@ impl Invites {
 }
 
 impl Data {
+    /// How many contacts are people: our own devices (ADR-028) are kept
+    /// after them, so the first `people()` are the ones to show.
+    pub fn people(&self) -> usize {
+        self.contacts.iter().take_while(|c| !c.own).count()
+    }
+
+    /// Adds a person before our own devices; their index.
+    pub fn push_person(&mut self, c: Contact) -> usize {
+        let at = self.people();
+        self.contacts.insert(at, c);
+        at
+    }
+
     /// JSON for the state file, without chats marked "no history". Zeroized
     /// on drop: it holds the whole history in the clear.
     /// `states` are the incognito profiles' exported keys, in order.
