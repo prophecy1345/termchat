@@ -3,6 +3,22 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.13.0
+
+- Groups on every device (ADR-028): accept an invite on one device and
+  the others join too; a device linked later joins by itself, and a
+  removed one leaves. Each device reads and writes there; your
+  messages from one show on the others. New groups are made on the main
+  device. A group with a member on an app before 0.12 keeps to main
+  devices.
+- Documents reach every device of a contact; your other devices show
+  that you sent one, without the file.
+- Linked devices meet each other through the main one, so with three or
+  four devices what you send shows on all of them.
+- A new colour theme, vice-sunset: hot pink and orange on night purple.
+- Your contact's new device no longer warns that they "restarted the
+  conversation".
+
 ## 0.12.0
 
 One identity on up to four devices (ADR-028).

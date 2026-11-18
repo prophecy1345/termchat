@@ -17,7 +17,7 @@ The security settings (backup, passwords, Tor, bridges, connections, lock time, 
 
 ## Themes
 
-18 colour themes, light and dark, the same in all three apps; the terminal adds `terminal`, its own 16 colours, for terminals without true colour. In the terminal, moving through the list shows each theme at once; the chat keeps your terminal's background, and the theme colours the bars and windows.
+19 colour themes, light and dark, the same in all three apps; the terminal adds `terminal`, its own 16 colours, for terminals without true colour. In the terminal, moving through the list shows each theme at once; the chat keeps your terminal's background, and the theme colours the bars and windows.
 
 ## Notifications
 

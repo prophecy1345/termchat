@@ -31,7 +31,7 @@ The obvious shortcut, copying the whole state to the second device, does not wor
 
 - **Contacts move**, with your names for them and their verified marks.
 - **History does not.** A new device starts empty. Copying old messages would move all of them out of one device's protection into another's, and disappearing messages would have to be tracked across both.
-- **Groups stay on the main device** for now; they come to linked devices in a later release.
+- **Groups stayed on the main device** in 0.12; since 0.13 they reach every device.
 - **Documents** you send reach the contact's main device only for now, and your other devices get no copy of them.
 - **Incognito contacts stay** where they are: each is an identity of its own.
 
