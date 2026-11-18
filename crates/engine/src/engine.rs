@@ -1773,6 +1773,11 @@ impl Engine {
         if let (Some(k), Some(v)) = (from, via)
             && v != k
         {
+            // A group key from another device: its session is that device's.
+            if matches!(got.body, Body::GroupKey { .. }) {
+                self.group_key_from(v, got.body);
+                return self.persist();
+            }
             if self.index(&v).is_some_and(|o| self.data.contacts[o].own) {
                 if let Some(i) = self.index(&k) {
                     self.own_copy(i, got.body);

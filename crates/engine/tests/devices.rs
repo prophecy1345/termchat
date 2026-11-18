@@ -38,7 +38,25 @@ fn engine(dir: &Path, name: &str, url: &str) -> Box<Engine> {
 async fn pump(e: &mut [Box<Engine>], done: impl Fn(&[Box<Engine>]) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !done(e) {
-        assert!(Instant::now() < deadline, "timed out");
+        if Instant::now() >= deadline {
+            for (n, x) in e.iter().enumerate() {
+                for g in &x.data.groups {
+                    let texts: Vec<_> = g
+                        .messages
+                        .iter()
+                        .map(|m| (m.text.as_str(), m.mine, m.author.map(|a| a[0])))
+                        .collect();
+                    let devs: Vec<_> = g.devices().iter().map(|d| d.ed25519[0]).collect();
+                    eprintln!(
+                        "#{n} me {} devices {devs:?} shared {:?} early {} msgs {texts:?}",
+                        x.me()[0],
+                        g.shared.iter().map(|k| k[0]).collect::<Vec<_>>(),
+                        g.early.len()
+                    );
+                }
+            }
+            panic!("timed out");
+        }
         for x in e.iter_mut() {
             while let Ok(ev) = x.events.try_recv() {
                 x.on_relay(ev);
@@ -483,6 +501,46 @@ async fn each_device_of_a_member_gets_a_reader_and_the_laptop_follows_the_phone(
                     .any(|(m, _, r)| *m == alice && r.iter().any(|(d, _)| *d == laptop))
             })
         })
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn in_group(e: &Engine, text: &str, mine: bool, author: Option<[u8; 32]>) -> bool {
+    e.data.groups.first().is_some_and(|g| {
+        g.messages
+            .iter()
+            .any(|m| m.text == text && m.mine == mine && m.author == author)
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_device_of_a_member_reads_and_writes_in_the_group() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices10-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let g = group_with_alice_on_two_devices(&mut e).await;
+    let (alice, bob) = (e[0].me(), e[2].me());
+
+    e[2].send_group(g, "hi both of you").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[0], "hi both of you", false, Some(bob))
+            && in_group(&e[1], "hi both of you", false, Some(bob))
+    })
+    .await;
+
+    e[1].send_group(0, "from alice's laptop").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[2], "from alice's laptop", false, Some(alice))
+            && in_group(&e[0], "from alice's laptop", true, None)
+    })
+    .await;
+
+    e[0].send_group(0, "and from her phone").unwrap();
+    pump(&mut e, |e| {
+        in_group(&e[2], "and from her phone", false, Some(alice))
+            && in_group(&e[1], "and from her phone", true, None)
     })
     .await;
     std::fs::remove_dir_all(&dir).unwrap();

@@ -122,9 +122,9 @@ impl Engine {
 
     /// A new group with us as its admin and only member, on our relay.
     pub fn create_group(&mut self, name: &str) -> Result<usize, String> {
-        // ADR-028: groups come to linked devices in a later release.
+        // ADR-028: the admin's token lives on the main device.
         if !self.is_primary() {
-            return Err("groups are on your main device for now".into());
+            return Err("create groups on your main device".into());
         }
         let name = name.trim();
         proto::check_group_name(name)
@@ -516,7 +516,7 @@ impl Engine {
         let group = &mut self.data.groups[g];
         group.shared.clear();
         // Everyone in the group now reads the new session from its start.
-        group.since = group.members().iter().map(|m| (m.ed25519, 0)).collect();
+        group.since = group.devices().iter().map(|m| (m.ed25519, 0)).collect();
         self.share_key(g);
     }
 
@@ -540,7 +540,7 @@ impl Engine {
     pub(super) fn share_key(&mut self, g: usize) {
         let me = self.me();
         let gid = self.data.groups[g].id;
-        let members: Vec<RosterMember> = self.data.groups[g].members().to_vec();
+        let members: Vec<RosterMember> = self.data.groups[g].devices();
         for m in members {
             if m.ed25519 == me || self.data.groups[g].shared.contains(&m.ed25519) {
                 continue;
@@ -548,7 +548,11 @@ impl Engine {
             let contact = self.index(&m.ed25519).filter(|&i| {
                 self.data.contacts[i].profile.is_none() && self.has_session(&m.ed25519)
             });
-            if contact.is_some() {
+            // ADR-028: a contact's linked device, over the chat with them.
+            let owner = self
+                .owner_of_device(&m.ed25519)
+                .map(|c| self.data.contacts[c].key);
+            if contact.is_some() || owner.is_some() {
                 let Some(key) = self.key_for(g, &m.ed25519) else {
                     return;
                 };
@@ -556,8 +560,16 @@ impl Engine {
                     group: gid,
                     key: SecretBytes(key.to_vec()),
                 };
-                if self.transmit(&m.ed25519, body).is_ok() {
-                    self.data.groups[g].shared.push(m.ed25519);
+                match owner.filter(|_| contact.is_none()) {
+                    Some(owner) => {
+                        self.transmit_device(&owner, m.ed25519, body);
+                        self.data.groups[g].shared.push(m.ed25519);
+                    }
+                    None => {
+                        if self.transmit(&m.ed25519, body).is_ok() {
+                            self.data.groups[g].shared.push(m.ed25519);
+                        }
+                    }
                 }
             } else {
                 self.group_send(g, ClientFrame::ClaimKey { send_id: m.reader });
@@ -572,7 +584,7 @@ impl Engine {
     fn know_members(&mut self, g: usize) {
         let me = self.me();
         let gid = self.data.groups[g].id;
-        let members: Vec<RosterMember> = self.data.groups[g].members().to_vec();
+        let members: Vec<RosterMember> = self.data.groups[g].devices();
         let mut core = self.core();
         let at = core.group_index(&gid).unwrap_or(0);
         for m in members.iter().filter(|m| m.ed25519 != me) {
@@ -718,10 +730,9 @@ impl Engine {
             }
             ServerFrame::ClaimedKey { send_id, key } => {
                 let Some(m) = self.data.groups[g]
-                    .members()
-                    .iter()
+                    .devices()
+                    .into_iter()
                     .find(|m| m.reader == send_id)
-                    .cloned()
                 else {
                     return;
                 };
@@ -827,11 +838,7 @@ impl Engine {
         let Some(g) = self.data.groups.iter().position(|x| x.id == group) else {
             return;
         };
-        if !self.data.groups[g]
-            .members()
-            .iter()
-            .any(|m| m.ed25519 == sender)
-        {
+        if self.data.groups[g].owner(&sender).is_none() {
             // A newcomer's key before the roster that names them: keep it
             // until then (`take_roster`), the latest one per sender.
             let pending = &mut self.data.groups[g].pending_keys;
@@ -863,8 +870,18 @@ impl Engine {
     }
 
     /// What a member wrote in group `g`.
-    fn group_body(&mut self, g: usize, sender: Ed25519Key, body: Body) {
-        if sender == self.me() {
+    fn group_body(&mut self, g: usize, device: Ed25519Key, body: Body) {
+        if device == self.me() {
+            return;
+        }
+        // ADR-028: a device speaks for its member; ours for us.
+        let Some(sender) = self.data.groups[g].owner(&device) else {
+            return;
+        };
+        let mine = sender == self.identity_key();
+        if mine && !matches!(body, Body::Message { .. }) {
+            // shortcut: edits, deletes and reactions from our other devices
+            // are not mirrored in groups; mirror them if people miss them.
             return;
         }
         match body {
@@ -878,18 +895,21 @@ impl Engine {
                 let at = now();
                 let group = &mut self.data.groups[g];
                 group.messages.push(Msg {
-                    mine: false,
+                    mine,
                     text,
                     at,
                     expires_at: expires_in.map(|s| at + u64::from(s)),
-                    status: Status::Received,
+                    status: if mine { Status::Sent } else { Status::Received },
                     file: None,
-                    author: Some(sender),
+                    author: (!mine).then_some(sender),
                     id: Some(id),
                     reply_to,
-                    unfetched: true,
+                    unfetched: !mine,
                     ..Default::default()
                 });
+                if mine {
+                    return;
+                }
                 if self.open_group != Some(group.id) {
                     group.unread += 1;
                 }
@@ -1265,6 +1285,11 @@ impl Engine {
             .member_devices
             .push((who, list.clone(), readers.clone()));
         let gid = group.id;
+        self.know_members(g);
+        // The roster again: the new devices read only from here on.
+        if let Some(roster) = self.data.groups[g].roster.clone() {
+            self.send_group_body(g, Body::GroupRoster { roster });
+        }
         self.send_group_body(
             g,
             Body::GroupDevices {
@@ -1274,6 +1299,7 @@ impl Engine {
                 readers,
             },
         );
+        self.share_key(g);
         self.persist();
     }
 
@@ -1299,6 +1325,8 @@ impl Engine {
         let group = &mut self.data.groups[g];
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
+        self.know_members(g);
+        self.share_key(g);
         self.persist();
     }
 

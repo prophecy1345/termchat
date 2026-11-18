@@ -17,6 +17,11 @@ impl Engine {
         self.data.primary.is_none()
     }
 
+    /// Our identity: the primary's key, also on a linked device.
+    pub fn identity_key(&self) -> Ed25519Key {
+        self.data.primary.as_ref().map_or(self.me(), |p| p.ed25519)
+    }
+
     /// A new device's link code, to paste or scan on the primary. Only a
     /// device with nobody on it yet can be linked.
     pub fn link_code(&mut self) -> Result<String, String> {
@@ -86,7 +91,7 @@ impl Engine {
 
     /// The fingerprint both screens show while linking: the identity's.
     pub fn link_fingerprint(&self) -> String {
-        let id = self.data.primary.as_ref().map_or(self.me(), |p| p.ed25519);
+        let id = self.identity_key();
         fingerprint(&id)
     }
 
@@ -331,8 +336,7 @@ impl Engine {
             self.transmit(&key, body)?;
             self.data.contacts[i].devices_told = list.no;
         }
-        // shortcut: only devices with a channel to us hear (the primary and
-        // the devices it linked); linked devices among themselves come later.
+        // Our devices with a channel to us: the primary, or each other once met.
         for d in list.devices.iter().filter(|d| d.ed25519 != me) {
             let Some(o) = self
                 .index(&d.ed25519)

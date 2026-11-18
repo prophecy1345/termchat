@@ -907,7 +907,7 @@ impl Chat {
                     hint(
                         ui,
                         p,
-                        "This device is linked to your main one, which adds and removes devices. Groups stay on the main device for now.",
+                        "This device is linked to your main one, which adds and removes devices and creates groups.",
                     );
                 }
                 if let Some(d) = device {

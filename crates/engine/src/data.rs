@@ -263,6 +263,43 @@ impl Group {
     pub fn members(&self) -> &[RosterMember] {
         self.roster.as_ref().map_or(&[], |r| r.members.as_slice())
     }
+
+    /// Every device in the group (ADR-028): each member's primary from the
+    /// roster, and their linked devices with the readers made for them.
+    pub fn devices(&self) -> Vec<RosterMember> {
+        let mut all = self.members().to_vec();
+        for (member, list, readers) in &self.member_devices {
+            let Some(m) = self.members().iter().find(|m| m.ed25519 == *member) else {
+                continue;
+            };
+            for d in list.devices.iter().filter(|d| d.ed25519 != *member) {
+                if let Some((_, reader)) = readers.iter().find(|(k, _)| *k == d.ed25519) {
+                    all.push(RosterMember {
+                        ed25519: d.ed25519,
+                        curve25519: d.curve25519,
+                        nickname: m.nickname.clone(),
+                        reader: *reader,
+                    });
+                }
+            }
+        }
+        all
+    }
+
+    /// The member whose device `device` is, if any.
+    pub fn owner(&self, device: &Ed25519Key) -> Option<Ed25519Key> {
+        if self.members().iter().any(|m| m.ed25519 == *device) {
+            return Some(*device);
+        }
+        self.member_devices
+            .iter()
+            .find(|(m, list, readers)| {
+                self.members().iter().any(|x| x.ed25519 == *m)
+                    && list.devices.iter().any(|d| d.ed25519 == *device)
+                    && readers.iter().any(|(k, _)| k == device)
+            })
+            .map(|(m, ..)| *m)
+    }
 }
 
 /// An identity of its own, used with one contact only (ADR-014).

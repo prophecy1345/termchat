@@ -28,7 +28,7 @@ One identity can live on up to four devices, for example your phone and your lap
 - **Your contacts move**, with your names for them and their verified marks. Each device then talks to each contact on its own.
 - **History does not.** A new device starts with empty chats; older messages stay on the devices that have them.
 - **Incognito contacts stay** on the main device: each is an identity of its own.
-- **Groups stay on the main device** for now. On a linked device groups cannot be made or joined yet.
+- **Groups** reach every device: accept an invite on one, and your other devices join too. New groups are made on the main device. If someone in a group runs an older version, it cannot read what your linked devices write there.
 - **Documents** reach every device of the contact. Your other devices show that you sent one, but the file itself stays on the device that sent it.
 
 ## What you see on each device
