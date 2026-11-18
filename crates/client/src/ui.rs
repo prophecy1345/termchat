@@ -1627,6 +1627,7 @@ fn popup_pane(
             lines.push(Line::from(""));
             let buttons = [
                 ("a add a device", true, key(KeyCode::Char('a'))),
+                ("r rename", false, key(KeyCode::Char('r'))),
                 ("x remove", false, key(KeyCode::Char('x'))),
                 ("esc close", false, esc),
             ];
@@ -1651,6 +1652,15 @@ fn popup_pane(
                 ("n cancel", false, key(KeyCode::Char('n'))),
             ];
             window(f, t, h, "link a device", lines, &buttons, 72, false);
+        }
+        Popup::RenameDevice(_, s) => {
+            let lines = vec![
+                Line::from("A label like \"phone\" or \"laptop\", seen only on your own devices."),
+                Line::from(""),
+                field(t, s, Some(s.cursor_chars()), 46),
+            ];
+            let buttons = [("↵ save", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "rename a device", lines, &buttons, 60, false);
         }
         Popup::RemoveDevice(_) => {
             let lines = plain(

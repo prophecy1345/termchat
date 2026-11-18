@@ -148,6 +148,28 @@ impl Engine {
         Ok(())
     }
 
+    /// On the primary: device `key`'s label, "phone" or "laptop", seen only
+    /// by our own devices. Empty takes it away.
+    pub fn set_device_label(&mut self, key: &Ed25519Key, label: &str) -> Result<(), String> {
+        if !self.is_primary() {
+            return Err("labels are set on your main device".into());
+        }
+        if !self.lists(key) && *key != self.me() {
+            return Err("no such device".into());
+        }
+        let label = label.trim();
+        if !label.is_empty() {
+            check_nickname(label)
+                .map_err(|_| "a label is up to 64 bytes, no control characters")?;
+        }
+        self.data.device_labels.retain(|(k, _)| k != key);
+        if !label.is_empty() {
+            self.data.device_labels.push((*key, label.to_string()));
+        }
+        self.tell_own_devices();
+        Ok(())
+    }
+
     /// A linked device the primary removed: it keeps what it had, and sends
     /// nothing more.
     pub fn removed(&self) -> bool {
@@ -379,6 +401,13 @@ impl Engine {
                     return;
                 };
                 let me = self.me();
+                // The same list again: new labels or a new nickname only.
+                if self.data.contacts[i].key == primary && self.data.devices.as_ref() == Some(&list)
+                {
+                    self.data.device_labels = labels;
+                    self.data.nickname = nickname;
+                    return;
+                }
                 let newer = self.data.devices.as_ref().is_none_or(|d| list.no > d.no);
                 let on_it = list.devices.iter().any(|d| d.ed25519 == me);
                 let first = self.data.devices.is_none();

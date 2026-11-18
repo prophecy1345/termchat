@@ -102,6 +102,12 @@ pub enum Dialog {
     Link(usize),
     /// Remove this device?
     RemoveDevice([u8; 32]),
+    /// A device's new label, seen only by our own devices.
+    RenameDevice {
+        key: [u8; 32],
+        label: String,
+        error: String,
+    },
 }
 
 /// The current password, a new one and its repeat.
@@ -597,7 +603,9 @@ impl Chat {
                 ui.add_space(12.0);
                 let me = self.engine.me();
                 let mut remove = None;
+                let mut rename = None;
                 for (n, (k, label)) in self.engine.device_rows().into_iter().enumerate() {
+                    let old = label.clone();
                     row(ui, p, |ui| {
                         ui.vertical(|ui| {
                             let mut name = match label.is_empty() {
@@ -619,6 +627,9 @@ impl Chat {
                             if k != me && ui.button("Remove…").clicked() {
                                 remove = Some(k);
                             }
+                            if ui.button("Rename…").clicked() {
+                                rename = Some((k, old));
+                            }
                         });
                     });
                 }
@@ -634,6 +645,14 @@ impl Chat {
                     .inner;
                 if let Some(k) = remove {
                     self.dialog = Some(Dialog::RemoveDevice(k));
+                    return false;
+                }
+                if let Some((key, label)) = rename {
+                    self.dialog = Some(Dialog::RenameDevice {
+                        key,
+                        label,
+                        error: String::new(),
+                    });
                     return false;
                 }
                 if add {
@@ -690,6 +709,24 @@ impl Chat {
                 if !stay {
                     self.engine.delete(*i);
                     self.status = "linking cancelled".into();
+                }
+                stay
+            }
+            Dialog::RenameDevice { key, label, error } => {
+                ui.set_width(480.0);
+                ui.heading("Rename a device");
+                ui.label("A label like \"phone\" or \"laptop\", seen only on your own devices.");
+                ui.add(egui::TextEdit::singleline(label).desired_width(f32::INFINITY));
+                error_line(ui, p, error);
+                let (go, stay) = buttons(ui, p, "Save");
+                if go {
+                    match self.engine.set_device_label(key, label) {
+                        Ok(()) => {
+                            self.dialog = Some(Dialog::Devices);
+                            return false;
+                        }
+                        Err(e) => *error = e,
+                    }
                 }
                 stay
             }

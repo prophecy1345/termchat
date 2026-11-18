@@ -308,3 +308,31 @@ async fn a_removed_device_hears_so_and_contacts_stop_writing_to_it() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn labels_reach_our_devices_and_only_the_primary_sets_them() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices6-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let laptop = e[1].me();
+    assert!(e[1].set_device_label(&laptop, "laptop").is_err());
+    assert!(e[0].set_device_label(&laptop, "a\u{1b}[2J").is_err());
+    e[0].set_device_label(&laptop, "laptop").unwrap();
+    pump(&mut e, |e| {
+        e[1].device_rows()
+            .iter()
+            .any(|(k, l)| *k == laptop && l == "laptop")
+    })
+    .await;
+    e[0].set_device_label(&laptop, " ").unwrap();
+    pump(&mut e, |e| {
+        e[1].device_rows().iter().all(|(_, l)| l.is_empty())
+    })
+    .await;
+    // Bob never hears a label: it is not in what contacts get.
+    let i = e[2].index(&e[0].me()).unwrap();
+    assert!(e[2].data.contacts[i].their_devices.is_some());
+    assert!(e[2].data.device_labels.is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

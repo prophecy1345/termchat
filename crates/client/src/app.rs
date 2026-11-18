@@ -141,6 +141,8 @@ pub enum Popup {
     Link(usize),
     /// Remove this device?
     RemoveDevice(Ed25519Key),
+    /// A device's new label, seen only by our own devices.
+    RenameDevice(Ed25519Key, Input),
 }
 
 /// What Enter does with the typed text (ADR-025).
@@ -1445,6 +1447,9 @@ impl Main {
                         Some(Popup::Devices((at + 1).min(rows.len().saturating_sub(1))))
                     }
                     KeyCode::Char('a') => Some(Popup::AddDevice(Input::default())),
+                    KeyCode::Char('r') => rows
+                        .get(at)
+                        .map(|(k, l)| Popup::RenameDevice(*k, Input::from(l.as_str()))),
                     KeyCode::Char('x') => rows
                         .get(at)
                         .map(|(k, _)| *k)
@@ -1463,6 +1468,15 @@ impl Main {
                     }
                 },
                 false => Some(Popup::AddDevice(s)),
+            },
+            Popup::RenameDevice(key, mut s) if k.code != KeyCode::Esc => match s.on_key(k) {
+                true => {
+                    if let Err(e) = self.engine.set_device_label(&key, &s) {
+                        self.status = e;
+                    }
+                    Some(Popup::Devices(0))
+                }
+                false => Some(Popup::RenameDevice(key, s)),
             },
             Popup::Link(i) => match k.code {
                 KeyCode::Char('y') => {
@@ -1506,6 +1520,7 @@ impl Main {
             },
             Popup::Add(_)
             | Popup::AddDevice(_)
+            | Popup::RenameDevice(..)
             | Popup::NewGroup(_)
             | Popup::Rename(_)
             | Popup::Incognito(_)
