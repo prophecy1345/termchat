@@ -1240,6 +1240,21 @@ impl Engine {
                 send_id,
                 reader,
             } => {
+                // We joined already, through an invite to a queue the group
+                // has since left: this one moves us, as a `GroupMove` would.
+                if self
+                    .data
+                    .groups
+                    .iter()
+                    .any(|x| x.id == roster.group && !x.left)
+                {
+                    let body = Body::GroupMove {
+                        roster,
+                        send_id,
+                        reader,
+                    };
+                    return self.group_from_contact(i, body);
+                }
                 let name = roster.name.clone();
                 self.data
                     .group_invites

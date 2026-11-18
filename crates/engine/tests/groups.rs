@@ -37,14 +37,32 @@ fn engine(dir: &Path, name: &str, url: &str) -> Box<Engine> {
 
 async fn pump(e: &mut [Box<Engine>; 3], done: impl Fn(&[Box<Engine>; 3]) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(30);
+    let mut log: Vec<String> = Vec::new();
     while !done(e) {
-        assert!(
-            Instant::now() < deadline,
-            "timed out: {:?} / {:?} / {:?}",
-            e[0].happened,
-            e[1].happened,
-            e[2].happened
-        );
+        if Instant::now() >= deadline {
+            for (n, x) in e.iter().enumerate() {
+                for g in &x.data.groups {
+                    eprintln!(
+                        "DIAG {n}: members={} invited={} asking={} moving={} left={} reader={} msgs={:?}",
+                        g.members().len(),
+                        g.invited.len(),
+                        g.asking.len(),
+                        g.moving.is_some(),
+                        g.left,
+                        g.reader.is_some(),
+                        g.messages
+                            .iter()
+                            .map(|m| m.text.clone())
+                            .collect::<Vec<_>>()
+                    );
+                }
+                eprintln!("DIAG {n}: invites={}", x.data.group_invites.len());
+            }
+            for l in &log {
+                eprintln!("LOG {l}");
+            }
+            panic!("timed out");
+        }
         let [a, b, c] = e;
         tokio::select! {
             Some(ev) = a.events.recv() => a.on_relay(ev),
@@ -52,9 +70,11 @@ async fn pump(e: &mut [Box<Engine>; 3], done: impl Fn(&[Box<Engine>; 3]) -> bool
             Some(ev) = c.events.recv() => c.on_relay(ev),
             () = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
-        for x in e.iter_mut() {
+        for (n, x) in e.iter_mut().enumerate() {
             x.tick();
-            x.happened.clear();
+            for h in x.happened.drain(..) {
+                log.push(format!("{n}: {h:?}"));
+            }
         }
     }
 }
@@ -421,5 +441,54 @@ async fn an_invite_right_after_accepting_waits_for_their_level() {
     assert_eq!(e[0].data.contacts[i].understands, 0);
     e[0].invite_to_group(g, i).unwrap();
     pump(&mut e, |e| e[1].data.group_invites.len() == 1).await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Someone accepts an invite while the group moves: they join the old,
+/// deleted queue, and the invite for the new one comes after. It must move
+/// them, not leave them in the old queue.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invite_taken_during_a_move_still_lands_in_the_new_queue() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-groups5-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = [
+        engine(&dir, "alice", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    settle(&mut e).await;
+    befriend(&mut e, 1, 0).await;
+    befriend(&mut e, 2, 0).await;
+    let g = e[0].create_group("move").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+    for who in [1, 2] {
+        let i = e[0].index(&e[who].me()).unwrap();
+        e[0].invite_to_group(g, i).unwrap();
+    }
+    pump(&mut e, |e| {
+        e[1].data.group_invites.len() == 1 && e[2].data.group_invites.len() == 1
+    })
+    .await;
+    e[1].accept_group(0).unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].members().len() == 2).await;
+
+    // Carol is away while Bob is removed and the group moves.
+    let bob = e[1].me();
+    e[0].remove_from_group(0, &bob).unwrap();
+    pump_only(&mut e, [true, true, false], 4).await;
+    // Back, she takes the invite she has: the one for the old queue.
+    e[2].accept_group(0).unwrap();
+    pump(&mut e, |e| {
+        e[2].data
+            .groups
+            .first()
+            .is_some_and(|g| g.members().len() == 2)
+            && e[0].data.groups[0].members().len() == 2
+    })
+    .await;
+    e[2].send_group(0, "made it").unwrap();
+    pump(&mut e, |e| said(&e[0], 0, "made it")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
