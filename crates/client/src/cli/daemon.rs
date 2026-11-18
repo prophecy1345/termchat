@@ -359,13 +359,25 @@ pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
 async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
     let request = request(a)?;
     let (read, mut write) = stream.into_split();
-    let io = |why: std::io::Error| Fail(1, format!("daemon: {why}"));
+    // Closed before any answer: the daemon turned us away (ADR-029).
+    const REFUSED: &str = "the daemon for this identity closed the connection before \
+        answering: it lets in only its own user and at most 16 commands at once, or it stopped";
+    let refused = |_| Fail(1, REFUSED.into());
     write
         .write_all(format!("{request}\n").as_bytes())
         .await
-        .map_err(io)?;
+        .map_err(refused)?;
     let mut lines = BufReader::new(read).lines();
-    while let Some(line) = lines.next_line().await.map_err(io)? {
+    let mut answered = false;
+    loop {
+        let line = lines.next_line().await;
+        let line = match line {
+            Ok(Some(line)) => line,
+            Ok(None) | Err(_) if !answered => return fail(1, REFUSED),
+            Ok(None) => break,
+            Err(why) => return fail(1, format!("daemon: {why}")),
+        };
+        answered = true;
         let v: Value =
             serde_json::from_str(&line).map_err(|_| Fail(1, "daemon: bad answer".into()))?;
         let Some(done) = v["ok"].as_bool() else {
