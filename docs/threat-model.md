@@ -89,6 +89,16 @@ that (ADR-023).
   Members who are not each other's contacts trust the admin's signed list
   for who the others are, until they compare safety numbers. A new member
   reads nothing from before they joined; a removed one nothing after.
+- **Several devices** (ADR-028). Every device has keys of its own and reads
+  everything sent to you, so each one is a way in: a stolen unlocked laptop
+  reads like your phone would. Remove a lost device from the main one; it then
+  gets nothing new, but keeps what it had. Contacts see how many devices you
+  have and their keys. The relay sees a message to you as one write per
+  device, and can tie those queues together as yours; without Tor, so can
+  your IP addresses. Linking is checked by eye: both screens show the
+  identity's fingerprint, and a copied link code shows another one. Only the
+  main device adds or removes devices; if it is lost, restore it from its
+  backup.
 - **An identity on a server** (scriptable mode, ADR-024). Its password sits
   next to its state file, so whoever gets root there reads that identity's
   messages and can write as it. It is a separate key with separate queues,

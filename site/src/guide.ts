@@ -14,6 +14,7 @@ export const sections: Section[] = [
   { slug: "first-run", title: { en: "First run", ru: "Первый запуск" } },
   { slug: "contacts", title: { en: "Contacts", ru: "Контакты" } },
   { slug: "messages", title: { en: "Messages", ru: "Сообщения" } },
+  { slug: "devices", title: { en: "Devices", ru: "Устройства" } },
   { slug: "terminal", title: { en: "Terminal", ru: "Терминал" } },
   { slug: "desktop", title: { en: "Desktop app", ru: "Приложение для компьютера" } },
   { slug: "android", title: { en: "Android", ru: "Android" } },

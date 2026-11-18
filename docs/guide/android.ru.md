@@ -11,7 +11,7 @@ English version: [android.md](android.md).
 
 ## Экраны
 
-- **Чаты:** контакты, новые сверху, под ними группы. В ⋮ — **Your invite**, **Add contact**, **New group**, **Settings**, **What's new** и **Lock**; **+** тоже добавляет контакт.
+- **Чаты:** контакты, новые сверху, под ними группы. В ⋮ — **Your invite**, **Add contact**, **New group**, **Devices** (см. [Устройства](devices.ru.md)), **Settings**, **What's new** и **Lock**, а на новом устройстве **Link to my main device**; **+** тоже добавляет контакт.
 - **Чат:** в ⋮ — **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** и **Delete**. Внизу таймер (капля), 📎 для файла, поле и **Send**.
 - **Долгое нажатие** на сообщение — ответить, поставить реакцию, скопировать, а на своих — исправить или удалить; см. [Сообщения](messages.ru.md).
 - **Your invite** показывает QR-код для другого телефона или приложения для компьютера; в **Add contact** есть **Scan QR code**. См. [Контакты](contacts.ru.md).

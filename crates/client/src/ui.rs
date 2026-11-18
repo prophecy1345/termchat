@@ -1026,6 +1026,7 @@ fn manual() -> &'static str {
             include_str!("../../../docs/guide/first-run.md"),
             include_str!("../../../docs/guide/contacts.md"),
             include_str!("../../../docs/guide/messages.md"),
+            include_str!("../../../docs/guide/devices.md"),
             include_str!("../../../docs/guide/terminal.md"),
             include_str!("../../../docs/guide/safety.md"),
             include_str!("../../../docs/guide/tor.md"),

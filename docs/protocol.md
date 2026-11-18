@@ -319,6 +319,50 @@ There is no short form for typing by hand: the string is copied, and a short
 code would need the relay to store a "code → keys" mapping. Later: a QR code in
 the terminal.
 
+### Devices (ADR-028)
+
+A new device asks to be linked with a link code: the same `Invite` fields
+under its own prefix, so neither can be taken for the other.
+
+```
+termchat-link:<base64url(postcard(Invite))>
+```
+
+The primary answers on that invite queue with a pre-key message whose body is
+`DeviceLink { code, identity }`, admitted like a contact request (the code must
+be the one the link code carried, and `identity` must bind the sender's keys).
+Both screens then show the identity's fingerprint; once the person confirms on
+both, the new device sends `DeviceLinked` and the primary signs a new list.
+
+```
+DeviceList { identity: [u8; 32], no: u64, devices: Vec<Device>, signature: [u8; 64] }
+Device { ed25519: [u8; 32], curve25519: [u8; 32] }
+DeviceQueue { device: [u8; 32], relay_url: String, onion_url: Option<String>, send_id: [u8; 16] }
+
+Body += DeviceLink { code: [u8; 16], identity: Identity }
+      | DeviceLinked
+      | LinkedContact { contact: LinkedContact }   // primary -> new device, one contact each
+      | OwnDevices { list: DeviceList, labels: Vec<([u8; 32], String)>, nickname: String }  // own devices only
+      | Devices { list: DeviceList, queues: Vec<DeviceQueue> }                             // to contacts
+      | OwnQueue { contact: [u8; 32], queue: DeviceQueue }                                 // own devices only
+```
+
+The list is signed by the identity key over `"termchat-devices-v1" ||
+postcard(identity, no, devices)`. The first device is the primary: its key is
+the identity. At most 4 devices, no key twice. A receiver takes a list only
+from that identity, with a valid signature and a number not lower than the one
+it has, and forgets the sessions of devices that left it.
+
+Each device has its own queue for each contact. A message goes once per
+device: to each device of the contact, into its queue, and as a copy to each
+of our other devices, into its queue for that contact. `Inner.sender` and
+`recipient` are device keys; for a primary they equal the identity, so older
+clients see no change. Our queue for a contact reads from the contact's
+primary, from any device on their list (as the contact), and from our own
+devices (as ours). A device announces itself to contacts with `Devices`, never
+with `QueueOffer`, which would move where they write to the whole identity.
+Contacts below `Understands` level 3 hear only the primary.
+
 ## 10. Fingerprint
 
 Same scheme as Signal: every key has its own fingerprint; the safety number is
