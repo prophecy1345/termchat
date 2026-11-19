@@ -11,6 +11,8 @@ the desktop app.
   fingerprint too (through Tor its answer takes up to half a minute), so
   both screens show it together and "The same" is not pressed alone. The
   new device no longer hides its fingerprint window behind a note.
+- Android: a note said in a chat no longer stays over the chat list after
+  you go back.
 
 ## 0.17.1
 
