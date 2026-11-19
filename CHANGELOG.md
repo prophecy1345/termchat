@@ -3,6 +3,21 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.17.0
+
+The rest of the security fixes from the third source review (ADR-030).
+After updating, link your other devices to your main one again: erase each linked device (wipe, MOVED) and link it from the first screen. The main device keeps its history.
+
+- Each device signs that it joins your identity, and every device list is
+  checked for it: a list can no longer name a key whose holder did not
+  agree. Lists from earlier versions are dropped on the first unlock.
+- Copies of what you send go to your other devices with the chat they are
+  for, and land nowhere else.
+- Groups show "N message(s) missing so far", as chats do, when the relay
+  withholds or loses group messages.
+- Contacts on versions before 0.17 hear only your main device until they
+  update.
+
 ## 0.16.1
 
 Security fixes from the third source review (review-2026-11c, ADR-030):
