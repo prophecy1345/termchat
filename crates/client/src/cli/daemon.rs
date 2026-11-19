@@ -20,6 +20,8 @@ use super::{
     status_of,
 };
 
+mod watch;
+
 pub const SOCKET: &str = "daemon.sock";
 /// A 1 MB document in base64, with room for the rest of the line.
 const MAX_LINE: u64 = 2 << 20;
@@ -83,6 +85,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
     let (tx, mut rx) = mpsc::channel::<Job>(64);
     let open = Arc::new(AtomicUsize::new(0));
     let (mut pending, mut readers) = (Vec::new(), Vec::new());
+    let mut watches = Vec::new();
     eprintln!("termchat: daemon ready on {}", path.display());
     loop {
         tokio::select! {
@@ -100,7 +103,11 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
                 }
             }
             Some((request, reply)) = rx.recv() => {
-                handle(e, request, reply, &mut pending, &mut readers);
+                if watch::is_request(&request) {
+                    watch::register(e, &request, reply, &mut watches);
+                } else {
+                    handle(e, request, reply, &mut pending, &mut readers);
+                }
             }
             Some(ev) = e.events.recv() => e.on_relay(ev),
             () = tokio::time::sleep(Duration::from_millis(200)) => {}
@@ -108,6 +115,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
             _ = int.recv() => break,
         }
         e.tick();
+        watch::progress(e, &mut watches);
         e.happened.clear();
         progress(e, &mut pending, &mut readers);
     }
@@ -143,6 +151,7 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
         }
         let (reply, mut answers) = mpsc::unbounded_channel();
         let request = serde_json::from_str(&line).unwrap_or(Value::Null);
+        let long_watch = watch::is_request(&request);
         if jobs.send((request, reply)).await.is_err() {
             return;
         }
@@ -164,6 +173,7 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
                 }
                 more = read.fill_buf(), if watch => match more {
                     Ok([]) | Err(_) => return,
+                    Ok(_) if long_watch => return,
                     Ok(_) => watch = false,
                 },
             }
@@ -389,7 +399,11 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
         let v: Value =
             serde_json::from_str(&line).map_err(|_| Fail(1, "daemon: bad answer".into()))?;
         let Some(done) = v["ok"].as_bool() else {
-            print_record(a, v)?;
+            if a.command == "watch" && v["ready"] == true {
+                println!("watch ready");
+            } else {
+                print_record(a, v)?;
+            }
             continue;
         };
         if !done {
@@ -453,6 +467,12 @@ fn request(a: &Args) -> Result<Value, Fail> {
                 "cmd": "recv", "from": a.from, "wait": a.wait, "follow": a.follow,
                 "files": a.save_dir.is_some(),
             })
+        }
+        ("watch", [role, peer]) if role == "send" => {
+            json!({ "cmd": "watch_send", "peer": peer, "seconds": a.every })
+        }
+        ("watch", [role, peer]) if role == "monitor" => {
+            json!({ "cmd": "watch_monitor", "peer": peer, "owner": a.notify, "seconds": a.after })
         }
         _ => return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command)),
     })

@@ -1,0 +1,1 @@
+What's new now wraps release notes to the width of your screen. On Linux and macOS, termchat watch can alert you with an encrypted message when a server goes quiet.

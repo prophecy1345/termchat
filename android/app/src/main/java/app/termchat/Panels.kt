@@ -194,11 +194,20 @@ fun News(m: Model) = Panel(m, "What's new") {
         Text("Update from where you installed it: F-Droid, or the APK on github.com/prophecy1345/termchat/releases.", style = Tc.mono)
         Line()
     }
-    for (line in remember { changelog().lines() }) {
+    val entries = remember {
+        // Preserve headings, paragraphs and bullets, and let Compose wrap their text.
+        changelog().trim().split(Regex("""\r?\n(?:[ \t]*\r?\n)+|\r?\n(?=## |- )"""))
+            .map { entry -> entry.lineSequence().joinToString(" ") { it.trim() } }
+    }
+    for (entry in entries) {
         when {
-            line.startsWith("## ") -> Text(line.removePrefix("## "), style = Tc.name, modifier = Modifier.padding(top = 8.dp))
-            line.isBlank() -> {}
-            else -> Text(line.replace("**", "").replace("`", ""), style = Tc.small.copy(color = Tc.text))
+            entry.startsWith("## ") -> Text(entry.removePrefix("## "), style = Tc.name, modifier = Modifier.padding(top = 8.dp))
+            entry.isBlank() -> {}
+            else -> Text(
+                entry.replace("**", "").replace("`", ""),
+                style = Tc.small.copy(color = Tc.text),
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

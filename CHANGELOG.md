@@ -3,6 +3,13 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.18.0
+
+- `termchat watch` sends an encrypted heartbeat from a server to a second
+  host. The watcher messages a verified contact if the server goes silent
+  (ADR-031, Linux and macOS).
+- Android: What's new wraps release notes to the available screen width.
+
 ## 0.17.3
 
 - Groups: your own devices no longer show in a group's invite list; they

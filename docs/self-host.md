@@ -141,6 +141,10 @@ servers is seized or broken into.
 
 ## Running it well
 
+- **Availability alerts.** Put a `termchat watch` watcher on a separate host.
+  Its heartbeats use ordinary contact queues. If you want an alert when your
+  relay itself goes down, use an independent relay for the alert recipient.
+  [Set up server monitoring](https://termchat.app/docs/scripts/#get-a-message-when-a-server-goes-quiet)
 - **Backups.** Losing the database loses undelivered messages and prekeys
   (clients republish keys on their next connection). Back up with
   `sqlite3 termchat-relay.db ".backup backup.db"`; the backup holds the same

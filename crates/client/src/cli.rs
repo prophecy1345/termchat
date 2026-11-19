@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 #[cfg(unix)]
 mod daemon;
 
-pub const COMMANDS: [&str; 8] = [
+pub const COMMANDS: [&str; 9] = [
     "init",
     "daemon",
     "invite",
@@ -27,6 +27,7 @@ pub const COMMANDS: [&str; 8] = [
     "send",
     "send-file",
     "recv",
+    "watch",
 ];
 
 const USAGE: &str = "usage:
@@ -38,6 +39,8 @@ const USAGE: &str = "usage:
   termchat send CONTACT [TEXT]          (TEXT from stdin if not given)
   termchat send-file CONTACT PATH
   termchat recv [--from CONTACT] [--wait SECS] [--follow] [--json] [--save-dir DIR]
+  termchat watch send WATCHER --every SECS
+  termchat watch monitor SERVER --notify OWNER --after SECS
 options for all: --password-file PATH | --password-stdin, --timeout SECS (default 60)
 state folder: TERMCHAT_HOME, or ~/.termchat";
 
@@ -64,6 +67,9 @@ struct Args {
     json: bool,
     save_dir: Option<PathBuf>,
     from: Option<String>,
+    every: Option<u64>,
+    after: Option<u64>,
+    notify: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<Args, Fail> {
@@ -95,6 +101,9 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
             "--json" => a.json = true,
             "--save-dir" => a.save_dir = Some(data::expand(&value(&mut it, arg)?)),
             "--from" => a.from = Some(value(&mut it, arg)?),
+            "--every" => a.every = Some(secs(value(&mut it, arg)?, arg)?),
+            "--after" => a.after = Some(secs(value(&mut it, arg)?, arg)?),
+            "--notify" => a.notify = Some(value(&mut it, arg)?),
             "--help" | "-h" => return fail(2, USAGE),
             s if s.starts_with("--") => return fail(2, format!("unknown option {s}\n{USAGE}")),
             _ => a.positional.push(arg.clone()),
@@ -111,9 +120,23 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
         "add" => n == 1,
         "send" => n == 1 || n == 2,
         "send-file" => n == 2,
+        "watch" => {
+            let valid = |s: Option<u64>| s.is_some_and(|s| s > 0);
+            match a.positional.as_slice() {
+                [role, _] if role == "send" => {
+                    valid(a.every) && a.after.is_none() && a.notify.is_none()
+                }
+                [role, _] if role == "monitor" => {
+                    valid(a.after) && a.every.is_none() && a.notify.is_some()
+                }
+                _ => false,
+            }
+        }
         _ => false,
     };
-    if !ok {
+    if !ok
+        || (a.command != "watch" && (a.every.is_some() || a.after.is_some() || a.notify.is_some()))
+    {
         return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command));
     }
     Ok(a)
@@ -135,6 +158,14 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     let path = data::home().join("state");
     if a.command == "init" {
         return init(&a, &path).await;
+    }
+    if a.command == "watch" {
+        #[cfg(unix)]
+        return daemon::ask(&a, &data::home())
+            .await
+            .unwrap_or_else(|| fail(1, "watch needs a running termchat daemon for this identity"));
+        #[cfg(not(unix))]
+        return fail(2, "termchat watch needs Linux or macOS");
     }
     // ADR-029: a running daemon answers without a password.
     #[cfg(unix)]

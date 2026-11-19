@@ -90,6 +90,9 @@ the same pages are in [docs/guide](docs/guide/):
 In the terminal client, **?** lists the keys and **Ctrl+P**, **m** opens the
 same guide.
 
+Run `termchat watch` on two hosts to get a private message when a server
+goes quiet. [Set up server monitoring](docs/guide/scripts.md#get-a-message-when-a-server-goes-quiet)
+
 ## Public relay
 
 | | |

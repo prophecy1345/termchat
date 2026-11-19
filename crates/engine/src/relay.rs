@@ -275,8 +275,10 @@ struct Retry {
 }
 
 enum Answer {
-    /// Not an answer to one of our `Send` frames.
+    /// A frame unrelated to `Send`.
     Other,
+    /// An answer with no matching pending send.
+    Unsolicited,
     /// Refused for now; the engine is not told.
     Retry,
     /// Accepted or refused for good; this recipient's queue moves on.
@@ -467,7 +469,7 @@ impl Link {
                     let Some(frame) = frame else { return End::Lost(true) };
                     match self.answered(&frame) {
                         Answer::Other => {}
-                        Answer::Retry => continue,
+                        Answer::Retry | Answer::Unsolicited => continue,
                         Answer::Done(to) => {
                             if self.pump(&mut ws, to).await.is_none() {
                                 return End::Lost(true);
@@ -508,11 +510,12 @@ impl Link {
             _ => return Answer::Other,
         };
         let Some(to) = self.pending.get(&id).and_then(queue) else {
-            return Answer::Other;
+            return Answer::Unsolicited;
         };
-        if self.in_flight.get(&to) == Some(&id) {
-            self.in_flight.remove(&to);
+        if self.in_flight.get(&to) != Some(&id) {
+            return Answer::Unsolicited;
         }
+        self.in_flight.remove(&to);
         if let ServerFrame::Error { code, .. } = frame
             && matches!(
                 code,

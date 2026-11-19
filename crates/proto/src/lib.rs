@@ -557,6 +557,10 @@ pub enum Body {
         contact: Ed25519Key,
         body: Box<Body>,
     },
+    /// ADR-031: a liveness pulse for a contact's direct queue.
+    Heartbeat {
+        sent_at: u64,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -568,7 +572,7 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 28;
+const KNOWN_KINDS: u32 = 29;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
@@ -860,14 +864,21 @@ pub struct GroupInner {
 
 impl GroupInner {
     pub fn to_padded(&self) -> Result<Vec<u8>, Error> {
-        check_body(&self.body)?;
+        self.check_body()?;
         pad(postcard::to_allocvec(self).map_err(|_| Error::Malformed)?)
     }
 
     pub fn from_padded(bytes: &[u8]) -> Result<Self, Error> {
         let inner: Self = decode_exact(unpad(bytes)?)?;
-        check_body(&inner.body)?;
+        inner.check_body()?;
         Ok(inner)
+    }
+
+    fn check_body(&self) -> Result<(), Error> {
+        match &self.body {
+            Body::Heartbeat { .. } => Err(Error::Malformed),
+            body => check_body(body),
+        }
     }
 }
 
@@ -906,7 +917,7 @@ fn check_body(body: &Body) -> Result<(), Error> {
         Body::Unknown => Err(Error::Malformed),
         // One level: a copy of a copy is no message anyone sent.
         Body::Copy { body, .. } => match **body {
-            Body::Copy { .. } => Err(Error::Malformed),
+            Body::Copy { .. } | Body::Heartbeat { .. } => Err(Error::Malformed),
             ref inner => check_body(inner),
         },
         Body::GroupInvite {
@@ -1153,13 +1164,33 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let copy = Body::Copy {
-            contact: [5; 32],
-            body: Box::new(Body::OwnGroupJoin { group: [5; 16] }),
-        };
-        let raw = postcard::to_allocvec(&with(copy)).unwrap();
+        let raw = postcard::to_allocvec(&with(Body::Heartbeat { sent_at: 1 })).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
+        assert_eq!(raw[head.len()], 28);
+    }
+
+    #[test]
+    fn heartbeats_are_only_direct() {
+        let pulse = Body::Heartbeat { sent_at: 1 };
+        let direct = with(pulse.clone());
+        assert_eq!(
+            Inner::from_padded(&direct.to_padded().unwrap()).unwrap(),
+            direct
+        );
+        let group = GroupInner {
+            sender: [1; 32],
+            group: [2; 16],
+            body: pulse.clone(),
+        };
+        let copy = with(Body::Copy {
+            contact: [5; 32],
+            body: Box::new(pulse),
+        });
+        assert!(group.to_padded().is_err());
+        assert!(copy.to_padded().is_err());
+        assert!(GroupInner::from_padded(&pad(postcard::to_allocvec(&group).unwrap())).is_err());
+        assert!(Inner::from_padded(&pad(postcard::to_allocvec(&copy).unwrap())).is_err());
     }
 
     #[test]

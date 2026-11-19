@@ -27,7 +27,7 @@ Every command also takes `--password-file PATH` or `--password-stdin`, and `--ti
 - `CONTACT` is the name the app shows, or the start of the fingerprint. If more than one contact matches, nothing is sent.
 - **The password never comes from the environment**: every child process inherits it. Use a file that belongs to you and has mode `600`, stdin, or the keyboard. Without any of them termchat asks at the keyboard, and a script has none: it ends with "no terminal to type the password".
 - There is no "send to all": one command, one contact.
-- A server identity cannot accept requests: you make the link from your app, so it can never let a stranger in.
+- The owner accepts contact requests in the app. The CLI and daemon have no command to accept a request.
 - Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
 
 Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact not found or more than one, 4 the relay did not take it in time (it goes with the next command), 5 cannot write to that contact. A command exits only once the relay took everything it sent, within `--timeout`.
@@ -127,6 +127,36 @@ done
 - **While it runs, the password and the keys are in its memory, and any process of that user can send through it.** Give it a server identity under a user of its own, never your main identity.
 - A document you send is read by the command, not the daemon; a `recv --save-dir` folder must exist before you ask.
 - It stops on SIGTERM or Ctrl+C: up to 5 s for the relay to take what was just sent, then it saves. On Windows there is no daemon.
+
+## Get a message when a server goes quiet
+
+Set up separate identities on two hosts by following steps 1–3 under “Setting up a server”. This example calls the monitored server `backup-box`, the watcher `watcher`, and the alert recipient `alice`. Use the `bot` helper from that section on each host.
+
+1. Run `bot invite` on `watcher` and copy the entire `termchat:…` line. Run `bot add 'termchat:…'` on `backup-box`, substituting the line you copied.
+2. If the daemon is already running, stop it on each host while you set up the contacts. Use `sudo systemctl stop termchat-daemon` if you installed the example unit. Open `termchat` without a subcommand, using the same user and `TERMCHAT_HOME` as the service.
+
+   ```sh
+   sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot termchat
+   ```
+
+   Enter the service identity's password on each host.
+
+3. In the `watcher` interface, select the request from `backup-box` and press **Ctrl+Y**. After acceptance, each identity appears in the other's contacts. On each host, select that contact and press **Ctrl+F** to open the safety number. Compare the numbers and press **v** on both hosts if they match.
+4. On `watcher`, press **Ctrl+A**, paste the owner's invite, and press **Enter**. The owner accepts the request in their app. Compare the safety number with the owner and mark the owner as verified on `watcher`. [Accepting requests and comparing safety numbers](contacts.md)
+
+Close both terminal interfaces and start `termchat daemon` for each identity. Run the watch commands as the same user and with the same `TERMCHAT_HOME` as the service. Use the names shown by `bot contacts` on the respective host.
+
+```sh
+# On the host you are watching, using the server identity's TERMCHAT_HOME
+termchat watch send watcher --every 300
+
+# On the second host, using the watcher identity's TERMCHAT_HOME
+termchat watch monitor backup-box --notify alice --after 900
+```
+
+The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options and leave room for reconnects. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
+
+Keep the watcher awake and the clocks synchronized. A relay outage can cause an alert or prevent delivery. The daemon logs locally when it queues an alert and when it cannot confirm delivery. A fresh heartbeat lets the watcher report the next outage.
 
 ## More examples
 

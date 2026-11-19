@@ -198,6 +198,7 @@ pub struct Engine {
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
+    heartbeat: Option<(Ed25519Key, u64)>,
     /// Why links could not start at the last `start_links`, said once.
     unreachable: BTreeSet<String>,
     /// The relay had no key to give: claim again at this time.
@@ -225,6 +226,8 @@ struct Live {
     creating: Vec<Ed25519Key>,
     /// `Subscribe` frames waiting for their answer: an unknown queue then is ours, gone.
     subscribing: Vec<QueueId>,
+    /// An unanswered heartbeat per contact, retained across reconnects of this link.
+    heartbeats: BTreeMap<Ed25519Key, u64>,
     forward: tokio::task::AbortHandle,
 }
 
@@ -410,6 +413,7 @@ fn start(
         connected: false,
         creating: Vec::new(),
         subscribing: Vec::new(),
+        heartbeats: BTreeMap::new(),
         forward,
     })
 }
@@ -568,6 +572,7 @@ impl Engine {
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
+            heartbeat: None,
             unreachable: BTreeSet::new(),
             reclaim: None,
             claiming: BTreeSet::new(),
@@ -1446,6 +1451,15 @@ impl Engine {
         if let Some(g) = self.group_of_link(link) {
             return self.on_group_frame(g, frame);
         }
+        if let ServerFrame::Accepted { client_id }
+        | ServerFrame::Error {
+            client_id: Some(client_id),
+            ..
+        } = &frame
+            && let Some(live) = self.links.get_mut(link)
+        {
+            live.heartbeats.retain(|_, pending| pending != client_id);
+        }
         let who = link.who;
         match frame {
             ServerFrame::QueueCreated {
@@ -1981,6 +1995,18 @@ impl Engine {
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
+            Body::Heartbeat { sent_at } => {
+                let saved = self.persist();
+                if saved
+                    && from == Some(sender)
+                    && via == from
+                    && !got.request
+                    && self.watch_contact(&sender).is_ok()
+                {
+                    self.heartbeat = Some((sender, sent_at));
+                }
+                return saved;
+            }
             // ADR-030: copies come only from our own devices, handled above.
             Body::Copy { .. } => return self.persist(),
             // ADR-028: devices of one identity.
@@ -2349,6 +2375,47 @@ impl Engine {
             return Err("their app knows no second devices yet: write from your main one, or ask them to update".into());
         }
         Ok(c)
+    }
+
+    /// ADR-031: keep using the original verified contact, even if names change.
+    pub fn watch_contact(&self, key: &Ed25519Key) -> Result<usize, String> {
+        let i = self.index(key).ok_or("watch contact was removed")?;
+        let c = self.writable(i)?;
+        let accepted = self
+            .slot_for(key)
+            .is_some_and(|slot| self.core_at(slot).is_request(key) == Some(false));
+        if !self.is_primary() || !c.verified || c.request_pending || !accepted {
+            return Err("watch needs the main device and an accepted, verified contact".into());
+        }
+        Ok(i)
+    }
+
+    /// Sends at most one unanswered pulse per contact without a chat entry.
+    pub fn send_heartbeat(&mut self, key: &Ed25519Key) -> Result<(), String> {
+        let i = self.watch_contact(key)?;
+        let Some(to) = &self.data.contacts[i].theirs else {
+            return Ok(());
+        };
+        let relay = to.relay_url.clone();
+        if !self.live(key, &relay).is_some_and(|l| l.connected)
+            || self.links.values().any(|l| l.heartbeats.contains_key(key))
+        {
+            return Ok(());
+        }
+        if !self.has_session(key) {
+            self.claim(*key);
+            return Ok(());
+        }
+        let id = self.transmit(key, Body::Heartbeat { sent_at: now() })?;
+        if let Some(live) = self.live_mut(key, &relay) {
+            live.heartbeats.insert(*key, id);
+        }
+        Ok(())
+    }
+
+    /// The latest direct pulse is private to the daemon, outside chat history.
+    pub fn take_heartbeat(&mut self) -> Option<(Ed25519Key, u64)> {
+        self.heartbeat.take()
     }
 
     /// Queues `text` to contact `i` and sends it as soon as there is a session.
@@ -3264,6 +3331,87 @@ mod tests {
             verified: true,
             ..Contact::default()
         }
+    }
+
+    #[tokio::test]
+    async fn only_verified_direct_heartbeats_reach_the_watcher() {
+        let (mut e, dir) = offline("heartbeat");
+        let me = e.core().identity();
+        let key = e.core().prekeys(0, true).fallback.unwrap();
+        let mut server = Client::default();
+        let mut linked = Client::default();
+        for peer in [&mut server, &mut linked] {
+            e.core().add_contact(&peer.identity()).unwrap();
+            peer.add_contact(&me).unwrap();
+            peer.start_session(&me.ed25519, &key).unwrap();
+        }
+        let server_key = server.identity().ed25519;
+        let other = [9; 32];
+        let address = Addr {
+            relay_url: e.home(),
+            onion_url: None,
+            send_id: [7; 16],
+        };
+        let device = |client: &Client| {
+            let identity = client.identity();
+            proto::Device {
+                ed25519: identity.ed25519,
+                curve25519: identity.curve25519,
+                proof: client.device_proof(&server_key),
+            }
+        };
+        let mut devices = proto::DeviceList {
+            identity: server_key,
+            no: 1,
+            devices: vec![device(&server), device(&linked)],
+            signature: [0; 64],
+        };
+        devices.signature = server.sign_devices(&devices).unwrap();
+        e.data.contacts.push(Contact {
+            key: server_key,
+            verified: true,
+            theirs: Some(address.clone()),
+            their_devices: Some(devices),
+            ..Contact::default()
+        });
+        e.data.contacts.push(contact(9, "other"));
+        let pulse = |client: &mut Client, sent_at| {
+            client
+                .encrypt(&me.ed25519, Body::Heartbeat { sent_at })
+                .unwrap()
+        };
+
+        assert!(e.receive(me.ed25519, &pulse(&mut server, 1)));
+        assert!(e.receive(other, &pulse(&mut server, 2)));
+        assert!(e.receive(server_key, &pulse(&mut linked, 3)));
+        assert_eq!(e.take_heartbeat(), None, "wrong queue or device");
+        let live = pulse(&mut server, 4);
+        assert!(e.receive(server_key, &live));
+        assert_eq!(e.take_heartbeat(), Some((server_key, 4)));
+        assert!(e.receive(server_key, &live));
+        assert_eq!(e.take_heartbeat(), None, "repeated delivery");
+        assert_eq!(e.data.contacts[0].unread, 0);
+        assert!(e.take_new(None).is_empty());
+        assert!(
+            !e.happened
+                .iter()
+                .any(|h| matches!(h, Happened::Alert { .. }))
+        );
+
+        e.sync_links().unwrap();
+        e.live_mut(&server_key, &address.relay_url)
+            .unwrap()
+            .connected = true;
+        let before = e.data.contacts[0].next_client_id;
+        e.send_heartbeat(&server_key).unwrap();
+        e.send_heartbeat(&server_key).unwrap();
+        assert_eq!(e.data.contacts[0].next_client_id, before + 1);
+
+        e.edit(0, |c| c.verified = false);
+        assert!(e.send_heartbeat(&server_key).is_err());
+        assert!(e.receive(server_key, &pulse(&mut server, 5)));
+        assert_eq!(e.take_heartbeat(), None, "verification was removed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

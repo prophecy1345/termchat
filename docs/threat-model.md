@@ -84,6 +84,10 @@ that (ADR-023).
     and when you are online. With Tor it sees a Tor exit, as ours does.
   **Incognito contacts** (ADR-014) still give one contact an identity of its
   own, so contacts cannot link you to each other by key or fingerprint.
+- **Server liveness monitoring** (ADR-031). Regular `watch` heartbeats can
+  reveal when a server is active or goes quiet through traffic timing. The
+  relay sees encrypted messages and can delay or drop both heartbeats and
+  alerts. The watcher needs a separate awake host and synchronized clocks.
 - **Groups** (ADR-027). The relay sees a group queue, how many readers it
   has, and when each message is written and read by each reader: a group's
   size is visible to its operator. Key shares come in bursts when someone
