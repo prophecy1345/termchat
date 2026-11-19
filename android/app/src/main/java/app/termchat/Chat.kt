@@ -21,6 +21,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
@@ -196,13 +198,21 @@ fun Chat(m: Model, index: UInt) {
             }
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            // The drop cycles the disappearing timer, like Ctrl+T.
+            // The fading envelope cycles the disappearing timer, like Ctrl+T.
             Column(
-                Modifier.size(48.dp).border(1.dp, Tc.line, corner).clickable { runCatching { a.nextTimer(index) }; m.changed() },
+                Modifier.size(48.dp).border(1.dp, Tc.line, corner)
+                    .semantics { contentDescription = "Disappearing messages: ${span(c.expiresIn)}" }
+                    .clickable {
+                        runCatching { a.nextTimer(index) }.onSuccess { t ->
+                            m.note = if (t == null) "Disappearing messages off"
+                            else "New messages disappear after ${span(t)}, on both sides"
+                        }
+                        m.changed()
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Drop(if (c.expiresIn != null) Tc.lime else Tc.dim)
+                FadingEnvelope(if (c.expiresIn != null) Tc.lime else Tc.dim)
                 if (c.expiresIn != null) Text(span(c.expiresIn), style = Tc.small.copy(color = Tc.lime))
             }
             val closed = c.left || c.blocked || c.needsInvite
@@ -406,22 +416,40 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
     }
 }
 
-/** The drop icon of the timer button. */
+/** The timer button's icon: an envelope whose right half has already
+ *  crumbled away, for messages that disappear. */
 @Composable
-private fun Drop(color: androidx.compose.ui.graphics.Color) {
-    Box(Modifier.size(width = 14.dp, height = 18.dp).drawBehind {
+private fun FadingEnvelope(color: androidx.compose.ui.graphics.Color) {
+    Box(Modifier.size(width = 24.dp, height = 17.dp).drawBehind {
         val w = size.width
         val h = size.height
-        val p = Path().apply {
-            moveTo(w / 2, 0f)
-            cubicTo(w * 0.9f, h * 0.45f, w, h * 0.6f, w, h * 0.7f)
-            cubicTo(w, h * 0.9f, w * 0.75f, h, w / 2, h)
-            cubicTo(w * 0.25f, h, 0f, h * 0.9f, 0f, h * 0.7f)
-            cubicTo(0f, h * 0.6f, w * 0.1f, h * 0.45f, w / 2, 0f)
-            close()
+        val line = Stroke(width = 1.5.dp.toPx())
+        // The whole half: left side, top and bottom edges, the flap down to the middle.
+        val half = Path().apply {
+            moveTo(w * 0.56f, 0f)
+            lineTo(0f, 0f)
+            lineTo(0f, h)
+            lineTo(w * 0.56f, h)
+            moveTo(0f, 0f)
+            lineTo(w * 0.5f, h * 0.55f)
+            lineTo(w * 0.6f, h * 0.44f)
         }
-        drawPath(p, color, style = Stroke(width = 1.5.dp.toPx()))
-        drawCircle(color, radius = 0.6.dp.toPx(), center = Offset(w / 2, h * 0.7f))
+        drawPath(half, color, style = line)
+        // Then it breaks up: shorter dashes, then specks that fade out.
+        val sw = 1.5.dp.toPx()
+        for ((from, to) in listOf(0.64f to 0.72f, 0.79f to 0.84f)) {
+            drawLine(color, Offset(w * from, 0f), Offset(w * to, 0f), sw)
+            drawLine(color, Offset(w * from, h), Offset(w * to, h), sw)
+        }
+        drawLine(color, Offset(w * 0.66f, h * 0.36f), Offset(w * 0.71f, h * 0.3f), sw)
+        val speck = 0.9.dp.toPx()
+        listOf(
+            Triple(0.9f, 0f, 0.7f), Triple(0.92f, 1f, 0.6f),
+            Triple(0.8f, 0.2f, 0.5f), Triple(0.97f, 0.35f, 0.35f),
+            Triple(0.88f, 0.6f, 0.4f), Triple(1f, 0.8f, 0.25f),
+        ).forEach { (x, y, alpha) ->
+            drawCircle(color.copy(alpha = alpha), speck, Offset(w * x, h * y))
+        }
     })
 }
 
