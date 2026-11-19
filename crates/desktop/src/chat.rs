@@ -13,7 +13,7 @@ use termchat_engine::notify::{self, SOUND_GAP};
 use termchat_engine::settings::Settings;
 use termchat_engine::{Engine, Happened, reactions, themes};
 
-use crate::dialog::Dialog;
+use crate::dialog::{Dialog, LINK_CONFIRMED};
 
 type Key = [u8; 32];
 
@@ -254,6 +254,10 @@ impl Chat {
     }
 
     fn absorb(&mut self, focused: bool, sound: bool) -> Option<String> {
+        // The link is done or gone: the "confirmed, waiting" line has said its piece.
+        if self.status.starts_with(LINK_CONFIRMED) && self.engine.pending_link().is_none() {
+            self.status.clear();
+        }
         // ADR-028: a device waiting for the fingerprint check asks at once,
         // over its own link code, which has done its job.
         if matches!(self.dialog, None | Some(Dialog::LinkCode(_)))

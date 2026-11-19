@@ -216,6 +216,9 @@ pub struct Main {
 
 pub use crate::engine::now;
 
+/// Shown after "y the same" until the other screen agrees too.
+const LINK_CONFIRMED: &str = "confirmed: linking finishes when the other screen agrees";
+
 impl App {
     pub fn new(path: PathBuf) -> Self {
         let screen = match path.exists() {
@@ -659,6 +662,10 @@ impl Main {
         self.engine.open_group = self.current_group().map(|g| g.id);
         if let Some(g) = self.group_index() {
             self.engine.data.groups[g].unread = 0;
+        }
+        // The link is done or gone: the "confirmed, waiting" line has said its piece.
+        if self.status.starts_with(LINK_CONFIRMED) && self.engine.pending_link().is_none() {
+            self.status.clear();
         }
         // ADR-028: a device waiting for the fingerprint check asks at once,
         // over its own link code, which has done its job.
@@ -1537,7 +1544,7 @@ impl Main {
                 KeyCode::Char('y') if self.engine.link_waiting(i) => Some(Popup::Link(i)),
                 KeyCode::Char('y') => {
                     self.engine.confirm_link(i);
-                    self.status = "confirmed: linking finishes when the other screen agrees".into();
+                    self.status = LINK_CONFIRMED.into();
                     None
                 }
                 KeyCode::Char('n') => {

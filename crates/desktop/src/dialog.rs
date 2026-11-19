@@ -20,6 +20,9 @@ pub enum Share {
     Incognito,
 }
 
+/// Shown after "The same" until the other screen agrees too.
+pub(crate) const LINK_CONFIRMED: &str = "confirmed: linking finishes when the other screen agrees";
+
 pub enum Dialog {
     Notice(String),
     Add {
@@ -722,7 +725,7 @@ impl Chat {
                 let (go, stay) = buttons(ui, p, "The same");
                 if go {
                     self.engine.confirm_link(*i);
-                    self.status = "confirmed: linking finishes when the other screen agrees".into();
+                    self.status = LINK_CONFIRMED.into();
                     return false;
                 }
                 if !stay {
