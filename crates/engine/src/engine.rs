@@ -145,6 +145,10 @@ pub enum Happened {
 }
 
 /// Everything the first-run form asks.
+/// The nickname of a device set up only to be linked: the main device's
+/// replaces it, so nobody is asked to make one up (ADR-028).
+pub const NEW_DEVICE_NICKNAME: &str = "new device";
+
 pub struct Setup<'a> {
     pub relay_url: &'a str,
     pub onion_url: Option<&'a str>,
@@ -1244,6 +1248,8 @@ impl Engine {
         if let Err(e) = self.tell_devices(i) {
             return self.note(e);
         }
+        // ADR-028: a contact made after our devices were linked reaches them too.
+        self.hand_to_devices(i);
         if self.data.contacts[i].accept_pending {
             let body = Body::ContactAccept {
                 nickname: self.nickname_at(slot),
@@ -2681,8 +2687,19 @@ impl Engine {
         self.data.bridges.iter().map(shown).collect()
     }
 
+    /// The main device has no backup yet. A linked device never needs one:
+    /// a lost one is removed and another is linked (ADR-028).
+    pub fn needs_backup(&self) -> bool {
+        self.is_primary() && !self.data.backed_up
+    }
+
     /// Writes a backup of the identities and contacts (no messages) to `to`.
     pub fn backup(&mut self, to: &Path, password: &str) -> Result<(), String> {
+        if !self.is_primary() {
+            return Err(
+                "back up on your main device; a lost linked device is simply linked again".into(),
+            );
+        }
         if let Some(why) = password::weakness(password, &[&self.data.nickname]) {
             return Err(why);
         }

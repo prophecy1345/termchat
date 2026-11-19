@@ -137,3 +137,9 @@ Not a new cryptographic protocol: Megolm and Olm as in ADR-027, and device lists
 4. **The admin sends the roster again** with each `GroupDevices`: a new device reads only from that point on.
 5. **Edits, deletes and reactions** made on another device of ours are not mirrored in groups yet; messages are.
 6. **Limits.** The 32 readers of a group are now devices, not people. A move asks the relay for a reader per device at once; past the relay's queue budget for one IP (20 an hour) it waits, as a large removal already did.
+
+## Implementation notes of 2026-11-19 (maintainer)
+
+1. **Contacts made after a link.** The primary handed its contacts to a new device only at the link, so a contact made later never reached a linked device. It now sends the same `LinkedContact` to each of its devices once a later contact is complete (accepted, with their queue known); each contact is marked as handed so it goes once. No new message kind.
+2. **The first message to a device new to us.** With no session yet with one of a contact's devices, a message to all their devices was dropped for that one while its key was claimed. It now waits in that device's queue (as `transmit_device` already did) and goes once the session is up.
+3. **Setting up only to link.** The first-run screens offer to link instead of creating an identity: the device gets its keys and a placeholder nickname (the primary's replaces it) and shows its link code once the relay is reached. A linked device asks for no backup and makes none: a lost one is removed and another linked.

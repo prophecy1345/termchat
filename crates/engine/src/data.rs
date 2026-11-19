@@ -419,6 +419,10 @@ pub struct Contact {
     /// The number of our device list this contact last heard (`Devices`).
     #[serde(default)]
     pub devices_told: u64,
+    /// On the primary: handed to our linked devices (`LinkedContact`), at
+    /// the link or, for a contact made later, once it is complete.
+    #[serde(default)]
+    pub handed: bool,
     /// Their device list, signed by them, if they have more than one device.
     #[serde(default)]
     pub their_devices: Option<DeviceList>,

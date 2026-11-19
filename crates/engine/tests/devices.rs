@@ -685,3 +685,48 @@ async fn the_admins_own_linked_device_joins_its_groups() {
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Contacts made on the phone after the laptop was linked, either way round,
+/// reach the laptop too, and their messages with them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_contact_made_after_linking_reaches_the_linked_device() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices-late-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = vec![
+        engine(&dir, "alice", &url),
+        engine(&dir, "new", &url),
+        engine(&dir, "bob", &url),
+        engine(&dir, "carol", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    let code = e[1].link_code().unwrap();
+    let at_phone = e[0].add_device(&code).unwrap();
+    pump(&mut e, |e| e[1].pending_link().is_some()).await;
+    let at_laptop = e[1].pending_link().unwrap();
+    e[1].confirm_link(at_laptop);
+    e[0].confirm_link(at_phone);
+    pump(&mut e, |e| e[1].data.devices.is_some()).await;
+
+    // Bob asks the phone; the phone asks carol.
+    befriend(&mut e, 2, 0).await;
+    befriend(&mut e, 0, 3).await;
+    let (alice, laptop) = (e[0].me(), e[1].me());
+    for (who, text) in [(2, "hello"), (3, "hi")] {
+        let them = e[who].me();
+        // The laptop has them, and they have the laptop's address.
+        pump(&mut e, |e| {
+            let i = e[who].index(&alice).unwrap();
+            e[1].index(&them).is_some()
+                && e[who].data.contacts[i]
+                    .device_addrs
+                    .iter()
+                    .any(|(k, _)| *k == laptop)
+        })
+        .await;
+        let i = e[who].index(&alice).unwrap();
+        e[who].send(i, text).unwrap();
+        pump(&mut e, |e| has(&e[1], &them, text, false)).await;
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

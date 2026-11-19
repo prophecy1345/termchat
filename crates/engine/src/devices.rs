@@ -264,45 +264,70 @@ impl Engine {
     /// the contacts of an incognito identity (each is an identity of its own).
     fn hand_over(&mut self, i: usize) {
         let mut bodies = Vec::new();
-        for c in &self.data.contacts {
-            let Some(theirs) = c.theirs.as_ref() else {
-                continue;
-            };
-            if c.own || c.profile.is_some() || c.blocked || c.left || self.is_request(&c.key) {
-                continue;
+        for c in 0..self.data.contacts.len() {
+            if let Some(body) = self.linked_contact(c) {
+                bodies.push(body);
+                self.data.contacts[c].handed = true;
             }
-            let core = self.core();
-            let Some(curve25519) = core.curve_of(&c.key) else {
-                continue;
-            };
-            let nickname = core.nickname(&c.key).unwrap_or("?").to_string();
-            drop(core);
-            bodies.push(Body::LinkedContact {
-                contact: LinkedContact {
-                    // Over Olm from our primary: the new device trusts the
-                    // keys without the contact's own signature, which we keep
-                    // nowhere.
-                    identity: proto::Identity {
-                        ed25519: c.key,
-                        curve25519,
-                        signature: [0; 64],
-                    },
-                    nickname,
-                    petname: c.petname.clone(),
-                    verified: c.verified,
-                    understands: c.understands,
-                    devices: None,
-                    queues: vec![DeviceQueue {
-                        device: c.key,
-                        relay_url: theirs.relay_url.clone(),
-                        onion_url: theirs.onion_url.clone(),
-                        send_id: theirs.send_id,
-                    }],
-                },
-            });
         }
         self.data.contacts[i].outbox.extend(bodies);
         self.deliver(i);
+    }
+
+    /// On the primary: contact `c`, made after our devices were linked, to
+    /// each of them, once it is complete (accepted, their queue known).
+    pub(super) fn hand_to_devices(&mut self, c: usize) {
+        if !self.is_primary() || self.data.devices.is_none() || self.data.contacts[c].handed {
+            return;
+        }
+        let Some(body) = self.linked_contact(c) else {
+            return;
+        };
+        self.data.contacts[c].handed = true;
+        let own: Vec<usize> = (0..self.data.contacts.len())
+            .filter(|&d| self.data.contacts[d].own)
+            .collect();
+        for d in own {
+            self.data.contacts[d].outbox.push(body.clone());
+            self.deliver(d);
+        }
+        self.persist();
+    }
+
+    /// Contact `c` as a linked device takes it, if it is one to hand over.
+    fn linked_contact(&self, c: usize) -> Option<Body> {
+        let c = &self.data.contacts[c];
+        let theirs = c.theirs.as_ref()?;
+        if c.own || c.profile.is_some() || c.blocked || c.left || self.is_request(&c.key) {
+            return None;
+        }
+        let core = self.core();
+        let curve25519 = core.curve_of(&c.key)?;
+        let nickname = core.nickname(&c.key).unwrap_or("?").to_string();
+        drop(core);
+        Some(Body::LinkedContact {
+            contact: LinkedContact {
+                // Over Olm from our primary: the new device trusts the
+                // keys without the contact's own signature, which we keep
+                // nowhere.
+                identity: proto::Identity {
+                    ed25519: c.key,
+                    curve25519,
+                    signature: [0; 64],
+                },
+                nickname,
+                petname: c.petname.clone(),
+                verified: c.verified,
+                understands: c.understands,
+                devices: None,
+                queues: vec![DeviceQueue {
+                    device: c.key,
+                    relay_url: theirs.relay_url.clone(),
+                    onion_url: theirs.onion_url.clone(),
+                    send_id: theirs.send_id,
+                }],
+            },
+        })
     }
 
     /// What contact `i` and our other devices should know of this device,
@@ -731,9 +756,21 @@ impl Engine {
             .into_iter()
             .filter(|(d, _)| ours_too(d))
             .collect();
+        let theirs = self.data.contacts[i].their_devices.clone();
+        let theirs = |d: &Ed25519Key| {
+            theirs
+                .as_ref()
+                .is_some_and(|l| l.devices.iter().any(|x| x.ed25519 == *d))
+        };
+        let mut waiting = false;
         for (d, addr) in targets {
             if !self.core_at(slot).has_session(&d) {
-                if let Some(l) = self.live(key, &addr.relay_url) {
+                if theirs(&d) {
+                    // A device of theirs new to us: it gets this once a
+                    // session is up, instead of never (`flush_devices`).
+                    self.data.contacts[i].device_outbox.push((d, body.clone()));
+                    waiting = true;
+                } else if let Some(l) = self.live(key, &addr.relay_url) {
                     let _ = l.relay.send(ClientFrame::ClaimKey {
                         send_id: addr.send_id,
                     });
@@ -755,6 +792,10 @@ impl Engine {
                     envelope,
                 });
             }
+        }
+        if waiting {
+            self.persist();
+            self.flush_devices(i);
         }
         Ok(id)
     }

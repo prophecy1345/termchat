@@ -11,7 +11,7 @@ mod relay;
 pub mod settings;
 pub mod themes;
 
-pub use engine::{Engine, Happened, RelayEvent, Setup, Unlocked, clean};
+pub use engine::{Engine, Happened, NEW_DEVICE_NICKNAME, RelayEvent, Setup, Unlocked, clean};
 pub use relay::*;
 
 /// Keys must not end up in a core file after a crash.
