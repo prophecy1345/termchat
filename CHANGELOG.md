@@ -3,6 +3,22 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.16.0
+
+- Link a new device from its first screen (ADR-028): choose a password
+  and link instead of creating an identity, no nickname to make up. The
+  link code shows as soon as the relay is reached. Terminal: Ctrl+L;
+  desktop: Link to my main device instead; Android: Link to my main
+  device.
+- Contacts you make after linking a device now reach it too. Before, only
+  the contacts from the moment of the link did.
+- A contact's first message to your new device no longer gets lost while
+  their app sets up a session with it.
+- Linked devices no longer ask for a backup: back up the main device; a
+  lost linked one is removed and another linked.
+- Android: the disappearing timer is a crumbling envelope, and a tap says
+  what the timer became.
+
 ## 0.15.3
 
 - A command, Ctrl+Q in the terminal, closing the desktop window or
