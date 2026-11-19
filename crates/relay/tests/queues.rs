@@ -612,3 +612,37 @@ async fn a_group_holds_at_most_32_readers() {
         .await;
     assert_eq!(admin.recv().await, err(None, ErrorCode::QueueFull));
 }
+
+/// Review 2026-11c, finding 9: reconnecting does not refill a queue's report
+/// budget, so one owner cannot fill the journal.
+#[tokio::test]
+async fn reports_are_limited_per_queue_across_connections() {
+    let journal = std::env::temp_dir().join(format!("termchat-reports-{}", std::process::id()));
+    let _ = std::fs::remove_file(&journal);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
+    let config = Config {
+        trust_proxy: false,
+        db: None,
+        reports: Some(journal.clone()),
+        limits: Limits::default(),
+    };
+    tokio::spawn(termchat_relay::serve(listener, None, config));
+    let q = Ws::new(&url).await.create().await;
+    for _ in 0..5 {
+        let mut w = Ws::new(&url).await;
+        w.send(ClientFrame::Report {
+            recv_id: q.recv_id,
+            token: q.token,
+            text: "spam".into(),
+        })
+        .await;
+        assert_eq!(w.recv().await, ServerFrame::Reported);
+    }
+    let lines = std::fs::read_to_string(&journal)
+        .unwrap_or_default()
+        .lines()
+        .count();
+    assert_eq!(lines, Limits::default().reports_per_queue.burst as usize);
+    let _ = std::fs::remove_file(&journal);
+}

@@ -45,7 +45,7 @@ impl Engine {
             return Err("only your main device links others".into());
         }
         let link = Invite::decode_link(code).map_err(|e| format!("invalid link code: {e}"))?;
-        if !addr_ok(&link.relay_url, link.onion_url.as_deref()) {
+        if !self.peer_addr_ok(&link.relay_url, link.onion_url.as_deref()) {
             return Err("invalid link code: its relay address cannot be used".into());
         }
         let key = link.identity.ed25519;
@@ -557,7 +557,8 @@ impl Engine {
             if d.ed25519 == me || Some(d.ed25519) == primary || self.index(&d.ed25519).is_some() {
                 continue;
             }
-            self.core().add_member(d.ed25519, d.curve25519);
+            // From our own list, signed by our primary.
+            let _ = self.core().add_member(d.ed25519, d.curve25519);
             self.data.contacts.push(Contact {
                 key: d.ed25519,
                 own: true,
@@ -626,7 +627,7 @@ impl Engine {
         if Some(from) != primary || device != self.me() || !self.lists(&queue.device) {
             return;
         }
-        if !addr_ok(&queue.relay_url, queue.onion_url.as_deref()) {
+        if !self.peer_addr_ok(&queue.relay_url, queue.onion_url.as_deref()) {
             return;
         }
         self.meet_siblings();
@@ -650,6 +651,32 @@ impl Engine {
 
     /// Contact `i`'s device list, from any device of theirs: checked, then
     /// each device known by its keys and where it reads us.
+    /// ADR-030, section 3: `k` is someone's other than contact `i`'s: ours (our
+    /// identity or one of our devices), a contact, a device another contact
+    /// listed, or a member of one of our groups.
+    pub(super) fn owned_elsewhere(&self, k: &Ed25519Key, i: usize) -> bool {
+        let mine = *k == self.me()
+            || *k == self.identity_key()
+            || self
+                .data
+                .devices
+                .as_ref()
+                .is_some_and(|l| l.devices.iter().any(|d| d.ed25519 == *k));
+        let contact = self.index(k).is_some_and(|j| j != i);
+        let theirs = self.data.contacts.iter().enumerate().any(|(j, c)| {
+            j != i
+                && c.their_devices
+                    .as_ref()
+                    .is_some_and(|l| l.devices.iter().any(|d| d.ed25519 == *k))
+        });
+        let member = self.data.groups.iter().any(|g| {
+            g.roster
+                .as_ref()
+                .is_some_and(|r| r.members.iter().any(|m| m.ed25519 == *k))
+        }) && self.data.contacts.get(i).is_none_or(|c| c.key != *k);
+        mine || contact || theirs || member
+    }
+
     fn their_devices(&mut self, i: usize, list: DeviceList, queues: Vec<DeviceQueue>) {
         let key = self.data.contacts[i].key;
         let Some(slot) = self.slot_for(&key) else {
@@ -662,12 +689,30 @@ impl Engine {
         if list.identity != key || older || verify_devices(&list).is_err() {
             return;
         }
+        // ADR-030, section 3: a list naming a key someone else holds is refused
+        // whole (review 2026-11c, findings 1, 2, 4).
+        let rekeyed = {
+            let core = self.core_at(slot);
+            list.devices.iter().any(|d| {
+                d.ed25519 != key && core.curve_of(&d.ed25519).is_some_and(|c| c != d.curve25519)
+            })
+        };
+        let refused = rekeyed
+            || list
+                .devices
+                .iter()
+                .any(|d| d.ed25519 != key && self.owned_elsewhere(&d.ed25519, i));
+        if refused {
+            self.note("a contact listed a device that belongs to someone else: ignored");
+            return;
+        }
         let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k);
+        // Only keys this contact's own lists brought in, and nobody else's now.
         let gone: Vec<Ed25519Key> = self.data.contacts[i]
             .their_devices
             .iter()
             .flat_map(|d| d.devices.iter().map(|x| x.ed25519))
-            .filter(|k| !listed(k) && *k != key)
+            .filter(|k| !listed(k) && *k != key && !self.owned_elsewhere(k, i))
             .collect();
         {
             let mut core = self.core_at(slot);
@@ -675,18 +720,21 @@ impl Engine {
                 core.forget_sessions(k);
             }
             for d in list.devices.iter().filter(|d| d.ed25519 != key) {
-                core.add_member(d.ed25519, d.curve25519);
+                // Checked above: a key we hold has the same Curve25519 key here.
+                let _ = core.add_member(d.ed25519, d.curve25519);
             }
         }
+        let queues: Vec<_> = queues
+            .into_iter()
+            .filter(|q| {
+                q.device != key
+                    && listed(&q.device)
+                    && self.peer_addr_ok(&q.relay_url, q.onion_url.as_deref())
+            })
+            .collect();
         let c = &mut self.data.contacts[i];
         c.device_addrs.retain(|(k, _)| listed(k));
         for q in queues {
-            if q.device == key
-                || !listed(&q.device)
-                || !addr_ok(&q.relay_url, q.onion_url.as_deref())
-            {
-                continue;
-            }
             c.device_addrs.retain(|(k, _)| *k != q.device);
             c.device_addrs.push((
                 q.device,
@@ -1017,12 +1065,12 @@ impl Engine {
             onion_url: theirs.onion_url.clone(),
             send_id: theirs.send_id,
         };
-        if !addr_ok(&theirs.relay_url, theirs.onion_url.as_deref()) {
+        if !self.peer_addr_ok(&theirs.relay_url, theirs.onion_url.as_deref()) {
             return;
         }
         {
             let mut core = self.core();
-            core.add_member(key, l.identity.curve25519);
+            core.add_from_primary(key, l.identity.curve25519);
             core.set_nickname(&key, l.nickname);
         }
         self.data.push_person(Contact {

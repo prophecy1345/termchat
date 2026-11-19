@@ -743,7 +743,9 @@ impl Engine {
         let mut core = self.core();
         let at = core.group_index(&gid).unwrap_or(0);
         for m in members.iter().filter(|m| m.ed25519 != me) {
-            core.add_member(m.ed25519, m.curve25519);
+            // ADR-030: a roster never changes a key we hold; that member's
+            // messages then do not read, which is safer than a planted key.
+            let _ = core.add_member(m.ed25519, m.curve25519);
         }
         drop(core);
         let since = &mut self.data.groups[g].since;
@@ -1001,7 +1003,7 @@ impl Engine {
             return self.persist();
         }
         // A session key from a member, over Olm.
-        let got = self.core().decrypt(None, envelope);
+        let got = self.core().decrypt_on_reader(envelope);
         if let Ok(r) = got {
             self.group_key_from(r.sender, r.body);
         }
@@ -1654,8 +1656,18 @@ impl Engine {
         let group = &self.data.groups[g];
         let admin = group.roster.as_ref().map(|r| r.admin);
         let on_roster = group.members().iter().any(|m| m.ed25519 == member);
+        // ADR-030, section 3: a device key that is another member's, or another
+        // member's device, is not this member's (review 2026-11c, finding 5).
+        let taken = list.devices.iter().any(|d| {
+            d.ed25519 != member
+                && (group.members().iter().any(|m| m.ed25519 == d.ed25519)
+                    || group.member_devices.iter().any(|(m, l, _)| {
+                        *m != member && l.devices.iter().any(|x| x.ed25519 == d.ed25519)
+                    }))
+        });
         if Some(sender) != admin
             || !on_roster
+            || taken
             || list.identity != member
             || termchat_core::verify_devices(&list).is_err()
         {
@@ -1735,6 +1747,11 @@ impl Engine {
                         reader,
                     };
                     return self.group_from_contact(i, body);
+                }
+                // Review 2026-11c, finding 3: a group on an address we cannot use.
+                if !self.peer_addr_ok(&relay_url, onion_url.as_deref()) {
+                    self.note("a contact invited you to a group at an address that cannot be used");
+                    return self.persist_unit();
                 }
                 let name = roster.name.clone();
                 self.data

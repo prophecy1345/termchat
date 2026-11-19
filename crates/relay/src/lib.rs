@@ -71,6 +71,9 @@ pub struct Limits {
     /// All queues together, bytes.
     pub max_queue_bytes: u64,
     pub reports_per_connection: Rate,
+    /// Review 2026-11c, finding 9: a reconnect refills the connection's budget,
+    /// a queue's does not.
+    pub reports_per_queue: Rate,
 }
 
 /// Token bucket: `burst` at once, then `per_sec` on average.
@@ -121,6 +124,7 @@ impl Default for Limits {
             idle_queue_ttl: Duration::from_secs(90 * 86_400),
             max_queue_bytes: 10 << 30,
             reports_per_connection: Rate::per(10.0, DAY),
+            reports_per_queue: Rate::per(3.0, DAY),
         }
     }
 }
@@ -226,6 +230,7 @@ struct QueueMem {
     sends: Bucket,
     publishes: Bucket,
     claimed: Bucket,
+    reports: Bucket,
     /// The last UnifiedPush wake-up sent for this queue (ADR-012).
     pushed: Option<Instant>,
 }
@@ -236,6 +241,7 @@ impl QueueMem {
             sends: Bucket::full(l.sends_per_queue, now),
             publishes: Bucket::full(l.publishes_per_queue, now),
             claimed: Bucket::full(l.claims_per_queue, now),
+            reports: Bucket::full(l.reports_per_queue, now),
             pushed: None,
         }
     }
@@ -738,6 +744,12 @@ fn handle(
             // Same answer on every path. No ban: the relay knows no sender (ADR-023).
             if mine.reports.take(limits.reports_per_connection, now)
                 && owned(relay, &recv_id, &token)?
+                && relay
+                    .mem
+                    .entry(recv_id)
+                    .or_insert_with(|| QueueMem::new(limits, now))
+                    .reports
+                    .take(limits.reports_per_queue, now)
                 && let Some(path) = &shared.config.reports
                 && let Err(e) = journal(path, &text)
             {

@@ -36,6 +36,8 @@ tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"]
 
 [dev-dependencies]
 termchat-relay = { path = "../relay" }
+# Regression tests of review-2026-11c play a hostile peer with its own Olm account.
+vodozemac = { version = "0.11.2", default-features = false }
 
 [features]
 default = ["tor"]

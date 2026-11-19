@@ -128,6 +128,9 @@ struct Contact {
     nickname: Option<String>,
     /// Newest (active) last.
     sessions: Vec<SessionState>,
+    /// ADR-030: known only by someone else's word (a roster, a device list),
+    /// not by a signed `Identity`. Never counts on an invite queue.
+    member: bool,
 }
 
 struct SessionState {
@@ -213,7 +216,16 @@ impl Client {
                 is_request: false,
                 nickname: None,
                 sessions: Vec::new(),
+                member: false,
             });
+        // ADR-030: a signed identity replaces what someone else said of the key.
+        if contact.member {
+            if contact.curve25519 != identity.curve25519 {
+                contact.curve25519 = identity.curve25519;
+                contact.sessions.clear();
+            }
+            contact.member = false;
+        }
         if contact.curve25519 != identity.curve25519 {
             return Err(Error::SenderMismatch);
         }
@@ -281,6 +293,25 @@ impl Client {
         })
     }
 
+    /// An Olm envelope on a group reader (ADR-027): only from someone we know,
+    /// member or peer, by the Curve25519 key Olm vouches for. Never a request
+    /// from a stranger (ADR-030; review 2026-11c, finding 8).
+    pub fn decrypt_on_reader(&mut self, env: &Envelope) -> Result<Received, Error> {
+        let msg = OlmMessage::from_parts(env.olm_type.into(), &env.body)
+            .map_err(|_| proto::Error::Malformed)?;
+        let OlmMessage::PreKey(pre) = &msg else {
+            return Err(Error::UnknownSender);
+        };
+        let curve = pre.identity_key().to_bytes();
+        let sender = self
+            .contacts
+            .iter()
+            .find(|(_, c)| c.curve25519 == curve)
+            .map(|(k, _)| *k)
+            .ok_or(Error::UnknownSender)?;
+        self.decrypt(Some(&sender), env)
+    }
+
     /// `from`: the contact whose queue the envelope came in (ADR-023). The
     /// relay picks the queue, so this is checked against the session and the
     /// plaintext like any claim of the relay.
@@ -301,9 +332,10 @@ impl Client {
             (Some(k), _) => Some(*k),
             (None, OlmMessage::PreKey(pre)) => {
                 let curve = pre.identity_key().to_bytes();
+                // ADR-030: only peers; a member's key is someone else's word.
                 self.contacts
                     .iter()
-                    .find(|(_, c)| c.curve25519 == curve)
+                    .find(|(_, c)| c.curve25519 == curve && !c.member)
                     .map(|(k, _)| *k)
             }
             (None, OlmMessage::Normal(_)) => return Err(Error::UnknownSender),
@@ -380,7 +412,7 @@ impl Client {
                 // From the invite queue, by someone with no contact under this
                 // Curve25519 key: it may not name a contact we have.
                 let named = Inner::from_padded(&created.plaintext)?.sender;
-                if self.contacts.contains_key(&named) {
+                if self.contacts.get(&named).is_some_and(|c| !c.member) {
                     return Err(Error::SenderMismatch);
                 }
                 named
@@ -388,7 +420,12 @@ impl Client {
         };
         let inner = open_inner(&created.plaintext, &sender, &me)?;
 
-        if !self.contacts.contains_key(&sender) {
+        // Unknown, or on the invite queue known only by someone else's word.
+        let stranger = match self.contacts.get(&sender) {
+            None => true,
+            Some(c) => c.member && known.is_none(),
+        };
+        if stranger {
             // A stranger may only send a contact request whose identity binds
             // its key to the Curve25519 key of this session.
             // Or a primary answering a new device's link code (ADR-028).
@@ -413,6 +450,7 @@ impl Client {
                     is_request: true,
                     nickname: None,
                     sessions: Vec::new(),
+                    member: false,
                 },
             );
         }
@@ -492,6 +530,7 @@ impl Client {
                         is_request: c.is_request,
                         nickname: c.nickname.clone(),
                         sessions,
+                        member: c.member,
                     }
                 })
                 .collect(),
@@ -531,6 +570,7 @@ impl Client {
                         is_request: c.is_request,
                         nickname: c.nickname,
                         sessions,
+                        member: c.member,
                     },
                 )
             })
@@ -568,6 +608,7 @@ impl Client {
                     is_request: c.is_request,
                     nickname: c.nickname.clone(),
                     sessions: Vec::new(),
+                    member: c.member,
                 };
                 (*key, contact)
             })
@@ -679,13 +720,52 @@ impl Client {
     /// A group member, known by the keys the admin signed for (ADR-027), or
     /// a device of a contact or of our own, known by its owner's signed device
     /// list (ADR-028): not by an invite; kept apart from contacts by the app.
-    pub fn add_member(&mut self, ed25519: Ed25519Key, curve25519: Curve25519Key) {
-        self.contacts.entry(ed25519).or_insert(Contact {
+    pub fn add_member(
+        &mut self,
+        ed25519: Ed25519Key,
+        curve25519: Curve25519Key,
+    ) -> Result<(), Error> {
+        let c = self.contacts.entry(ed25519).or_insert(Contact {
             curve25519,
             is_request: false,
             nickname: None,
             sessions: Vec::new(),
+            member: true,
         });
+        // ADR-030: what someone else says never changes a key we hold.
+        match c.curve25519 == curve25519 {
+            true => Ok(()),
+            false => Err(Error::SenderMismatch),
+        }
+    }
+
+    /// A contact our own primary handed over (ADR-028): its word, over our
+    /// own Olm channel, stands for the contact's signature.
+    pub fn add_from_primary(&mut self, ed25519: Ed25519Key, curve25519: Curve25519Key) {
+        let c = self.contacts.entry(ed25519).or_insert(Contact {
+            curve25519,
+            is_request: false,
+            nickname: None,
+            sessions: Vec::new(),
+            member: false,
+        });
+        if c.member {
+            if c.curve25519 != curve25519 {
+                c.curve25519 = curve25519;
+                c.sessions.clear();
+            }
+            c.member = false;
+        }
+    }
+
+    /// ADR-030, for states saved before it: every key but `peers` was known
+    /// only by someone else's word.
+    pub fn mark_members(&mut self, peers: impl Fn(&Ed25519Key) -> bool) {
+        for (k, c) in &mut self.contacts {
+            if !peers(k) {
+                c.member = true;
+            }
+        }
     }
 
     /// A contact's nickname, as our primary knows it (ADR-028).
@@ -734,6 +814,8 @@ struct ContactState {
     is_request: bool,
     nickname: Option<String>,
     sessions: Vec<(SessionPickle, u64, SeqTracker)>,
+    #[serde(default)]
+    member: bool,
 }
 
 /// Written form of [`State`]: borrows the app data so the plaintext history

@@ -81,7 +81,7 @@ fn a_contact_talks_to_each_device_of_the_list() {
     // Bob knows the laptop only from the signed list.
     verify_devices(&list).unwrap();
     for d in &list.devices[1..] {
-        bob.add_member(d.ed25519, d.curve25519);
+        bob.add_member(d.ed25519, d.curve25519).unwrap();
     }
     let otk = laptop.one_time_keys(1).remove(0);
     bob.start_session(&l, &otk).unwrap();
@@ -151,4 +151,26 @@ fn a_link_answer_binds_the_primarys_key_like_a_request() {
     let got = laptop.decrypt(None, &env).unwrap();
     assert_eq!(got.sender, phone.identity().ed25519);
     assert!(got.request);
+}
+
+/// ADR-030: someone else's word never changes a key we hold, and a signed
+/// identity replaces what someone else said of a key.
+#[test]
+fn a_member_entry_yields_to_a_signed_identity_and_never_rekeys_a_peer() {
+    let mut me = Client::default();
+    let victor = Client::default();
+    let mallory = Client::default();
+    let v = victor.identity();
+    // Mallory's word: Victor's key with her Curve25519 key.
+    me.add_member(v.ed25519, mallory.identity().curve25519)
+        .unwrap();
+    // Victor's own signed identity wins.
+    me.add_contact(&v).unwrap();
+    assert_eq!(me.curve_of(&v.ed25519), Some(v.curve25519));
+    // Now a peer: a roster or list cannot change its key.
+    assert!(
+        me.add_member(v.ed25519, mallory.identity().curve25519)
+            .is_err()
+    );
+    assert_eq!(me.curve_of(&v.ed25519), Some(v.curve25519));
 }

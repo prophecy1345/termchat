@@ -198,6 +198,8 @@ pub struct Engine {
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
+    /// Why links could not start at the last `start_links`, said once.
+    unreachable: BTreeSet<String>,
     /// The relay had no key to give: claim again at this time.
     reclaim: Option<Instant>,
     /// Single devices of contacts whose key we asked for (ADR-028): once each.
@@ -281,6 +283,24 @@ fn ws_host(url: &str) -> Option<String> {
 /// A relay address from a peer (invite or `QueueOffer`), fit to connect to.
 fn addr_ok(relay_url: &str, onion_url: Option<&str>) -> bool {
     relay_url_ok(relay_url) && onion_url.is_none_or(onion_url_ok)
+}
+
+fn loopback(url: &str) -> bool {
+    ws_host(url).is_some_and(|h| matches!(h.as_str(), "localhost" | "127.0.0.1" | "::1"))
+}
+
+impl Engine {
+    /// A relay address from a peer or an invite (review 2026-11c, findings 3
+    /// and 7): `wss://`, an onion `ws://` beside it, and this machine only if
+    /// our own relay is here too (tests, a relay on the same computer); never
+    /// a request from a peer to a service on our own machine.
+    pub(crate) fn peer_addr_ok(&self, relay_url: &str, onion_url: Option<&str>) -> bool {
+        peer_addr_ok(&self.data.relay_url, relay_url, onion_url)
+    }
+}
+
+fn peer_addr_ok(ours: &str, relay_url: &str, onion_url: Option<&str>) -> bool {
+    addr_ok(relay_url, onion_url) && (!loopback(relay_url) || loopback(ours))
 }
 
 fn same_url(a: &str, b: &str) -> bool {
@@ -548,9 +568,15 @@ impl Engine {
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
+            unreachable: BTreeSet::new(),
             reclaim: None,
             claiming: BTreeSet::new(),
         });
+        // ADR-030: states from before it held members like peers.
+        let peers: BTreeSet<Ed25519Key> = engine.data.contacts.iter().map(|c| c.key).collect();
+        for slot in 0..engine.cores.len() {
+            engine.core_at(slot).mark_members(|k| peers.contains(k));
+        }
         engine.start_links(true)?;
         Ok(engine)
     }
@@ -723,6 +749,10 @@ impl Engine {
         }
         want.extend(self.group_links());
         self.links.retain(|l, _| want.contains_key(l));
+        // Review 2026-11c, finding 3: an address that cannot be dialled (from a
+        // peer, or with Tor on and no onion) skips its link; it must never
+        // stop the rest from starting, nor the state from opening.
+        let mut failed = BTreeSet::new();
         for (link, onion) in want {
             if self.links.contains_key(&link) {
                 continue;
@@ -733,7 +763,13 @@ impl Engine {
                 true => spread(),
                 false => Duration::ZERO,
             };
-            let live = start(&link, onion.as_deref(), data, path, tx, delay)?;
+            let live = match start(&link, onion.as_deref(), data, path, tx, delay) {
+                Ok(live) => live,
+                Err(why) => {
+                    failed.insert(why);
+                    continue;
+                }
+            };
             // Events carry only the link, so an old link still deleting a
             // queue would take the new one's for its own. The new one sends
             // the deletion instead (sending it twice is harmless).
@@ -743,6 +779,15 @@ impl Engine {
             }
             self.links.insert(link, live);
         }
+        // Said once per reason, not at every new link.
+        for why in failed
+            .difference(&self.unreachable)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            self.note(format!("a relay cannot be reached: {why}"));
+        }
+        self.unreachable = failed;
         Ok(())
     }
 
@@ -1904,7 +1949,7 @@ impl Engine {
                 onion_url,
                 send_id,
             } => {
-                if !addr_ok(&relay_url, onion_url.as_deref()) {
+                if !self.peer_addr_ok(&relay_url, onion_url.as_deref()) {
                     self.note("a contact sent an address that cannot be used");
                     return self.persist();
                 }
@@ -2787,7 +2832,7 @@ impl Engine {
             }
             e => format!("invalid invite: {e}"),
         })?;
-        if !addr_ok(&invite.relay_url, invite.onion_url.as_deref()) {
+        if !self.peer_addr_ok(&invite.relay_url, invite.onion_url.as_deref()) {
             return Err("invalid invite: its relay address cannot be used".into());
         }
         if self.data.tor && invite.onion_url.is_none() {
@@ -3043,6 +3088,32 @@ fn show_missed(c: &mut Contact, missed: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review 2026-11c, findings 3 and 7: what a peer may name as a relay.
+    #[test]
+    fn a_peer_cannot_point_us_at_this_machine_or_a_plain_socket() {
+        let ours = "wss://relay.termchat.app/";
+        assert!(peer_addr_ok(ours, "wss://relay.example/", None));
+        assert!(peer_addr_ok(
+            ours,
+            "wss://relay.example/",
+            Some("ws://abc.onion/")
+        ));
+        assert!(!peer_addr_ok(ours, "ws://relay.example/", None));
+        assert!(!peer_addr_ok(ours, "ws://127.0.0.1:6379/", None));
+        assert!(!peer_addr_ok(ours, "ws://localhost/admin?x=1", None));
+        assert!(!peer_addr_ok(
+            ours,
+            "wss://relay.example/",
+            Some("ws://relay.example/")
+        ));
+        // Our own relay on this machine (tests, a relay beside us): fine.
+        assert!(peer_addr_ok(
+            "ws://127.0.0.1:8090/",
+            "ws://127.0.0.1:8091/",
+            None
+        ));
+    }
 
     #[test]
     fn a_gap_shows_one_notice_that_follows_the_count() {
