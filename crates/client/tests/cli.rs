@@ -339,11 +339,7 @@ async fn commands_go_through_a_running_daemon() {
     })
     .await;
     phone.accept(0);
-    // On the relay, not only handed to the link: the daemon reads it from there.
-    pump(&mut phone, |e| {
-        !e.data.contacts[0].accept_pending && e.all_answered()
-    })
-    .await;
+    pump(&mut phone, |e| !e.data.contacts[0].accept_pending).await;
 
     /// Killed if the test fails halfway, so no daemon outlives it.
     struct Daemon(std::process::Child);
@@ -366,6 +362,17 @@ async fn commands_go_through_a_running_daemon() {
     pump(&mut phone, |_| socket.exists()).await;
     let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+    // The socket comes before the daemon has read its queues: her name
+    // arrives with the accept it fetches. A script waits the same way.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let (_, out, _) = text(&termchat(&mut phone, &home, &["contacts"]).await);
+        if out.starts_with("alice") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the daemon never heard alice");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 
     // No password from here on.
     let started = Instant::now();
