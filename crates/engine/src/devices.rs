@@ -11,6 +11,9 @@ use termchat_core::proto::{
 };
 use termchat_core::{fingerprint, verify_devices};
 
+/// Messages kept for one device of a contact until we have a session with it.
+const WAITING_PER_DEVICE: usize = 64;
+
 impl Engine {
     /// The primary, or a device on its own: only it links other devices.
     pub fn is_primary(&self) -> bool {
@@ -765,10 +768,17 @@ impl Engine {
         let mut waiting = false;
         for (d, addr) in targets {
             if !self.core_at(slot).has_session(&d) {
-                if theirs(&d) {
-                    // A device of theirs new to us: it gets this once a
-                    // session is up, instead of never (`flush_devices`).
-                    self.data.contacts[i].device_outbox.push((d, body.clone()));
+                // A device of theirs new to us gets this once a session is up,
+                // instead of never (`flush_devices`). Not file chunks, and only
+                // the newest few: one that never answers must not grow the state.
+                if theirs(&d) && !matches!(body, Body::File { .. }) {
+                    let q = &mut self.data.contacts[i].device_outbox;
+                    q.push((d, body.clone()));
+                    if q.iter().filter(|(k, _)| *k == d).count() > WAITING_PER_DEVICE
+                        && let Some(n) = q.iter().position(|(k, _)| *k == d)
+                    {
+                        q.remove(n);
+                    }
                     waiting = true;
                 } else if let Some(l) = self.live(key, &addr.relay_url) {
                     let _ = l.relay.send(ClientFrame::ClaimKey {
