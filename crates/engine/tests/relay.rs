@@ -509,3 +509,22 @@ async fn a_long_queue_arrives_once_and_in_order() {
     alice.send_text(b, to, N, "live").await;
     assert_eq!(bob.recv_text(a, true).await, "live");
 }
+
+/// A one-shot command exits once nothing is unanswered (ADR-024): the count
+/// must cover a frame from the moment it is handed over until its answer.
+#[tokio::test]
+async fn unanswered_counts_a_send_until_the_relay_answers() {
+    let url = start_relay(Limits::default()).await;
+    let (mut alice, bob) = talking(&url, &url).await;
+    assert_eq!(alice.relay.unanswered(), 0);
+    alice.put(bob.key(), bob.send_id(), 1, "one");
+    alice.put(bob.key(), bob.send_id(), 2, "two");
+    assert_eq!(alice.relay.unanswered(), 2);
+    let mut answered = 0;
+    while answered < 2 {
+        if let ServerFrame::Accepted { .. } = alice.frame().await {
+            answered += 1;
+        }
+    }
+    assert_eq!(alice.relay.unanswered(), 0);
+}

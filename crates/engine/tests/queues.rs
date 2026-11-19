@@ -327,3 +327,45 @@ async fn an_acceptance_that_did_not_go_out_goes_after_unlock() {
     pump(&mut alice, &mut bob, |_, b| got("accepted your request")(b)).await;
     let _ = std::fs::remove_dir_all(d);
 }
+
+/// The `termchat add` path: Bob's request goes, his app closes, and he writes
+/// after Alice accepted. Nothing was lost, so Alice must not hear of a gap.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_gap_is_reported_when_the_asker_restarts_before_the_accept() {
+    let url = start_relay().await;
+    let d = dir("restart-ask");
+    let mut alice = engine(&d, "alice", &url);
+    let mut bob = engine(&d, "bob", &url);
+    pump(&mut alice, &mut bob, |a, _| a.data.fallback_published).await;
+    let settle = Instant::now() + Duration::from_millis(300);
+    pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
+    let invite = alice.invite().unwrap();
+    bob.add(&invite, false).unwrap();
+    pump(&mut alice, &mut bob, |_, b| {
+        let c = &b.data.contacts[0];
+        !c.request_pending && !c.offer_pending && c.mine.is_some()
+    })
+    .await;
+    // What `termchat add` waits for before it exits.
+    pump(&mut alice, &mut bob, |_, b| b.all_answered()).await;
+    drop(bob);
+    let mut bob = match Engine::unlock(&d.join("bob"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(e) => e,
+        termchat_engine::Unlocked::Wiped => panic!("wiped"),
+    };
+    bob.connect_now().unwrap();
+    pump(&mut alice, &mut bob, |a, _| {
+        !a.data.contacts.is_empty() && a.data.contacts[0].theirs.is_some()
+    })
+    .await;
+    alice.accept(0);
+    pump(&mut alice, &mut bob, |_, b| got("accepted your request")(b)).await;
+    bob.send(0, "hello").unwrap();
+    pump(&mut alice, &mut bob, |a, _| got("hello")(a)).await;
+    let gaps: Vec<String> = texts(&alice)
+        .into_iter()
+        .filter(|t| t.contains("missing"))
+        .collect();
+    assert!(gaps.is_empty(), "{gaps:?}");
+    let _ = std::fs::remove_dir_all(d);
+}

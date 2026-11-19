@@ -99,5 +99,17 @@ async fn run(terminal: &mut ratatui::DefaultTerminal, mut app: App) -> std::io::
             _ = tick.tick() => app.on_tick(),
         }
     }
+    // A request or an accept sent just before Ctrl+Q must still reach the
+    // relay: the ratchet has moved on, a lost frame stays lost.
+    let until = tokio::time::Instant::now() + QUIT_WAIT;
+    while !app.all_answered() {
+        tokio::select! {
+            ev = app.relay_event() => app.on_relay(ev),
+            () = tokio::time::sleep_until(until) => break,
+        }
+    }
     Ok(())
 }
+
+/// The longest Ctrl+Q waits for the relay to take what was sent.
+const QUIT_WAIT: Duration = Duration::from_secs(5);

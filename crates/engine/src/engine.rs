@@ -2589,6 +2589,17 @@ impl Engine {
         })
     }
 
+    /// Every encrypted frame handed to a link was accepted or refused by its
+    /// relay. A one-shot command (ADR-024) waits for this before it exits:
+    /// a frame lost then leaves a hole in the peer's sequence, or a contact
+    /// who never hears our queue.
+    pub fn all_answered(&self) -> bool {
+        // A dropped link answers nothing soon: waiting on it only stalls the exit.
+        self.links
+            .values()
+            .all(|l| !l.connected || l.relay.unanswered() == 0)
+    }
+
     /// Starts every link now instead of spread over 0-30 s (ADR-014): for a
     /// one-shot command (ADR-024), which is gone before a spread link comes.
     pub fn connect_now(&mut self) -> Result<(), String> {

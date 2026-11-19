@@ -263,6 +263,14 @@ impl App {
         self.screen = Screen::Setup(form);
     }
 
+    /// Every frame handed to the relay was answered, or nothing is unlocked.
+    pub fn all_answered(&self) -> bool {
+        match &self.screen {
+            Screen::Main(m) => m.engine.all_answered(),
+            _ => true,
+        }
+    }
+
     /// Next relay event while unlocked; never resolves otherwise.
     pub async fn relay_event(&mut self) -> RelayEvent {
         if let Screen::Main(m) = &mut self.screen

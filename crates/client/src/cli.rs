@@ -162,7 +162,7 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     drop(password);
     e.connect_now().map_err(|why| Fail(1, why))?;
     let deadline = Instant::now() + Duration::from_secs(a.timeout.unwrap_or(60));
-    match a.command.as_str() {
+    let done = match a.command.as_str() {
         "invite" => invite(&mut e, deadline).await,
         "add" => add(&mut e, &a, deadline).await,
         "contacts" => {
@@ -175,7 +175,13 @@ async fn command(args: &[String]) -> Result<(), Fail> {
         #[cfg(unix)]
         "daemon" => daemon::serve(&mut e, &data::home()).await,
         other => fail(2, format!("unknown command {other}\n{USAGE}")),
+    };
+    // What went to the link must reach the relay before we exit: the ratchet
+    // has moved on, so a frame lost now is a hole the contact sees for good.
+    if !pump(&mut e, deadline, Engine::all_answered).await && done.is_ok() {
+        eprintln!("termchat: the relay did not answer everything in time");
     }
+    done
 }
 
 /// One process holds a state file: say so at once rather than wait.

@@ -123,6 +123,15 @@ impl App {
     /// Saves and forgets the open state; the password opens it again.
     fn lock(&mut self) {
         if let Screen::Main(chat) = &mut self.screen {
+            // What was sent just before closing must still reach the relay:
+            // the ratchet has moved on, a lost frame stays lost.
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !chat.engine.all_answered() && std::time::Instant::now() < until {
+                while let Ok(ev) = chat.engine.events.try_recv() {
+                    chat.engine.on_relay(ev);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             chat.engine.persist();
         }
         self.screen = Screen::Unlock(Unlock::default());

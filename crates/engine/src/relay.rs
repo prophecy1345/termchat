@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use futures_util::{SinkExt, StreamExt};
@@ -93,6 +93,8 @@ pub struct Relay {
     tx: mpsc::UnboundedSender<ClientFrame>,
     wake: Arc<Notify>,
     pushed: Arc<AtomicBool>,
+    /// `Send` frames the relay has not answered yet, queued ones included.
+    unanswered: Arc<AtomicUsize>,
 }
 
 impl Relay {
@@ -146,6 +148,7 @@ impl Relay {
         let (events_tx, events) = mpsc::channel(256);
         let wake = Arc::new(Notify::new());
         let pushed = Arc::new(AtomicBool::new(false));
+        let unanswered = Arc::new(AtomicUsize::new(0));
         let link = Link {
             url: url.to_owned(),
             #[cfg(feature = "tor")]
@@ -164,15 +167,39 @@ impl Relay {
             spread,
             wake: Arc::clone(&wake),
             pushed: Arc::clone(&pushed),
+            unanswered: Arc::clone(&unanswered),
             heard: SystemTime::now(),
         };
         tokio::spawn(link.run(rx));
-        Ok((Self { tx, wake, pushed }, events))
+        Ok((
+            Self {
+                tx,
+                wake,
+                pushed,
+                unanswered,
+            },
+            events,
+        ))
     }
 
     /// Queues a frame. `Send` frames survive reconnects until the relay answers.
     pub fn send(&self, frame: ClientFrame) -> Result<(), Error> {
-        self.tx.send(frame).map_err(|_| Error::Closed)
+        let counted = matches!(frame, ClientFrame::Send { .. });
+        if counted {
+            self.unanswered.fetch_add(1, Ordering::Relaxed);
+        }
+        self.tx.send(frame).map_err(|_| {
+            if counted {
+                self.unanswered.fetch_sub(1, Ordering::Relaxed);
+            }
+            Error::Closed
+        })
+    }
+
+    /// `Send` frames not yet accepted or refused for good. A process that
+    /// exits before this is 0 loses them: the ratchet has moved on already.
+    pub fn unanswered(&self) -> usize {
+        self.unanswered.load(Ordering::Relaxed)
     }
 
     /// The app woke up or came on screen (ADR-012): stop waiting to reconnect,
@@ -226,6 +253,8 @@ struct Link {
     wake: Arc<Notify>,
     /// Set by `Relay::check`: a push came, check the connection held now.
     pushed: Arc<AtomicBool>,
+    /// Shared with `Relay::unanswered`.
+    unanswered: Arc<AtomicUsize>,
     /// Last word from the relay, wall clock: the monotonic one stops while
     /// the phone sleeps.
     heard: SystemTime,
@@ -422,7 +451,10 @@ impl Link {
                     let sent = match &frame {
                         ClientFrame::Send { client_id, send_id, .. } => {
                             let to = *send_id;
-                            self.pending.insert(*client_id, frame);
+                            if self.pending.insert(*client_id, frame).is_some() {
+                                // The same id twice counts once.
+                                self.unanswered.fetch_sub(1, Ordering::Relaxed);
+                            }
                             self.pump(&mut ws, to).await
                         }
                         _ => write(&mut ws, &frame).await,
@@ -496,7 +528,9 @@ impl Link {
             r.wait = (r.wait * 2).min(MAX_DELAY);
             return Answer::Retry;
         }
-        self.pending.remove(&id);
+        if self.pending.remove(&id).is_some() {
+            self.unanswered.fetch_sub(1, Ordering::Relaxed);
+        }
         self.retry.remove(&to);
         Answer::Done(to)
     }
