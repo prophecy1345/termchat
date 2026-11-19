@@ -71,6 +71,13 @@ private fun Root(m: Model) {
             Screen.LinkCode -> LinkCode(m)
         }
     }
+    // A note belongs to the screen it was said on: leaving it ends the note,
+    // so one from a chat does not linger over the list.
+    var noteScreen by remember { mutableStateOf(m.screen) }
+    if (noteScreen != m.screen) {
+        noteScreen = m.screen
+        m.note = ""
+    }
     // A note is news, not a state: it goes after a while.
     LaunchedEffect(m.note) {
         if (m.note.isNotEmpty()) {
