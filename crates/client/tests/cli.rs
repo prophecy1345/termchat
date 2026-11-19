@@ -339,7 +339,11 @@ async fn commands_go_through_a_running_daemon() {
     })
     .await;
     phone.accept(0);
-    pump(&mut phone, |e| !e.data.contacts[0].accept_pending).await;
+    // On the relay, not only handed to the link: the daemon reads it from there.
+    pump(&mut phone, |e| {
+        !e.data.contacts[0].accept_pending && e.all_answered()
+    })
+    .await;
 
     /// Killed if the test fails halfway, so no daemon outlives it.
     struct Daemon(std::process::Child);
