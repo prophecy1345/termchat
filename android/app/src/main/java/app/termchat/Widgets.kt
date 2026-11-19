@@ -26,6 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -142,3 +147,25 @@ fun span(seconds: UInt?): String = when (val s = seconds?.toLong()) {
 }
 
 val TextStyle.dim get() = copy(color = Tc.dim)
+
+/** The attach button's icon: a paperclip drawn in the theme's line, like the
+ *  timer's envelope, instead of the system's coloured emoji. */
+@Composable
+fun Paperclip(color: Color) {
+    Box(Modifier.size(width = 14.dp, height = 22.dp).drawBehind {
+        val u = size.width / 14f
+        fun arc(cx: Float, cy: Float, r: Float, start: Float) =
+            Rect(cx * u - r * u, cy * u - r * u, cx * u + r * u, cy * u + r * u) to start
+        val clip = Path().apply {
+            moveTo(5f * u, 8f * u)
+            lineTo(5f * u, 16f * u)
+            arc(7.5f, 16f, 2.5f, 180f).let { (r, a) -> arcTo(r, a, -180f, false) }
+            lineTo(10f * u, 5f * u)
+            arc(6.5f, 5f, 3.5f, 0f).let { (r, a) -> arcTo(r, a, -180f, false) }
+            lineTo(3f * u, 17f * u)
+            arc(7.5f, 17f, 4.5f, 180f).let { (r, a) -> arcTo(r, a, -180f, false) }
+            lineTo(12f * u, 9f * u)
+        }
+        drawPath(clip, color, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
+    })
+}

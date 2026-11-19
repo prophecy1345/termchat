@@ -220,7 +220,7 @@ fun Chat(m: Model, index: UInt) {
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !closed && !c.request) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
-            ) { Text("📎", style = Tc.name) }
+            ) { Paperclip(if (closed || c.request) Tc.line else Tc.dim) }
             Field(
                 text, { text = it },
                 when {

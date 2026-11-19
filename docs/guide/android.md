@@ -12,7 +12,7 @@ The Android app needs Android 8.0 or newer and no Google services. [Install](ins
 ## The screens
 
 - **Chats:** your contacts, newest on top, then your groups. ⋮ holds **Your invite**, **Add contact**, **New group**, **Devices** (see [Devices](devices.md)), **Settings**, **What's new** and **Lock**, and on a new device **Link to my main device**; **+** also adds a contact.
-- **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the disappearing timer (a crumbling envelope: a tap moves to the next time and says it), 📎 for a file, the field and **Send**.
+- **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the disappearing timer (a crumbling envelope: a tap moves to the next time and says it), the paperclip for a file, the field and **Send**.
 - **Long press** a message to answer, react, copy it, and edit or delete your own; see [Messages](messages.md).
 - **Your invite** shows a QR code for another phone or the desktop app to scan; **Add contact** has **Scan QR code**. See [Contacts](contacts.md).
 

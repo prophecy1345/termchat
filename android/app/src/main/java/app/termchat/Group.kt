@@ -110,7 +110,7 @@ fun Group(m: Model, index: UInt) {
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
-            ) { Text("📎", style = Tc.name) }
+            ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
             Field(text, { text = it }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false)
             Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime) {
                 runCatching {
