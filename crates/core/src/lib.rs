@@ -794,6 +794,15 @@ impl Client {
 
     /// Signs our device list (ADR-028). Only the primary can: its key is
     /// the identity the list is for.
+    /// ADR-030: this device's word that it joins `identity` with its own
+    /// Curve25519 key. Only the key's holder can say so.
+    pub fn device_proof(&self, identity: &Ed25519Key) -> Signature {
+        let curve = self.account.curve25519_key().to_bytes();
+        self.account
+            .sign([proto::DEVICE_PROOF_CONTEXT, identity, &curve].concat())
+            .to_bytes()
+    }
+
     pub fn sign_devices(&self, list: &DeviceList) -> Result<Signature, Error> {
         if list.identity != self.ed25519() {
             return Err(Error::BadSignature);
@@ -969,7 +978,16 @@ pub fn verify_devices(list: &DeviceList) -> Result<(), Error> {
         &list.identity,
         &[DEVICES_CONTEXT, &list.signed_bytes()].concat(),
         &list.signature,
-    )
+    )?;
+    // ADR-030: every key on the list agreed to be there, with that Curve25519 key.
+    for d in &list.devices {
+        verify_message(
+            &d.ed25519,
+            &[proto::DEVICE_PROOF_CONTEXT, &list.identity, &d.curve25519].concat(),
+            &d.proof,
+        )?;
+    }
+    Ok(())
 }
 
 fn verify_identity(id: &Identity) -> Result<(), Error> {

@@ -125,6 +125,26 @@ async fn a_laptop_links_to_the_phone_once_both_screens_agree() {
     // A linked device links no one, and asks for no code of its own.
     assert!(e[laptop].link_code().is_err());
     assert!(e[laptop].add_device(&code).is_err());
+    // ADR-030: every device on the list proved itself.
+    termchat_core::verify_devices(&list).unwrap();
+
+    // A state from before ADR-030: the list's devices carry no proofs. On
+    // the next unlock the phone keeps itself, and the laptop must link again.
+    let mut old = list.clone();
+    old.devices.iter_mut().for_each(|d| d.proof = [0; 64]);
+    old.signature = e[phone].core().sign_devices(&old).unwrap();
+    e[phone].data.devices = Some(old);
+    assert!(e[phone].persist());
+    let phone_dir = dir.join("alice");
+    e.remove(phone);
+    let reopened = match termchat_engine::Engine::unlock(&phone_dir, PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(x) => x,
+        termchat_engine::Unlocked::Wiped => panic!("wiped"),
+    };
+    let fresh = reopened.data.devices.clone().unwrap();
+    assert_eq!(fresh.devices.len(), 1);
+    termchat_core::verify_devices(&fresh).unwrap();
+    assert!(reopened.data.contacts.iter().all(|c| !c.own));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

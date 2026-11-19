@@ -411,6 +411,9 @@ pub struct Contact {
     /// The other side confirmed it too (`DeviceLinked`).
     #[serde(default)]
     pub link_theirs: bool,
+    /// ADR-030: the new device's proof that it joins us, from `DeviceLinked`.
+    #[serde(default)]
+    pub link_proof: Vec<u8>,
     /// Our other devices' queues for this contact (`OwnQueue`): copies of
     /// what we send them go there.
     #[serde(default)]

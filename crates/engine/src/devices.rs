@@ -111,8 +111,13 @@ impl Engine {
             self.persist();
             return self.finish_link(i);
         }
-        // Our queue for the primary goes first, then that we agree.
-        self.data.contacts[i].outbox.push(Body::DeviceLinked);
+        // Our queue for the primary goes first, then that we agree, with our
+        // proof that we join its identity (ADR-030).
+        let primary = self.data.contacts[i].key;
+        let proof = self.core().device_proof(&primary);
+        self.data.contacts[i]
+            .outbox
+            .push(Body::DeviceLinked { proof });
         self.accept(i);
     }
 
@@ -218,22 +223,28 @@ impl Engine {
             return;
         }
         let key = c.key;
+        let Ok(proof) = <[u8; 64]>::try_from(c.link_proof.as_slice()) else {
+            return self.note("the new device sent no proof: link it again");
+        };
         let Some(curve25519) = self.core().curve_of(&key) else {
             return;
         };
         let me = self.core().identity();
+        let own_proof = self.core().device_proof(&me.ed25519);
         let mut list = self.data.devices.clone().unwrap_or_else(|| DeviceList {
             identity: me.ed25519,
             no: 0,
             devices: vec![Device {
                 ed25519: me.ed25519,
                 curve25519: me.curve25519,
+                proof: own_proof,
             }],
             signature: [0; 64],
         });
         list.devices.push(Device {
             ed25519: key,
             curve25519,
+            proof,
         });
         list.no += 1;
         let signed = self.core().sign_devices(&list);
@@ -442,8 +453,9 @@ impl Engine {
                     "Your main device answered: compare the fingerprints on both screens.".into(),
                 ));
             }
-            Body::DeviceLinked if own && self.is_primary() => {
+            Body::DeviceLinked { proof } if own && self.is_primary() => {
                 self.data.contacts[i].link_theirs = true;
+                self.data.contacts[i].link_proof = proof.to_vec();
                 self.finish_link(i);
             }
             Body::OwnDevices {
@@ -651,6 +663,74 @@ impl Engine {
 
     /// Contact `i`'s device list, from any device of theirs: checked, then
     /// each device known by its keys and where it reads us.
+    /// ADR-030, section 1, for states from before it: lists without device
+    /// proofs no longer verify. Ours: the main device keeps itself and drops
+    /// the others, to be linked again; a linked device sees it was removed.
+    /// Contacts' and group members' old lists are forgotten until they send
+    /// new ones.
+    pub(super) fn drop_unproven_devices(&mut self) {
+        let stale = |l: &DeviceList| termchat_core::verify_devices(l).is_err();
+        let mut told = false;
+        if self.data.devices.as_ref().is_some_and(stale) {
+            let me = self.core().identity();
+            let list = DeviceList {
+                identity: me.ed25519,
+                no: self.data.devices.as_ref().map_or(0, |l| l.no) + 1,
+                devices: vec![Device {
+                    ed25519: me.ed25519,
+                    curve25519: me.curve25519,
+                    proof: self.core().device_proof(&me.ed25519),
+                }],
+                signature: [0; 64],
+            };
+            if self.is_primary() {
+                let gone: Vec<Ed25519Key> = self
+                    .data
+                    .contacts
+                    .iter()
+                    .filter(|c| c.own)
+                    .map(|c| c.key)
+                    .collect();
+                let mut core = self.core();
+                for k in &gone {
+                    core.remove_contact(k);
+                }
+                drop(core);
+                self.data.contacts.retain(|c| !c.own);
+                let mut list = list;
+                let signed = self.core().sign_devices(&list);
+                match signed {
+                    Ok(s) => list.signature = s,
+                    Err(e) => return self.note(e.to_string()),
+                }
+                self.data.devices = Some(list);
+                if !gone.is_empty() {
+                    told = true;
+                }
+            } else {
+                // Lists no other device: `removed()` holds, nothing more is sent.
+                self.data.devices = Some(DeviceList {
+                    devices: Vec::new(),
+                    ..list
+                });
+                told = true;
+            }
+        }
+        for c in &mut self.data.contacts {
+            if c.their_devices.as_ref().is_some_and(stale) {
+                c.their_devices = None;
+                c.device_addrs.clear();
+                c.device_outbox.clear();
+            }
+        }
+        for g in &mut self.data.groups {
+            g.member_devices.retain(|(_, l, _)| !stale(l));
+        }
+        if told {
+            self.note("Security update (ADR-030): link your other devices to your main one again.");
+        }
+    }
+
     /// ADR-030, section 3: `k` is someone's other than contact `i`'s: ours (our
     /// identity or one of our devices), a contact, a device another contact
     /// listed, or a member of one of our groups.

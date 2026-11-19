@@ -13,11 +13,13 @@ fn text(s: &str) -> Body {
     }
 }
 
-fn device(c: &Client) -> Device {
+/// `c` as a device of `identity`, with its own proof (ADR-030).
+fn device_of(c: &Client, identity: &[u8; 32]) -> Device {
     let id = c.identity();
     Device {
         ed25519: id.ed25519,
         curve25519: id.curve25519,
+        proof: c.device_proof(identity),
     }
 }
 
@@ -25,10 +27,11 @@ fn device(c: &Client) -> Device {
 fn alice() -> (Client, Client, DeviceList) {
     let phone = Client::default();
     let laptop = Client::default();
+    let me = phone.identity().ed25519;
     let mut list = DeviceList {
-        identity: phone.identity().ed25519,
+        identity: me,
         no: 1,
-        devices: vec![device(&phone), device(&laptop)],
+        devices: vec![device_of(&phone, &me), device_of(&laptop, &me)],
         signature: [0; 64],
     };
     list.signature = phone.sign_devices(&list).unwrap();
@@ -42,7 +45,8 @@ fn a_list_signed_by_its_primary_checks_and_nothing_else_does() {
 
     // A device slipped in, or the number changed, after signing.
     let mut more = list.clone();
-    more.devices.push(device(&Client::default()));
+    more.devices
+        .push(device_of(&Client::default(), &list.identity));
     assert_eq!(verify_devices(&more), Err(Error::BadSignature));
     let mut renumbered = list.clone();
     renumbered.no = 2;
@@ -61,7 +65,7 @@ fn a_list_signed_by_its_primary_checks_and_nothing_else_does() {
     let mallory = Client::default();
     let mut stolen = list.clone();
     stolen.identity = mallory.identity().ed25519;
-    stolen.devices[0] = device(&mallory);
+    stolen.devices[0] = device_of(&mallory, &stolen.identity);
     assert_eq!(verify_devices(&stolen), Err(Error::BadSignature));
     // A signature over a roster is not one over a device list.
     let roster_sig = phone.sign_roster(&list.signed_bytes());
@@ -173,4 +177,37 @@ fn a_member_entry_yields_to_a_signed_identity_and_never_rekeys_a_peer() {
             .is_err()
     );
     assert_eq!(me.curve_of(&v.ed25519), Some(v.curve25519));
+}
+
+/// ADR-030, section 1: a list signed by its owner still cannot name a key
+/// whose holder never agreed, nor pair a key with another Curve25519 key.
+#[test]
+fn a_device_on_a_list_must_have_signed_itself() {
+    let (phone, laptop, _) = alice();
+    let me = phone.identity().ed25519;
+    let victor = Client::default();
+    let sign = |devices: Vec<Device>| {
+        let mut l = DeviceList {
+            identity: me,
+            no: 2,
+            devices,
+            signature: [0; 64],
+        };
+        l.signature = phone.sign_devices(&l).unwrap();
+        l
+    };
+    // Victor's key, never signed by Victor.
+    let mut planted = device_of(&laptop, &me);
+    planted.ed25519 = victor.identity().ed25519;
+    let list = sign(vec![device_of(&phone, &me), planted]);
+    assert_eq!(verify_devices(&list), Err(Error::BadSignature));
+    // The laptop's key with someone else's Curve25519 key.
+    let mut rekeyed = device_of(&laptop, &me);
+    rekeyed.curve25519 = victor.identity().curve25519;
+    let list = sign(vec![device_of(&phone, &me), rekeyed]);
+    assert_eq!(verify_devices(&list), Err(Error::BadSignature));
+    // A proof for another identity does not carry over.
+    let elsewhere = device_of(&laptop, &victor.identity().ed25519);
+    let list = sign(vec![device_of(&phone, &me), elsewhere]);
+    assert_eq!(verify_devices(&list), Err(Error::BadSignature));
 }

@@ -577,6 +577,7 @@ impl Engine {
         for slot in 0..engine.cores.len() {
             engine.core_at(slot).mark_members(|k| peers.contains(k));
         }
+        engine.drop_unproven_devices();
         engine.start_links(true)?;
         Ok(engine)
     }
@@ -1977,7 +1978,7 @@ impl Engine {
             Body::Unknown => return self.persist(),
             // ADR-028: devices of one identity.
             body @ (Body::DeviceLink { .. }
-            | Body::DeviceLinked
+            | Body::DeviceLinked { .. }
             | Body::LinkedContact { .. }
             | Body::OwnDevices { .. }
             | Body::Devices { .. }

@@ -505,8 +505,12 @@ pub enum Body {
         code: InviteCode,
         identity: Identity,
     },
-    /// The new device: the person saw the same fingerprint on both screens.
-    DeviceLinked,
+    /// The new device: the person saw the same fingerprint on both screens,
+    /// and its proof for the list (ADR-030).
+    DeviceLinked {
+        #[serde(with = "serde_big_array")]
+        proof: Signature,
+    },
     /// The primary to a new device: one contact, to talk to from there.
     LinkedContact {
         contact: LinkedContact,
@@ -561,8 +565,9 @@ pub const MAX_GROUP_MEMBERS: usize = 32;
 const KNOWN_KINDS: u32 = 27;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
-/// (ADR-027), 3 = devices (ADR-028).
-pub const UNDERSTANDS: u16 = 3;
+/// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
+/// copies that name their chat (ADR-030).
+pub const UNDERSTANDS: u16 = 4;
 
 /// Devices of one identity, the primary included (ADR-028).
 pub const MAX_DEVICES: usize = 4;
@@ -582,6 +587,19 @@ pub struct DeviceList {
 pub struct Device {
     pub ed25519: Ed25519Key,
     pub curve25519: Curve25519Key,
+    /// ADR-030: the device's own signature that it belongs to this identity
+    /// with this Curve25519 key (`DEVICE_PROOF_CONTEXT`). Zero in lists
+    /// saved before it, which no longer verify.
+    #[serde(with = "serde_big_array", default = "no_signature")]
+    pub proof: Signature,
+}
+
+/// What a device signs to join an identity (ADR-030): this, the identity
+/// key, then its own Curve25519 key.
+pub const DEVICE_PROOF_CONTEXT: &[u8] = b"termchat-device-v1";
+
+fn no_signature() -> Signature {
+    [0; 64]
 }
 
 impl DeviceList {
@@ -1484,6 +1502,7 @@ mod tests {
                 .map(|i| Device {
                     ed25519: [i; 32],
                     curve25519: [i; 32],
+                    proof: [0; 64],
                 })
                 .collect(),
             signature: [0; 64],
@@ -1511,7 +1530,7 @@ mod tests {
                 code: [9; 16],
                 identity: identity.clone(),
             },
-            Body::DeviceLinked,
+            Body::DeviceLinked { proof: [4; 64] },
             Body::LinkedContact {
                 contact: LinkedContact {
                     identity,

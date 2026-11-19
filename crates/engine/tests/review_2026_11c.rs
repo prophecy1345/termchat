@@ -129,6 +129,7 @@ fn devices_of_mallory(e: &[Box<Engine>], no: u64, extra: Option<Device>) -> Devi
         devices: vec![Device {
             ed25519: id.ed25519,
             curve25519: id.curve25519,
+            proof: e[MALLORY].core().device_proof(&id.ed25519),
         }],
         signature: [0; 64],
     };
@@ -145,6 +146,8 @@ async fn poc_a_contact_wipes_our_sessions_with_another_contact() {
     let fake = Device {
         ed25519: bob,
         curve25519: [9; 32],
+        // No proof: the key's holder never agreed (ADR-030).
+        proof: [0; 64],
     };
     let list = devices_of_mallory(&e, 1, Some(fake));
     from_mallory(
@@ -186,6 +189,8 @@ async fn poc_b_a_contact_plants_a_contact_with_someone_elses_fingerprint() {
     let fake = Device {
         ed25519: victim.ed25519,
         curve25519: attacker_curve,
+        // No proof: Victor never agreed (ADR-030).
+        proof: [0; 64],
     };
     let list = devices_of_mallory(&e, 1, Some(fake));
     from_mallory(
@@ -343,6 +348,8 @@ async fn poc_e_the_relay_moves_bobs_message_into_mallorys_chat() {
     let fake = Device {
         ed25519: bob,
         curve25519: [9; 32],
+        // No proof: the key's holder never agreed (ADR-030).
+        proof: [0; 64],
     };
     let list = devices_of_mallory(&e, 1, Some(fake));
     from_mallory(
@@ -418,6 +425,8 @@ async fn poc_f_a_member_cannot_remove_another_through_a_device_list() {
     let fake = Device {
         ed25519: bob,
         curve25519: [9; 32],
+        // No proof: the key's holder never agreed (ADR-030).
+        proof: [0; 64],
     };
     for (no, extra) in [(1, Some(fake)), (2, None)] {
         let list = devices_of_mallory(&e, no, extra);
