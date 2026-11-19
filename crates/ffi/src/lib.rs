@@ -292,6 +292,13 @@ pub fn default_relay() -> Vec<String> {
     vec![engine::DEFAULT_RELAY.into(), engine::DEFAULT_ONION.into()]
 }
 
+/// The nickname of a device set up only to be linked; the main device's
+/// replaces it (ADR-028).
+#[uniffi::export]
+pub fn new_device_nickname() -> String {
+    termchat_engine::NEW_DEVICE_NICKNAME.into()
+}
+
 /// This build can connect through Tor (ADR-004).
 #[uniffi::export]
 pub fn tor_available() -> bool {
@@ -554,8 +561,9 @@ impl Account {
         self.lock().connected
     }
 
+    /// No reminder needed: backed up, or a linked device, which needs none (ADR-028).
     pub fn backed_up(&self) -> bool {
-        self.lock().data.backed_up
+        !self.lock().needs_backup()
     }
 
     /// A newer termchat the relay runs (ADR-010).

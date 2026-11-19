@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -409,7 +410,21 @@ fun Settings(m: Model) = Panel(m, "Settings") {
 @Composable
 fun LinkCode(m: Model) = Panel(m, "Link to my main device") {
     val a = m.account ?: return@Panel
-    val code = remember { runCatching { a.linkCode() }.getOrElse { m.note = it.message ?: "$it"; "" } }
+    @Suppress("UNUSED_EXPRESSION") m.version
+    // Linked: the code has done its job.
+    if (!a.isPrimary()) {
+        LaunchedEffect(Unit) { m.screen = Screen.Chats }
+        return@Panel
+    }
+    // Right after setup the relay is not reached yet: ask again each second.
+    var code by remember { mutableStateOf("") }
+    LaunchedEffect(a) {
+        while (code.isEmpty()) {
+            runCatching { a.linkCode() }
+                .onSuccess { code = it; m.note = "" }
+                .onFailure { m.note = it.message ?: "$it"; delay(1000) }
+        }
+    }
     val context = LocalContext.current
     Text("On your main device: Devices, then scan or paste this code. Then compare the fingerprint both screens show.", style = Tc.small)
     if (code.isEmpty()) return@Panel

@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.defaultRelay
 import app.termchat.engine.generatePassword
+import app.termchat.engine.newDeviceNickname
 import app.termchat.engine.torAvailable
 import app.termchat.engine.restore
 import app.termchat.engine.setup
@@ -123,6 +124,29 @@ fun Start(m: Model) {
                 }
             }
             if (!exists) Flat("Restore", color = Tc.dim) { pick.launch(arrayOf("*/*")) }
+        }
+        if (!exists) {
+            // ADR-028: a device that joins an identity on another one; no nickname to make up.
+            Text("Already use termchat.app on another device?", style = Tc.small)
+            Flat("Link to my main device", enabled = !m.busy && password.isNotEmpty()) {
+                if (password != repeat) {
+                    error = "passwords do not match"
+                    return@Flat
+                }
+                val pw = password
+                m.slow({ setup(m.dir, relay, onion, tor, newDeviceNickname(), pw, m) }) { result ->
+                    password = ""
+                    repeat = ""
+                    generated = ""
+                    result.onSuccess { a ->
+                        error = ""
+                        if (a != null) {
+                            m.opened(a)
+                            m.screen = Screen.LinkCode
+                        }
+                    }.onFailure { error = it.message ?: "$it" }
+                }
+            }
         }
     }
 }

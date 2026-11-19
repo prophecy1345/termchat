@@ -16,6 +16,7 @@ use crate::notify;
 use crate::settings::{self, Idle, Settings};
 use crate::ui::Hits;
 use crate::{RelayEvent, theme};
+use termchat_engine::NEW_DEVICE_NICKNAME;
 use termchat_engine::notify::SOUND_GAP;
 
 const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
@@ -209,6 +210,8 @@ pub struct Main {
     path: PathBuf,
     /// Everything was erased; the app returns to the first-run screen with this note.
     wiped: Option<String>,
+    /// Set up only to be linked: show the link code once the relay is reached.
+    linking: bool,
 }
 
 pub use crate::engine::now;
@@ -331,6 +334,14 @@ impl App {
             } else {
                 m.engine.tick();
                 m.absorb();
+                if m.linking
+                    && m.popup.is_none()
+                    && let Ok(code) = m.engine.link_code()
+                {
+                    m.linking = false;
+                    m.status.clear();
+                    m.popup = Some(Popup::LinkCode(code));
+                }
                 if let Some(note) = m.wiped.take() {
                     self.wiped(note);
                 }
@@ -366,6 +377,12 @@ impl App {
         match &mut self.screen {
             Screen::Setup(f) if ctrl && k.code == KeyCode::Char('b') && f.kind == Kind::Setup => {
                 self.screen = Screen::Setup(Form::new(Kind::Restore));
+            }
+            Screen::Setup(f) if ctrl && k.code == KeyCode::Char('l') && f.kind == Kind::Setup => {
+                match setup_for_link(f, &self.path) {
+                    Ok(main) => self.screen = Screen::Main(main),
+                    Err(e) => f.error = e,
+                }
             }
             Screen::Setup(f) => match f.on_key(k) {
                 Action::Cancel if f.kind == Kind::Restore => {
@@ -539,7 +556,27 @@ impl App {
     }
 }
 
+/// A device that will join an identity on another one (ADR-028): the same
+/// keys and relay as a new identity, but no nickname to make up, and its
+/// link code as soon as the relay is reached.
+fn setup_for_link(f: &Form, path: &Path) -> Result<Box<Main>, String> {
+    let setup = setup_of(f, NEW_DEVICE_NICKNAME)?;
+    let mut main = Main::new(Engine::setup(path, &setup)?, path);
+    main.linking = true;
+    main.status = "reaching the relay for your link code…".into();
+    Ok(main)
+}
+
 fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
+    let setup = setup_of(f, f.fields[3].trim())?;
+    let mut main = Main::new(Engine::setup(path, &setup)?, path);
+    main.popup = Some(Popup::Notice(
+        "Welcome. Click a contact to open the chat, right-click it for actions;\nCtrl+P opens the menu (settings, keys, manual), ? lists the keys.\n\nFirst, back up your identity: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
+    ));
+    Ok(main)
+}
+
+fn setup_of<'a>(f: &'a Form, nickname: &'a str) -> Result<Setup<'a>, String> {
     let tor = match f.fields[2].trim().to_lowercase().as_str() {
         "y" | "yes" => true,
         "n" | "no" => false,
@@ -550,14 +587,10 @@ fn setup(f: &Form, path: &Path) -> Result<Box<Main>, String> {
         relay_url: f.fields[0].trim(),
         onion_url: (!onion.is_empty()).then_some(onion),
         tor,
-        nickname: f.fields[3].trim(),
+        nickname,
         password: f.new_password(4)?,
     };
-    let mut main = Main::new(Engine::setup(path, &setup)?, path);
-    main.popup = Some(Popup::Notice(
-        "Welcome. Click a contact to open the chat, right-click it for actions;\nCtrl+P opens the menu (settings, keys, manual), ? lists the keys.\n\nFirst, back up your identity: Ctrl+P, then b.\nWithout a backup, a lost device means a lost identity.".into(),
-    ));
-    Ok(main)
+    Ok(setup)
 }
 
 pub enum Unlocking {
@@ -600,6 +633,7 @@ impl Main {
             idle: Idle::default(),
             path: path.to_owned(),
             wiped: None,
+            linking: false,
         });
         main.absorb();
         main.resort();
@@ -626,8 +660,9 @@ impl Main {
         if let Some(g) = self.group_index() {
             self.engine.data.groups[g].unread = 0;
         }
-        // ADR-028: a device waiting for the fingerprint check asks at once.
-        if self.popup.is_none()
+        // ADR-028: a device waiting for the fingerprint check asks at once,
+        // over its own link code, which has done its job.
+        if matches!(self.popup, None | Some(Popup::LinkCode(_)))
             && let Some(i) = self.engine.pending_link()
         {
             self.popup = Some(Popup::Link(i));
@@ -975,7 +1010,7 @@ impl Main {
 
     /// Ctrl+P menu: hotkey and label.
     pub fn menu(&self) -> Vec<(char, String)> {
-        let nag = if self.engine.data.backed_up {
+        let nag = if !self.engine.needs_backup() {
             ""
         } else {
             "  ●"
@@ -1021,7 +1056,7 @@ impl Main {
                 row(
                     &format!(
                         "back up your identity{}",
-                        if self.engine.data.backed_up {
+                        if !self.engine.needs_backup() {
                             ""
                         } else {
                             "  ●"
@@ -1662,6 +1697,41 @@ fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ctrl+L on the first-run screen sets up a device to link: no nickname
+    /// asked, and the link code comes once the relay is reached (ADR-028).
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ctrl_l_at_first_run_sets_up_a_device_to_link() {
+        use crossterm::event::{KeyEvent, KeyModifiers};
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("termchat-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap_or_default();
+        // A folder others can read would put a warning in front of the code.
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let mut app = App::new(dir.join("state"));
+        let Screen::Setup(f) = &mut app.screen else {
+            panic!("not the first-run screen");
+        };
+        f.fields[0] = "ws://127.0.0.1:9/".into();
+        f.fields[1] = "".into();
+        f.fields[2] = "n".into();
+        f.fields[3] = "".into();
+        f.fields[4] = "correct horse battery staple violin".into();
+        f.fields[5] = "correct horse battery staple violin".into();
+        app.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        let Screen::Main(m) = &app.screen else {
+            let Screen::Setup(f) = &app.screen else {
+                panic!()
+            };
+            panic!("still on setup: {}", f.error);
+        };
+        assert_eq!(m.engine.data.nickname, NEW_DEVICE_NICKNAME);
+        assert!(m.linking, "waits for the relay");
+        assert!(m.popup.is_none(), "nothing in the way of the code");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// In an open group, Ctrl+L and Ctrl+G are documents, not "not in a
     /// group" (ADR-027 amendment; a bug caught before 0.15.0 went out).

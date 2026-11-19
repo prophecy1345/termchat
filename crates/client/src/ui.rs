@@ -955,7 +955,7 @@ fn status_bar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             Style::new().fg(t.subtext0),
         ),
     ];
-    if !m.engine.data.backed_up {
+    if m.engine.needs_backup() {
         left.push(Span::styled(
             "  ! no backup: Ctrl+P",
             Style::new().fg(t.peach),

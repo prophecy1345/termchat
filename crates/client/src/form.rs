@@ -85,7 +85,7 @@ impl Kind {
     pub fn info(self) -> &'static str {
         match self {
             Self::Setup => {
-                "No names, phones or emails: just a nickname. The relay below is the\nproject's public one; keep it or type your own.\nCtrl+G: generate a passphrase   Ctrl+B: restore from a backup"
+                "No names, phones or emails: just a nickname. The relay below is the\nproject's public one; keep it or type your own.\nCtrl+G: generate a passphrase   Ctrl+B: restore from a backup\nCtrl+L: link to my main device instead (no nickname needed)"
             }
             Self::Restore => {
                 "Afterwards unlock with the backup's password. Chats start fresh;\ncontacts see that you restarted the conversation.   Esc: back"

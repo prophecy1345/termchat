@@ -14,7 +14,7 @@ use chat::{Chat, Pal};
 use eframe::egui;
 use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
 use termchat_engine::settings::{self, Idle, Settings};
-use termchat_engine::{Engine, Setup, Unlocked, data};
+use termchat_engine::{Engine, NEW_DEVICE_NICKNAME, Setup, Unlocked, data};
 use zeroize::Zeroizing;
 
 fn main() -> eframe::Result {
@@ -189,6 +189,12 @@ impl eframe::App for App {
             return;
         }
         let open = |engine| Screen::Main(Box::new(Chat::new(engine)));
+        let open_to_link = |engine| {
+            let mut chat = Chat::new(engine);
+            chat.linking = true;
+            chat.status = "reaching the relay for your link code…".into();
+            Screen::Main(Box::new(chat))
+        };
         let (pal, path) = (&self.pal, &self.path);
         let mut wiped = false;
         egui::CentralPanel::default().show(ui, |ui| {
@@ -202,7 +208,8 @@ impl eframe::App for App {
                     });
                 }
                 Screen::Setup(form) => match first_run(ui, pal, form, path) {
-                    Some(Ok(engine)) => self.screen = open(engine),
+                    Some(Ok((engine, false))) => self.screen = open(engine),
+                    Some(Ok((engine, true))) => self.screen = open_to_link(engine),
                     Some(Err(())) => {
                         self.screen = Screen::Unlock(Unlock {
                             error: "restored: enter the backup's password".into(),
@@ -287,7 +294,7 @@ fn first_run(
     pal: &Pal,
     f: &mut SetupForm,
     path: &std::path::Path,
-) -> Option<Result<Box<Engine>, ()>> {
+) -> Option<Result<(Box<Engine>, bool), ()>> {
     const WIDTH: f32 = 440.0;
     let mut done = None;
     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -309,8 +316,8 @@ fn first_run(
                 .show(ui, |ui| {
                     ui.set_width(WIDTH);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        if let Some(engine) = setup(ui, pal, f, path, WIDTH) {
-                            done = Some(Ok(engine));
+                        if let Some(made) = setup(ui, pal, f, path, WIDTH) {
+                            done = Some(Ok(made));
                         } else if restore(ui, f, path) {
                             done = Some(Err(()));
                         }
@@ -347,14 +354,15 @@ fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool
     done
 }
 
-/// The first-run form; returns the new identity's engine.
+/// The first-run form; returns the new identity's engine, and `true` for a
+/// device set up only to be linked to a main one (ADR-028).
 fn setup(
     ui: &mut egui::Ui,
     pal: &Pal,
     f: &mut SetupForm,
     path: &std::path::Path,
     width: f32,
-) -> Option<Box<Engine>> {
+) -> Option<(Box<Engine>, bool)> {
     let field = |ui: &mut egui::Ui, label: &str, edit: egui::TextEdit| {
         ui.label(egui::RichText::new(label).small().color(pal.dim));
         ui.add(
@@ -392,8 +400,18 @@ fn setup(
     });
     ui.add_space(8.0);
     let go = synth::button(ui, pal, "Create my identity", egui::vec2(width, 40.0)).clicked();
+    ui.add_space(4.0);
+    let link = ui
+        .add_sized(
+            [width, 32.0],
+            egui::Button::new("Link to my main device instead"),
+        )
+        .on_hover_text(
+            "Already use termchat.app elsewhere? Join that identity: no nickname needed.",
+        )
+        .clicked();
     ui.colored_label(ui.visuals().error_fg_color, f.error.as_str());
-    if !go {
+    if !go && !link {
         return None;
     }
     if *f.password != *f.again {
@@ -405,11 +423,14 @@ fn setup(
         relay_url: f.relay.trim(),
         onion_url: (!onion.is_empty()).then_some(onion),
         tor: f.tor,
-        nickname: f.nickname.trim(),
+        nickname: match link {
+            true => NEW_DEVICE_NICKNAME,
+            false => f.nickname.trim(),
+        },
         password: &f.password,
     };
     match Engine::setup(path, &s) {
-        Ok(engine) => Some(engine),
+        Ok(engine) => Some((engine, link)),
         Err(e) => {
             f.error = e;
             None

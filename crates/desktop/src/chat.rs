@@ -175,6 +175,8 @@ pub struct Chat {
     compose: Compose,
     /// Put the cursor in the field, at the end of its text, next frame.
     focus_input: bool,
+    /// Set up only to be linked: show the link code once the relay is reached.
+    pub(crate) linking: bool,
 }
 
 /// What SEND does with the typed text (ADR-025).
@@ -211,6 +213,7 @@ impl Chat {
             dialog: None,
             compose: Compose::New,
             focus_input: false,
+            linking: false,
         };
         chat.engine.resort();
         chat
@@ -239,12 +242,21 @@ impl Chat {
             self.engine.data.groups[g].unread = 0;
         }
         self.toasts.retain(|t| t.until > Instant::now());
+        if self.linking
+            && self.dialog.is_none()
+            && let Ok(code) = self.engine.link_code()
+        {
+            self.linking = false;
+            self.status.clear();
+            self.dialog = Some(Dialog::LinkCode(code));
+        }
         self.absorb(focused, sound)
     }
 
     fn absorb(&mut self, focused: bool, sound: bool) -> Option<String> {
-        // ADR-028: a device waiting for the fingerprint check asks at once.
-        if self.dialog.is_none()
+        // ADR-028: a device waiting for the fingerprint check asks at once,
+        // over its own link code, which has done its job.
+        if matches!(self.dialog, None | Some(Dialog::LinkCode(_)))
             && let Some(i) = self.engine.pending_link()
         {
             self.dialog = Some(Dialog::Link(i));
@@ -1017,7 +1029,7 @@ impl Chat {
             };
             ui.label(RichText::new(text).color(if ok { p.accent } else { p.warn }));
             ui.label(RichText::new(termchat_engine::clean(&e.data.nickname)).color(p.dim));
-            if !e.data.backed_up {
+            if e.needs_backup() {
                 backup = ui
                     .link(RichText::new("! no backup yet").color(p.warn))
                     .clicked();
