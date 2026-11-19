@@ -75,7 +75,7 @@ Editing what you type: **←/→**, **Home/End**, **Alt+←/→** (by word), **C
 
 ## Groups
 
-A small private group of up to 32 people, by invitation only ([ADR-027](https://github.com/prophecy1345/termchat/blob/main/docs/adr/027-small-private-groups.md)).
+A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only ([ADR-027](https://github.com/prophecy1345/termchat/blob/main/docs/adr/027-small-private-groups.md)).
 
 - **New group:** **Ctrl+P**, then **g**, and a name. You are its admin.
 - **Invite:** in the group, **Ctrl+R** opens the members, **a** lists contacts you can invite. Only your own contacts, on a version that knows groups.

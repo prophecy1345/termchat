@@ -22,7 +22,7 @@ Double-click a message to answer it. Right-click it to answer, react, and edit o
 
 ## Groups
 
-A small private group of up to 32 people, by invitation only. Nobody can find it.
+A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only. Nobody can find it.
 
 - **Create:** **+ New** above the list of groups, then a name. You are its admin.
 - **Invite:** **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
