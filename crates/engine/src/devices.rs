@@ -713,7 +713,10 @@ impl Engine {
                     devices: Vec::new(),
                     ..list
                 });
-                told = true;
+                self.note(
+                    "Security update (ADR-030): this linked device must be linked again. \
+                     Erase it (Wipe, then MOVED) and choose \"Link to my main device\" on the first screen.",
+                );
             }
         }
         for c in &mut self.data.contacts {

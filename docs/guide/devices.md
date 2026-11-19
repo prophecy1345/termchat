@@ -24,6 +24,8 @@ One identity can live on up to four devices, for example your phone and your lap
 3. Both screens now show one fingerprint. **Go on only if it is the same on both**: someone who copied the link code would show another one. Confirm on both devices.
 4. The new device says "This device is linked", takes your nickname and gets your contacts.
 
+After the update to 0.17, link your other devices again: device lists now carry each device's own proof (ADR-030), and older lists are dropped. On each linked device, erase it (wipe, MOVED) and link it from the first screen; its chats start empty, the main device keeps its history.
+
 ## What moves over, and what does not
 
 - **Your contacts move**, with your names for them and their verified marks. Each device then talks to each contact on its own.

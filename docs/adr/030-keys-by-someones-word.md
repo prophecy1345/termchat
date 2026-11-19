@@ -1,6 +1,6 @@
 # ADR-030: keys known by someone's word, and addresses from peers
 
-Status: **accepted** by the maintainer (2026-11-19), whole. Sections 2, 3, 5, 7 and finding 8 ship in 0.16.1; sections 1, 4 and 6 with level 4. Русская версия: [030-keys-by-someones-word.ru.md](030-keys-by-someones-word.ru.md).
+Status: **accepted** by the maintainer (2026-11-19), whole. Sections 2, 3, 5, 7 and finding 8 shipped in 0.16.1; sections 1, 4 and 6 in 0.17.0 (level 4). Open: §7, a relay-wide share per origin. Русская версия: [030-keys-by-someones-word.ru.md](030-keys-by-someones-word.ru.md).
 
 ## Context
 

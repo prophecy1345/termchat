@@ -106,7 +106,9 @@ that (ADR-023).
   have and their keys. The relay sees a message to you as one write per
   device, and can tie those queues together as yours; without Tor, so can
   your IP addresses. Linking is checked by eye: both screens show the
-  identity's fingerprint, and a copied link code shows another one. Only the
+  identity's fingerprint, and a copied link code shows another one. Each
+  device signs that it joins the identity, so a list cannot name a key whose
+  holder did not agree (ADR-030). Only the
   main device adds or removes devices; if it is lost, restore it from its
   backup.
 - **An identity on a server** (scriptable mode, ADR-024). Its password sits
