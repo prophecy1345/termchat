@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.17.1
+
+- Relay: once all queues together reach the relay's cap, it still takes
+  messages for small queues and refuses only large ones, so a relay filled
+  on purpose keeps carrying everyone else's messages (ADR-030).
+- Android: the attach button is a paperclip drawn like the timer's
+  envelope, instead of the coloured emoji.
+
 ## 0.17.0
 
 The rest of the security fixes from the third source review (ADR-030).
