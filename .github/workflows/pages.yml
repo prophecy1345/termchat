@@ -6,7 +6,8 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    # The site also builds from CHANGELOG.md and the docs (guide, threat model).
+    paths: ["site/**", "docs/**", "CHANGELOG.md", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
