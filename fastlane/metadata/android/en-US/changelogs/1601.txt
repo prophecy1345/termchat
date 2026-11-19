@@ -1,0 +1,1 @@
+Security fixes from the third source review: device lists that name someone else, relay addresses from contacts, group members.

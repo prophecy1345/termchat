@@ -3,6 +3,26 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.16.1
+
+Security fixes from the third source review (review-2026-11c, ADR-030):
+
+- A contact could plant a contact with someone else's fingerprint, or
+  erase your sessions with another contact, through a device list naming
+  a key that is not theirs. Such lists are now refused, and a key known
+  only from a list never counts as a contact.
+- A relay address from a contact (a group invite, or with Tor on) could
+  make your state file refuse the right password. Addresses are checked
+  when they arrive, and a relay that cannot be reached never stops
+  unlocking.
+- A group member who is not the admin could remove another member.
+- A contact could point your app at a service on your own computer.
+- Group members could fill your contact-request slots; the relay's report
+  journal could be filled by reconnecting.
+- The threat model now says what a contact's own relay learns without Tor,
+  that the group admin holds the readers' tokens, and that groups do not
+  show missing messages yet.
+
 ## 0.16.0
 
 - Link a new device from its first screen (ADR-028): choose a password
