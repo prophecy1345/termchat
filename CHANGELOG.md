@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.15.3
+
+- A command, Ctrl+Q in the terminal, closing the desktop window or
+  stopping `termchat daemon` now waits until the relay took what was just
+  sent (up to `--timeout`, or 5 s on quit). Before, a contact request
+  accepted right before quitting could stay unanswered for good, and the
+  other side could see a false "1 message(s) missing".
+
 ## 0.15.2
 
 - Desktop: Send a file has Choose… for the system's Open dialog, and a

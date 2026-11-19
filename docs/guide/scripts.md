@@ -30,7 +30,7 @@ Every command also takes `--password-file PATH` or `--password-stdin`, and `--ti
 - A server identity cannot accept requests: you make the link from your app, so it can never let a stranger in.
 - Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
 
-Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact not found or more than one, 4 the relay did not take it in time (it goes with the next command), 5 cannot write to that contact.
+Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact not found or more than one, 4 the relay did not take it in time (it goes with the next command), 5 cannot write to that contact. A command exits only once the relay took everything it sent, within `--timeout`.
 
 ## Setting up a server
 
@@ -126,7 +126,7 @@ done
 - The daemon listens on `daemon.sock` in the state folder, mode `600`, and lets in only its own user. Nothing listens on the network.
 - **While it runs, the password and the keys are in its memory, and any process of that user can send through it.** Give it a server identity under a user of its own, never your main identity.
 - A document you send is read by the command, not the daemon; a `recv --save-dir` folder must exist before you ask.
-- It stops on SIGTERM or Ctrl+C, saving first. On Windows there is no daemon.
+- It stops on SIGTERM or Ctrl+C: up to 5 s for the relay to take what was just sent, then it saves. On Windows there is no daemon.
 
 ## More examples
 

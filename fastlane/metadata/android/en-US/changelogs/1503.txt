@@ -1,0 +1,1 @@
+Fixes for the terminal, desktop and scripts; nothing changes on Android.
