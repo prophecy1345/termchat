@@ -111,10 +111,18 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
         e.happened.clear();
         progress(e, &mut pending, &mut readers);
     }
-    e.persist();
+    // No new commands; what they sent must still reach the relay, as at the
+    // end of a one-shot command. systemd waits 90 s before it kills.
     let _ = std::fs::remove_file(&path);
+    let until = Instant::now() + STOP_WAIT;
+    // The caller says so if this ran out.
+    super::pump(e, until, Engine::all_answered).await;
+    e.persist();
     Ok(())
 }
+
+/// The longest a stop waits for the relay to take what was sent.
+const STOP_WAIT: Duration = Duration::from_secs(5);
 
 /// One client: its request lines in, the answers out, until it closes.
 async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
