@@ -3060,19 +3060,23 @@ impl Engine {
 /// One notice per chat, redrawn only when the count changes: the tracker reports
 /// the same gap with every later message, and a file is many messages.
 fn show_missed(c: &mut Contact, missed: u64) {
-    if missed == c.missed {
+    show_missed_in(&mut c.messages, &mut c.missed, missed);
+}
+
+/// The same for a group (ADR-030, section 6) or a chat.
+pub(crate) fn show_missed_in(messages: &mut Vec<Msg>, shown: &mut u64, missed: u64) {
+    if missed == *shown {
         return;
     }
-    c.missed = missed;
-    c.messages
-        .retain(|m| !(m.status == Status::System && m.text.ends_with(MISSING_SUFFIX)));
+    *shown = missed;
+    messages.retain(|m| !(m.status == Status::System && m.text.ends_with(MISSING_SUFFIX)));
     if missed > 0 {
         // The number comes from the peer's `seq`; do not let it look alarming on purpose.
         let n = match missed {
             0..=9999 => missed.to_string(),
             _ => "over 9999".to_string(),
         };
-        c.messages.push(Msg {
+        messages.push(Msg {
             mine: false,
             text: format!("⚠ {n}{MISSING_SUFFIX}"),
             at: now(),

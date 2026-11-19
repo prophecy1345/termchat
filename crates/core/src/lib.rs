@@ -717,6 +717,11 @@ impl Client {
         self.groups.decrypt(group, bytes)
     }
 
+    /// Group messages that never came, as far as the indexes show (ADR-030).
+    pub fn group_missed(&self, group: &proto::GroupId) -> u64 {
+        self.groups.missed(group)
+    }
+
     /// A group member, known by the keys the admin signed for (ADR-027), or
     /// a device of a contact or of our own, known by its owner's signed device
     /// list (ADR-028): not by an invite; kept apart from contacts by the app.

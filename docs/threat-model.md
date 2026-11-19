@@ -97,8 +97,8 @@ that (ADR-023).
   full-size envelopes from one member, stored once per reader until read.
   The admin gets every reader's token from the relay before handing it on,
   so the admin could read (as ciphertext) and delete what waits for a
-  member. A reader past its quota or its rate limit loses group messages,
-  and a gap in a group is not shown yet the way it is in a chat (ADR-030).
+  member. A reader past its quota or its rate limit loses group messages;
+  as in a chat, the gap shows as "messages missing" (ADR-030).
 - **Several devices** (ADR-028). Every device has keys of its own and reads
   everything sent to you, so each one is a way in: a stolen unlocked laptop
   reads like your phone would. Remove a lost device from the main one; it then
@@ -129,7 +129,7 @@ that (ADR-023).
   limit what can be read. No help if the device is taken within those minutes.
 - **A relay that drops messages.** It cannot be prevented, but in a chat it is
   noticed: messages carry a sequence number inside the ciphertext, and a gap
-  shows as "messages missing". Groups do not show gaps yet (ADR-030). Moving to another relay takes a new invite.
+  shows as "messages missing", in a chat and in a group (ADR-030). Moving to another relay takes a new invite.
 - **A lost device.** Encrypted identity export; the client reminds you on first
   run. Without it the identity cannot be recovered. After a restore, contacts
   see a new-session warning.

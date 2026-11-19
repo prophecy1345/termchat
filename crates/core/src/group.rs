@@ -223,6 +223,31 @@ impl Groups {
         Ok((inner.sender, inner.body))
     }
 
+    /// ADR-030, section 6: group messages we never got, over every member's
+    /// session, as a chat counts its `seq`: indexes skipped between the first
+    /// one we can read and the newest we read. Messages at the end are not
+    /// seen as missing until a later one comes.
+    pub(crate) fn missed(&self, group: &GroupId) -> u64 {
+        let Some(g) = self.0.get(group) else {
+            return 0;
+        };
+        g.inbound
+            .iter()
+            .map(|s| {
+                let Some(&newest) = s.seen.last() else {
+                    return 0;
+                };
+                // Past the window only the window counts.
+                let from = match s.seen.len() >= SEEN_PER_SESSION {
+                    true => s.seen.first().copied().unwrap_or(newest),
+                    false => s.session.first_known_index(),
+                };
+                let span = u64::from(newest.saturating_sub(from)) + 1;
+                span.saturating_sub(s.seen.len() as u64)
+            })
+            .sum()
+    }
+
     pub(crate) fn pickle(&self) -> Vec<GroupState> {
         self.0
             .iter()

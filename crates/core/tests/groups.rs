@@ -185,3 +185,19 @@ fn garbage_and_a_wrong_group_are_refused() {
         GroupInner::from_padded(&[0; 512]).is_err(),
     );
 }
+
+/// ADR-030, section 6: a group message the relay withholds shows as a gap,
+/// and one that comes late closes it.
+#[test]
+fn a_withheld_group_message_shows_as_missing() {
+    let mut g = group();
+    let one = g[0].group_encrypt(G, text("one")).unwrap();
+    let two = g[0].group_encrypt(G, text("two")).unwrap();
+    let three = g[0].group_encrypt(G, text("three")).unwrap();
+    g[1].group_decrypt(&G, &one).unwrap();
+    assert_eq!(g[1].group_missed(&G), 0);
+    g[1].group_decrypt(&G, &three).unwrap();
+    assert_eq!(g[1].group_missed(&G), 1);
+    g[1].group_decrypt(&G, &two).unwrap();
+    assert_eq!(g[1].group_missed(&G), 0);
+}

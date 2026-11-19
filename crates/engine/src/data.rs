@@ -163,6 +163,8 @@ pub struct Group {
     pub pending_keys: Vec<(Ed25519Key, SecretBytes)>,
     /// We left, or were removed: read-only.
     pub left: bool,
+    /// Group messages missing, as last shown (ADR-030, section 6).
+    pub missed: u64,
 }
 
 /// The admin moves group to a new queue: who stays, the readers made so far,

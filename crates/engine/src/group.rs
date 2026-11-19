@@ -991,7 +991,10 @@ impl Engine {
         if envelope.olm_type == OLM_TYPE_MEGOLM {
             let got = self.core().group_decrypt(&gid, &envelope.body);
             match got {
-                Ok((sender, body)) => self.group_body(g, sender, body),
+                Ok((sender, body)) => {
+                    self.group_body(g, sender, body);
+                    self.group_gaps(g);
+                }
                 Err(termchat_core::Error::UnknownSender) => {
                     let early = &mut self.data.groups[g].early;
                     if early.len() < MAX_EARLY {
@@ -1421,6 +1424,16 @@ impl Engine {
             .iter()
             .find(|m| m.ed25519 == *who)
             .map_or_else(|| "someone".to_string(), |m| clean(&m.nickname))
+    }
+
+    /// ADR-030, section 6: a relay that withholds group messages is noticed.
+    fn group_gaps(&mut self, g: usize) {
+        let Some(group) = self.data.groups.get(g) else {
+            return;
+        };
+        let missed = self.core().group_missed(&group.id);
+        let group = &mut self.data.groups[g];
+        crate::engine::show_missed_in(&mut group.messages, &mut group.missed, missed);
     }
 
     fn group_system(&mut self, g: usize, text: String) {

@@ -170,6 +170,10 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
             && said(&e[2], 0, "hi from bob")
     })
     .await;
+    // ADR-030: nothing withheld, so no gap shows.
+    for x in e.iter() {
+        assert_eq!(x.data.groups[0].missed, 0, "a false gap");
+    }
     // Each message names its author; ours are ours.
     let at_bob = &e[1].data.groups[0].messages;
     let carols = at_bob.iter().find(|m| m.text == "hi from carol").unwrap();
