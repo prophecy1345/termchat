@@ -168,7 +168,9 @@ impl Engine {
         (0..self.data.contacts.len())
             .filter(|&i| {
                 let c = &self.data.contacts[i];
-                c.profile.is_none()
+                // Our own devices join by themselves (ADR-028), never by invite.
+                !c.own
+                    && c.profile.is_none()
                     && !c.left
                     && !c.blocked
                     && !self.is_request(&c.key)
@@ -178,6 +180,9 @@ impl Engine {
     }
 
     pub fn invite_to_group(&mut self, g: usize, i: usize) -> Result<(), String> {
+        if self.data.contacts.get(i).is_some_and(|c| c.own) {
+            return Err("your own devices join your groups by themselves".into());
+        }
         let c = self.writable(i)?;
         if c.profile.is_some() {
             return Err("groups use your main identity; this contact knows another".into());

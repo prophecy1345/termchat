@@ -2007,6 +2007,21 @@ impl Engine {
                         self.invite_awaiting(i);
                     }
                 }
+                // A member who now reads device lists may be the last one a
+                // group waited for: as admin, welcome the devices it kept out.
+                if news && level >= proto::UNDERSTANDS && !got.request {
+                    let mut owners: Vec<Ed25519Key> = vec![self.identity_key()];
+                    owners.extend(
+                        self.data
+                            .contacts
+                            .iter()
+                            .filter(|c| c.their_devices.is_some())
+                            .map(|c| c.key),
+                    );
+                    for who in owners {
+                        self.group_devices_changed(who);
+                    }
+                }
                 return self.persist();
             }
             // ADR-027: invites, joins and keys come over a chat; a stranger's

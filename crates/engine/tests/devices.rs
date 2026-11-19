@@ -688,7 +688,13 @@ async fn the_admins_own_linked_device_joins_its_groups() {
     })
     .await;
     assert!(e[1].data.group_invites.is_empty());
+    // Our own devices are no one to invite: they joined by themselves.
+    let laptop = e[1].me();
+    let own = e[0].index(&laptop).unwrap();
+    assert!(!e[0].invitable(g).contains(&own));
+    assert!(e[0].invite_to_group(g, own).is_err());
     let i = e[0].index(&bob).unwrap();
+    assert!(e[0].invitable(g).contains(&i));
     e[0].invite_to_group(g, i).unwrap();
     pump(&mut e, |e| e[2].data.group_invites.len() == 1).await;
     e[2].accept_group(0).unwrap();
@@ -808,5 +814,76 @@ async fn a_copy_lands_only_in_the_chat_it_names() {
     assert!(has(&e[1], &bob, "for bob", true));
     assert!(!has(&e[1], &bob, "bare", true) && !has(&e[1], &bob, "bare", false));
     assert!(!has(&e[1], &bob, "for someone else", true));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A group keeps to main devices while a member cannot read device lists;
+/// once that member's app says it can, the admin's device linked later joins.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_admins_device_joins_once_the_last_old_member_updates() {
+    use termchat_core::proto::{Body, ServerFrame, UNDERSTANDS};
+    use termchat_engine::Event;
+    use termchat_engine::engine::Link;
+
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices-old-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = vec![
+        engine(&dir, "alice", &url),
+        engine(&dir, "new", &url),
+        engine(&dir, "bob", &url),
+    ];
+    pump(&mut e, |e| e.iter().all(|x| x.data.invite_queue.is_some())).await;
+    befriend(&mut e, 0, 2).await;
+    let (alice, bob) = (e[0].me(), e[2].me());
+    let b = e[0].index(&bob).unwrap();
+    // The group first, with Bob in it.
+    let g = e[0].create_group("ours").unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].reader.is_some()).await;
+    e[0].invite_to_group(g, b).unwrap();
+    pump(&mut e, |e| e[2].data.group_invites.len() == 1).await;
+    e[2].accept_group(0).unwrap();
+    pump(&mut e, |e| e[0].data.groups[0].members().len() == 2).await;
+    // Bob's app as if it were older; then the laptop is linked.
+    e[0].data.contacts[b].understands = UNDERSTANDS - 1;
+    let code = e[1].link_code().unwrap();
+    let at_phone = e[0].add_device(&code).unwrap();
+    pump(&mut e, |e| e[1].pending_link().is_some()).await;
+    let at_laptop = e[1].pending_link().unwrap();
+    e[1].confirm_link(at_laptop);
+    e[0].confirm_link(at_phone);
+    pump(&mut e, |e| e[1].data.devices.is_some()).await;
+    settle(&mut e, 2000).await;
+    assert!(
+        e[1].data
+            .groups
+            .iter()
+            .all(|g| g.reader.is_none() || g.left),
+        "kept to main devices"
+    );
+
+    // Bob's app says it reads device lists.
+    let envelope = e[2]
+        .core()
+        .encrypt(&alice, Body::Understands { level: UNDERSTANDS })
+        .unwrap();
+    let recv_id = e[0].data.contacts[b].mine.as_ref().unwrap().recv_id;
+    let frame = ServerFrame::Deliver {
+        recv_id,
+        relay_id: u64::MAX,
+        envelope,
+    };
+    let link = Link {
+        who: bob,
+        relay: url.clone(),
+    };
+    e[0].on_relay((link, Event::Frame(frame)));
+    pump(&mut e, |e| {
+        e[1].data
+            .groups
+            .first()
+            .is_some_and(|g| g.reader.is_some() && !g.left)
+    })
+    .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
