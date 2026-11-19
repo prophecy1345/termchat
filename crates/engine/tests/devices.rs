@@ -750,3 +750,60 @@ async fn a_contact_made_after_linking_reaches_the_linked_device() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// ADR-030, section 4 (review 2026-11c, finding 4): a copy from our own device
+/// is filed only under the chat it names, and only if it came in that chat's
+/// queue; a bare one, as a relay could move it, is not filed at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_lands_only_in_the_chat_it_names() {
+    use termchat_core::proto::{Body, ServerFrame};
+    use termchat_engine::Event;
+    use termchat_engine::engine::Link;
+
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices-copy-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let (laptop, bob) = (e[1].me(), e[2].me());
+    pump(&mut e, |e| {
+        e[1].index(&bob)
+            .is_some_and(|i| e[1].data.contacts[i].mine.is_some())
+            && e[0].core().has_session(&laptop)
+    })
+    .await;
+    let i = e[1].index(&bob).unwrap();
+    let recv_id = e[1].data.contacts[i].mine.as_ref().unwrap().recv_id;
+    let text = |t: &str| Body::Text {
+        sent_at: 0,
+        expires_in: None,
+        text: t.into(),
+    };
+    let bodies = [
+        text("bare"),
+        Body::Copy {
+            contact: [9; 32],
+            body: Box::new(text("for someone else")),
+        },
+        Body::Copy {
+            contact: bob,
+            body: Box::new(text("for bob")),
+        },
+    ];
+    for body in bodies {
+        let envelope = e[0].core().encrypt(&laptop, body).unwrap();
+        let link = Link {
+            who: bob,
+            relay: url.clone(),
+        };
+        let frame = ServerFrame::Deliver {
+            recv_id,
+            relay_id: u64::MAX,
+            envelope,
+        };
+        e[1].on_relay((link, Event::Frame(frame)));
+    }
+    assert!(has(&e[1], &bob, "for bob", true));
+    assert!(!has(&e[1], &bob, "bare", true) && !has(&e[1], &bob, "bare", false));
+    assert!(!has(&e[1], &bob, "for someone else", true));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

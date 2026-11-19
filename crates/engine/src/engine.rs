@@ -1834,8 +1834,13 @@ impl Engine {
                 return self.persist();
             }
             if self.index(&v).is_some_and(|o| self.data.contacts[o].own) {
-                if let Some(i) = self.index(&k) {
-                    self.own_copy(i, got.body);
+                // ADR-030: only a copy that names the chat whose queue it came
+                // in; a bare one, or one for another chat, a relay moved here.
+                if let Body::Copy { contact, body } = got.body
+                    && contact == k
+                    && let Some(i) = self.index(&k)
+                {
+                    self.own_copy(i, *body);
                 }
                 return self.persist();
             }
@@ -1976,6 +1981,8 @@ impl Engine {
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
+            // ADR-030: copies come only from our own devices, handled above.
+            Body::Copy { .. } => return self.persist(),
             // ADR-028: devices of one identity.
             body @ (Body::DeviceLink { .. }
             | Body::DeviceLinked { .. }

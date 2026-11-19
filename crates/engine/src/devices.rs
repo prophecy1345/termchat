@@ -915,7 +915,15 @@ impl Engine {
                 }
                 continue;
             }
-            let envelope = self.core_at(slot).encrypt(&d, body.clone());
+            // ADR-030: a copy for one of our devices names the chat it is for.
+            let what = match self.lists(&d) {
+                true => Body::Copy {
+                    contact: *key,
+                    body: Box::new(body.clone()),
+                },
+                false => body.clone(),
+            };
+            let envelope = self.core_at(slot).encrypt(&d, what);
             let envelope = envelope.map_err(|e| e.to_string())?;
             let next = &mut self.data.contacts[i].next_client_id;
             let client_id = *next;
