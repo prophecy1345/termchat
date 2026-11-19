@@ -11,7 +11,7 @@ const apps = ["termchat.app", "Signal", "Session", "SimpleX Chat", "Briar"];
 const en = {
   title: "termchat.app vs Signal, Session, SimpleX and Briar: messengers without a phone number",
   description:
-    "An honest comparison of termchat.app with Signal, Session, SimpleX Chat and Briar: phone number, encryption, servers, Tor, platforms, audits and what the server sees.",
+    "An honest comparison of termchat.app with Signal, Session, SimpleX Chat and Briar: phone number, encryption, servers, Tor, groups, several devices, scripts, audits and what the server sees.",
   h1: "termchat.app compared with Signal, Session, SimpleX and Briar",
   intro: [
     "Each of these messengers protects your messages with end-to-end encryption. They differ in what you hand over to sign up, who runs the servers, what those servers see, and how mature the code is. termchat.app is the youngest of them and has had no independent audit; the table says so too.",
@@ -23,7 +23,9 @@ const en = {
     ["Tor", "Built in, with bridges", "Not built in (proxy support)", "Onion routing through its own network", "Optional (SOCKS proxy, .onion servers)", "Always"],
     ["What the server sees", "No user identifiers: a separate queue per contact; when queues are written and read; IP addresses unless Tor is on", "Phone numbers; sealed sender hides most senders", "Onion routing hides IP addresses from nodes", "No user identifiers; a separate queue per contact", "No server"],
     ["Platforms", "Terminal, desktop (macOS, Linux, Windows), Android", "Android, iOS, desktop (linked to a phone)", "Android, iOS, desktop", "Android, iOS, desktop, terminal", "Android (desktop in beta)"],
-    ["Groups and calls", "No: one-to-one text and documents", "Yes", "Yes", "Yes", "Groups and forums, no calls"],
+    ["Groups and calls", "Small private groups by invite (up to 32 devices), no calls", "Yes", "Yes", "Yes", "Groups and forums, no calls"],
+    ["Several devices", "Up to 4, each with its own keys, linked with a code and a fingerprint check", "Up to 5 linked to a phone", "Yes, with the recovery password", "Desktop can use the phone's profile; no sync between devices", "No"],
+    ["Scripts and bots", "Command line and a local daemon: a server writes to you and answers; no bot accounts", "No official API", "No official API", "Bot API through its terminal client", "Briar Headless (REST API)"],
     ["Independent audit", "Not yet (vodozemac, its crypto library, was audited in 2022)", "Protocol studied widely", "Yes", "Yes", "Yes"],
     ["Licence", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
   ],
@@ -33,20 +35,21 @@ const en = {
     "You do not want to give anyone a phone number or an email address.",
     "You want Tor without installing it separately, with bridges where Tor is blocked.",
     "You want to run the server for your friends yourself: one binary and a SQLite file.",
+    "You want your servers and scripts to write to you end to end encrypted, and answer when you ask, without a bot platform in between.",
     "You want to read why it is built the way it is: every protocol and security decision has a public ADR.",
   ],
   other: "When to choose something else",
   others: [
     "You need years of scrutiny and an audited codebase: Signal.",
-    "You need groups, calls or an iPhone app: Signal or SimpleX Chat.",
+    "You need calls, large groups or an iPhone app: Signal or SimpleX Chat.",
     "You need the strongest metadata protection: Briar (no servers at all), or SimpleX Chat, which also has no user identifiers, puts each direction on a different server by default and has been audited.",
   ],
-  note: "Compared in November 2026 from each project's own documentation. Something wrong or out of date? Open an issue on GitHub.",
+  note: "Compared on 19 November 2026 from each project's own documentation. Something wrong or out of date? Open an issue on GitHub.",
 };
 const ru: typeof en = {
   title: "termchat.app, Signal, Session, SimpleX и Briar: сравнение мессенджеров без номера телефона",
   description:
-    "Честное сравнение termchat.app с Signal, Session, SimpleX Chat и Briar: номер телефона, шифрование, серверы, Tor, платформы, аудит и что видит сервер.",
+    "Честное сравнение termchat.app с Signal, Session, SimpleX Chat и Briar: номер телефона, шифрование, серверы, Tor, группы, несколько устройств, скрипты, аудит и что видит сервер.",
   h1: "termchat.app рядом с Signal, Session, SimpleX и Briar",
   intro: [
     "Все эти мессенджеры защищают сообщения сквозным шифрованием. Различаются они тем, что нужно отдать при регистрации, кто держит серверы, что эти серверы видят и насколько зрелый у них код. termchat.app среди них самый молодой и независимого аудита не проходил; таблица говорит это тоже.",
@@ -58,7 +61,9 @@ const ru: typeof en = {
     ["Tor", "Встроен, с мостами", "Не встроен (есть прокси)", "Луковая маршрутизация через свою сеть", "По желанию (SOCKS-прокси, .onion-серверы)", "Всегда"],
     ["Что видит сервер", "Нет идентификаторов пользователей: отдельная очередь на каждый контакт; когда в очереди пишут и читают; IP-адреса, если Tor выключен", "Номера телефонов; sealed sender скрывает большинство отправителей", "Луковая маршрутизация скрывает IP-адреса от узлов", "Нет идентификаторов пользователей; отдельная очередь на каждый контакт", "Сервера нет"],
     ["Платформы", "Терминал, компьютер (macOS, Linux, Windows), Android", "Android, iOS, компьютер (привязан к телефону)", "Android, iOS, компьютер", "Android, iOS, компьютер, терминал", "Android (компьютер в бете)"],
-    ["Группы и звонки", "Нет: переписка один на один, текст и документы", "Да", "Да", "Да", "Группы и форумы, без звонков"],
+    ["Группы и звонки", "Маленькие приватные группы по приглашению (до 32 устройств), без звонков", "Да", "Да", "Да", "Группы и форумы, без звонков"],
+    ["Несколько устройств", "До 4, у каждого свои ключи, привязка по коду со сверкой отпечатка", "До 5, привязанных к телефону", "Да, по паролю восстановления", "Компьютер может работать через профиль телефона; синхронизации между устройствами нет", "Нет"],
+    ["Скрипты и боты", "Командная строка и локальная служба: сервер пишет вам и отвечает; без аккаунтов-ботов", "Официального API нет", "Официального API нет", "API для ботов через терминальный клиент", "Briar Headless (REST API)"],
     ["Независимый аудит", "Пока нет (vodozemac, его криптобиблиотека, проверена в 2022)", "Протокол изучен широко", "Да", "Да", "Да"],
     ["Лицензия", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
   ],
@@ -68,15 +73,16 @@ const ru: typeof en = {
     "Не хочется никому давать номер телефона или email.",
     "Нужен Tor без отдельной установки, с мостами там, где Tor блокируют.",
     "Хочется самому держать сервер для друзей: один бинарник и файл SQLite.",
+    "Хочется, чтобы серверы и скрипты писали вам со сквозным шифрованием и отвечали на вопросы, без платформы для ботов посередине.",
     "Хочется понимать, почему всё устроено именно так: у каждого решения по протоколу и безопасности есть открытый ADR.",
   ],
   other: "Когда лучше выбрать другое",
   others: [
     "Нужны годы проверки и код с аудитом: Signal.",
-    "Нужны группы, звонки или приложение для iPhone: Signal или SimpleX Chat.",
+    "Нужны звонки, большие группы или приложение для iPhone: Signal или SimpleX Chat.",
     "Нужна самая сильная защита метаданных: Briar (серверов нет вообще) или SimpleX Chat, где тоже нет идентификаторов пользователей, каждое направление по умолчанию идёт через свой сервер и был аудит.",
   ],
-  note: "Сравнение сделано в ноябре 2026 по документации самих проектов. Нашли ошибку или устаревшее? Откройте issue на GitHub.",
+  note: "Сравнение сделано 19 ноября 2026 по документации самих проектов. Нашли ошибку или устаревшее? Откройте issue на GitHub.",
 };
 const t = Astro.props.lang === "en" ? en : ru;
 ---
