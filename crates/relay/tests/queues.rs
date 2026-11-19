@@ -646,3 +646,44 @@ async fn reports_are_limited_per_queue_across_connections() {
     assert_eq!(lines, Limits::default().reports_per_queue.burst as usize);
     let _ = std::fs::remove_file(&journal);
 }
+
+/// ADR-030, §7: a relay filled up by a few large queues still takes writes
+/// to small ones, up to a tenth over its cap.
+#[tokio::test]
+async fn a_full_relay_still_takes_small_queues() {
+    // Envelopes of 64 bytes: the cap holds 10, a fair share 3.
+    let url = start(Limits {
+        max_queue_bytes: 640,
+        fair_share_bytes: 200,
+        sends_per_queue: Rate {
+            burst: 100.0,
+            per_sec: 100.0,
+        },
+        ..Limits::default()
+    })
+    .await;
+    let mut owner = Ws::new(&url).await;
+    let big = owner.create().await;
+    let small = owner.create().await;
+    let mut w = Ws::new(&url).await;
+    for id in 1..=10 {
+        assert_eq!(
+            w.put(id, big.send_id, 1).await,
+            ServerFrame::Accepted { client_id: id }
+        );
+    }
+    assert_eq!(
+        w.put(11, big.send_id, 1).await,
+        err(Some(11), ErrorCode::QueueFull)
+    );
+    assert_eq!(
+        w.put(12, small.send_id, 1).await,
+        ServerFrame::Accepted { client_id: 12 },
+        "a small queue is not refused for the large ones"
+    );
+    assert_eq!(
+        w.put(13, small.send_id, 1).await,
+        err(Some(13), ErrorCode::QueueFull),
+        "but not past a tenth over the cap"
+    );
+}

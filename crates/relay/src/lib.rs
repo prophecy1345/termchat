@@ -68,8 +68,12 @@ pub struct Limits {
     /// ADR-005: undelivered envelopes and unused queues are deleted after these.
     pub queue_ttl: Duration,
     pub idle_queue_ttl: Duration,
-    /// All queues together, bytes.
+    /// All queues together, bytes. Past it, only queues holding less than
+    /// `fair_share_bytes` take more, up to a tenth over (ADR-030, §7): a
+    /// relay filled on purpose with large queues still carries everyone
+    /// else's messages.
     pub max_queue_bytes: u64,
+    pub fair_share_bytes: u64,
     pub reports_per_connection: Rate,
     /// Review 2026-11c, finding 9: a reconnect refills the connection's budget,
     /// a queue's does not.
@@ -123,6 +127,7 @@ impl Default for Limits {
             queue_ttl: Duration::from_secs(termchat_proto::QUEUE_TTL_DAYS * 86_400),
             idle_queue_ttl: Duration::from_secs(90 * 86_400),
             max_queue_bytes: 10 << 30,
+            fair_share_bytes: 1 << 20,
             reports_per_connection: Rate::per(10.0, DAY),
             reports_per_queue: Rate::per(3.0, DAY),
         }
@@ -845,10 +850,11 @@ fn put(
     }
     let size = envelope.body.len() as u64;
     let (count, bytes) = db(relay.db.queue_stats(&to))?;
-    if count >= limits.queue_envelopes
-        || bytes + size > limits.queue_bytes as u64
-        || relay.db.total_queue_bytes() + size > limits.max_queue_bytes
-    {
+    let total = relay.db.total_queue_bytes() + size;
+    let over = total > limits.max_queue_bytes
+        && (bytes + size > limits.fair_share_bytes
+            || total > limits.max_queue_bytes + limits.max_queue_bytes / 10);
+    if count >= limits.queue_envelopes || bytes + size > limits.queue_bytes as u64 || over {
         return Ok(Some(ErrorCode::QueueFull));
     }
     let relay_id = db(relay.db.enqueue(&to, &envelope, unix_now()))?;

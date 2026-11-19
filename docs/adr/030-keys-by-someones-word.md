@@ -1,6 +1,6 @@
 # ADR-030: keys known by someone's word, and addresses from peers
 
-Status: **accepted** by the maintainer (2026-11-19), whole. Sections 2, 3, 5, 7 and finding 8 shipped in 0.16.1; sections 1, 4 and 6 in 0.17.0 (level 4). Open: §7, a relay-wide share per origin. Русская версия: [030-keys-by-someones-word.ru.md](030-keys-by-someones-word.ru.md).
+Status: **accepted** by the maintainer (2026-11-19), whole. Sections 2, 3, 5, 7 and finding 8 shipped in 0.16.1; sections 1, 4 and 6 in 0.17.0 (level 4). §7: a fair share once full, in 0.17.1. Русская версия: [030-keys-by-someones-word.ru.md](030-keys-by-someones-word.ru.md).
 
 ## Context
 
@@ -53,7 +53,7 @@ Messages between our own devices that mirror what was sent to a contact travel a
 ### 7. Relay
 
 - Reports are limited per queue, not per connection.
-- Open question: a lower relay-wide share per origin, so one origin cannot fill the 10 GiB cap.
+- A fair share once the relay is full (decided 2026-11-19, 0.17.1): past the 10 GiB cap only queues holding less than 1 MiB take more, up to a tenth over the cap. Large queues filled on purpose no longer stop everyone else. The relay keeps no origins (ADR-005), so a share per origin was not possible; a per-queue limit below 10 MiB was rejected, since an offline reader with a few documents passes 1 MiB, and in groups a refused write is a lost message. Proof of work on queue creation stays an option for later.
 
 ## Order
 

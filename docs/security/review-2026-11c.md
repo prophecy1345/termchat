@@ -5,7 +5,7 @@ Status: [ADR-030](../adr/030-keys-by-someones-word.md) accepted. Fixed in
 member no longer counts on the invite queue); finding 4 where a hostile
 contact lists someone else's key. Fixed in 0.17.0 (level 4): device proofs (the
 rest of finding 1), copies that name their chat (the rest of finding 4) and
-gaps in groups (finding 6). Open: the relay-wide byte cap of finding 9. The proofs of concept run as regression tests in
+gaps in groups (finding 6). The relay-wide cap of finding 9 got a fair share in 0.17.1. The proofs of concept run as regression tests in
 `crates/engine/tests/review_2026_11c.rs`.
 Reviewed commit: `934d427` (0.16.0). Date: 2026-11-19.
 Earlier passes: [first](review-2026-11.md), [second](review-2026-11b.md).
