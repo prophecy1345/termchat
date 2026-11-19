@@ -1,0 +1,1 @@
+Linking a device: both screens show the fingerprint together. A paperclip in the app's own style.

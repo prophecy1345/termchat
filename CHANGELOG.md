@@ -3,6 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.17.2
+
+0.17.1 was tagged but never released; 0.17.2 has everything below.
+
+- Linking a device: the main device waits until the new one can show the
+  fingerprint too (through Tor its answer takes up to half a minute), so
+  both screens show it together and "The same" is not pressed alone. The
+  new device no longer hides its fingerprint window behind a note.
+
 ## 0.17.1
 
 - Relay: once all queues together reach the relay's cap, it still takes
