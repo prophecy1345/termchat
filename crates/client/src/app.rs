@@ -1534,6 +1534,7 @@ impl Main {
                 false => Some(Popup::RenameDevice(key, s)),
             },
             Popup::Link(i) => match k.code {
+                KeyCode::Char('y') if self.engine.link_waiting(i) => Some(Popup::Link(i)),
                 KeyCode::Char('y') => {
                     self.engine.confirm_link(i);
                     self.status = "confirmed: linking finishes when the other screen agrees".into();

@@ -638,6 +638,11 @@ impl Account {
         self.lock().pending_link().map(|i| i as u32)
     }
 
+    /// The new device cannot show the fingerprint yet (ADR-028).
+    pub fn link_waiting(&self, device: u32) -> bool {
+        self.lock().link_waiting(device as usize)
+    }
+
     pub fn link_fingerprint(&self) -> String {
         self.lock().link_fingerprint()
     }

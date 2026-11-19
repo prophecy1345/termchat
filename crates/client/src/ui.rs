@@ -1648,6 +1648,13 @@ fn popup_pane(
             let buttons = [("↵ add", true, key(KeyCode::Enter)), cancel];
             window(f, t, h, "add a device", lines, &buttons, 70, false);
         }
+        Popup::Link(i) if m.engine.link_waiting(*i) => {
+            let lines = plain(
+                "Reaching the new device… Its screen shows the fingerprint in a moment\n(through Tor this takes up to half a minute). Then compare.",
+            );
+            let buttons = [("n cancel", false, key(KeyCode::Char('n')))];
+            window(f, t, h, "link a device", lines, &buttons, 72, false);
+        }
         Popup::Link(_) => {
             let mut lines = plain(
                 "Both screens show this fingerprint. Go on only if they are the same:\nsomeone who copied the link code would show another one.\n",

@@ -97,9 +97,12 @@ async fn a_laptop_links_to_the_phone_once_both_screens_agree() {
     assert!(e[phone].add_device("termchat:not-a-link").is_err());
     let at_phone = e[phone].add_device(&code).unwrap();
     assert_eq!(e[phone].pending_link(), Some(at_phone));
+    // The phone waits until the laptop can show the fingerprint too.
+    assert!(e[phone].link_waiting(at_phone));
 
     // The laptop hears from the phone, and both show the phone's fingerprint.
     pump(&mut e, |e| e[1].pending_link().is_some()).await;
+    assert!(!e[phone].link_waiting(at_phone));
     assert_eq!(e[phone].link_fingerprint(), e[laptop].link_fingerprint());
     // Nothing is linked before both screens are confirmed.
     settle(&mut e, 500).await;

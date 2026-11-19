@@ -89,11 +89,16 @@ private fun Root(m: Model) {
                 title = { Text("Link a device", style = Tc.name) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("Both screens show this fingerprint. Go on only if they are the same: someone who copied the link code would show another one.", style = Tc.mono)
-                        Text(a.linkFingerprint(), style = Tc.name.copy(color = Tc.lime))
+                        if (a.linkWaiting(i)) {
+                            // Our answer is still on its way: the other screen has nothing to compare yet.
+                            Text("Reaching the new device… Its screen shows the fingerprint in a moment (through Tor this takes up to half a minute). Then compare.", style = Tc.mono)
+                        } else {
+                            Text("Both screens show this fingerprint. Go on only if they are the same: someone who copied the link code would show another one.", style = Tc.mono)
+                            Text(a.linkFingerprint(), style = Tc.name.copy(color = Tc.lime))
+                        }
                     }
                 },
-                confirmButton = { Flat("The same") { a.confirmLink(i); m.note = "confirmed: linking finishes when the other screen agrees"; m.changed() } },
+                confirmButton = { Flat("The same", enabled = !a.linkWaiting(i)) { a.confirmLink(i); m.note = "confirmed: linking finishes when the other screen agrees"; m.changed() } },
                 dismissButton = { Flat("Cancel", color = Tc.dim) { a.cancelLink(i); m.note = "linking cancelled"; m.changed() } },
             )
         }

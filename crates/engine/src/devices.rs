@@ -87,6 +87,18 @@ impl Engine {
         Ok(i)
     }
 
+    /// On the main device: our answer has not reached the new device's relay
+    /// yet (through Tor that takes 10 to 30 s), so its screen cannot show the
+    /// fingerprint; ours waits too, or the person would confirm alone.
+    pub fn link_waiting(&self, i: usize) -> bool {
+        self.is_primary()
+            && self
+                .data
+                .contacts
+                .get(i)
+                .is_some_and(|c| c.own && (c.request_pending || !self.all_answered()))
+    }
+
     /// The device waiting for our person to compare fingerprints.
     pub fn pending_link(&self) -> Option<usize> {
         self.data.contacts.iter().position(|c| c.own && !c.link_ok)
@@ -448,10 +460,9 @@ impl Engine {
                 let mut c = self.data.contacts.remove(i);
                 c.own = true;
                 self.data.contacts.push(c);
+                // The fingerprint window opens by itself (`pending_link`); a
+                // note on top would hide it until dismissed.
                 self.data.primary = Some(identity);
-                self.happened.push(Happened::Notice(
-                    "Your main device answered: compare the fingerprints on both screens.".into(),
-                ));
             }
             Body::DeviceLinked { proof } if own && self.is_primary() => {
                 self.data.contacts[i].link_theirs = true;

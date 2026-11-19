@@ -693,6 +693,20 @@ impl Chat {
                 }
                 stay
             }
+            Dialog::Link(i) if self.engine.link_waiting(*i) => {
+                ui.set_width(560.0);
+                ui.heading("Link a device");
+                ui.add_space(6.0);
+                ui.label("Reaching the new device… Its screen shows the fingerprint in a moment (through Tor this takes up to half a minute). Then compare.");
+                ui.add_space(10.0);
+                ui.spinner();
+                if ui.button("Cancel").clicked() {
+                    self.engine.delete(*i);
+                    self.status = "linking cancelled".into();
+                    return false;
+                }
+                true
+            }
             Dialog::Link(i) => {
                 ui.set_width(560.0);
                 ui.heading("Link a device");
