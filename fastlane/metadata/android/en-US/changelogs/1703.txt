@@ -1,0 +1,1 @@
+Groups: your own devices are not in the invite list, and they join once every member has updated.

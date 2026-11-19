@@ -3,6 +3,16 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.17.3
+
+- Groups: your own devices no longer show in a group's invite list; they
+  join your groups by themselves.
+- Groups: while a member uses a version before 0.17, a group stays on its
+  members' main devices. Once they update, the devices kept out now join;
+  before, they never did.
+- The status line no longer keeps saying "confirmed: linking finishes when
+  the other screen agrees" after the device is linked.
+
 ## 0.17.2
 
 0.17.1 was tagged but never released; 0.17.2 has everything below.
