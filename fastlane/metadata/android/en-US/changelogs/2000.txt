@@ -1,0 +1,1 @@
+Private groups can now be used from termchat scripts. Group queue moves hold outgoing text until the new queue and encryption session are ready.

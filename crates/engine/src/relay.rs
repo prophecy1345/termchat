@@ -90,11 +90,24 @@ pub fn bridge_transport(_line: &str) -> Option<String> {
 /// Handle to the background connection. Dropping it closes the connection.
 #[derive(Clone)]
 pub struct Relay {
-    tx: mpsc::UnboundedSender<ClientFrame>,
+    tx: mpsc::UnboundedSender<Outgoing>,
     wake: Arc<Notify>,
     pushed: Arc<AtomicBool>,
     /// `Send` frames the relay has not answered yet, queued ones included.
     unanswered: Arc<AtomicUsize>,
+}
+
+struct Outgoing {
+    frame: ClientFrame,
+    group_session: Option<Arc<AtomicBool>>,
+}
+
+impl Outgoing {
+    fn cancelled(&self) -> bool {
+        self.group_session
+            .as_ref()
+            .is_some_and(|session| !session.load(Ordering::Acquire))
+    }
 }
 
 impl Relay {
@@ -184,16 +197,29 @@ impl Relay {
 
     /// Queues a frame. `Send` frames survive reconnects until the relay answers.
     pub fn send(&self, frame: ClientFrame) -> Result<(), Error> {
+        self.send_scoped(frame, None)
+    }
+
+    pub(crate) fn send_scoped(
+        &self,
+        frame: ClientFrame,
+        group_session: Option<Arc<AtomicBool>>,
+    ) -> Result<(), Error> {
         let counted = matches!(frame, ClientFrame::Send { .. });
         if counted {
             self.unanswered.fetch_add(1, Ordering::Relaxed);
         }
-        self.tx.send(frame).map_err(|_| {
-            if counted {
-                self.unanswered.fetch_sub(1, Ordering::Relaxed);
-            }
-            Error::Closed
-        })
+        self.tx
+            .send(Outgoing {
+                frame,
+                group_session,
+            })
+            .map_err(|_| {
+                if counted {
+                    self.unanswered.fetch_sub(1, Ordering::Relaxed);
+                }
+                Error::Closed
+            })
     }
 
     /// `Send` frames not yet accepted or refused for good. A process that
@@ -238,7 +264,7 @@ struct Link {
     tor: Option<std::sync::Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>,
     events: mpsc::Sender<Event>,
     /// Unanswered `Send` frames by `client_id`.
-    pending: BTreeMap<u64, ClientFrame>,
+    pending: BTreeMap<u64, Outgoing>,
     /// ADR-020: per queue written to, the one `Send` on the wire, so the
     /// relay takes them in order even when it refuses one for now.
     in_flight: BTreeMap<QueueId, u64>,
@@ -300,7 +326,7 @@ impl Link {
         }
     }
 
-    async fn run(mut self, mut out: mpsc::UnboundedReceiver<ClientFrame>) {
+    async fn run(mut self, mut out: mpsc::UnboundedReceiver<Outgoing>) {
         tokio::select! {
             _ = tokio::time::sleep(self.delay) => {}
             _ = self.events.closed() => return,
@@ -338,7 +364,7 @@ impl Link {
     /// meanwhile, and the link must not outlive it: give up on the
     /// connection attempt as soon as the event receiver is gone. Once connected,
     /// `talk` drains queued frames (acks) before it stops.
-    async fn session(&mut self, out: &mut mpsc::UnboundedReceiver<ClientFrame>) -> End {
+    async fn session(&mut self, out: &mut mpsc::UnboundedReceiver<Outgoing>) -> End {
         let events = self.events.clone();
         let connected = tokio::select! {
             ws = self.connect() => ws,
@@ -400,7 +426,7 @@ impl Link {
     async fn talk<S: AsyncRead + AsyncWrite + Unpin>(
         &mut self,
         mut ws: WebSocketStream<S>,
-        out: &mut mpsc::UnboundedReceiver<ClientFrame>,
+        out: &mut mpsc::UnboundedReceiver<Outgoing>,
     ) -> End {
         if self.handshake(&mut ws).await.is_none() {
             return End::Lost(false);
@@ -416,7 +442,11 @@ impl Link {
         // Waits end with the connection: the reconnect was its own wait.
         self.in_flight.clear();
         self.retry.clear();
-        let all: BTreeSet<QueueId> = self.pending.values().filter_map(queue).collect();
+        let all: BTreeSet<QueueId> = self
+            .pending
+            .values()
+            .filter_map(|o| queue(&o.frame))
+            .collect();
         for to in all {
             if self.pump(&mut ws, to).await.is_none() {
                 return End::Lost(true);
@@ -449,17 +479,17 @@ impl Link {
                     }
                 }
                 frame = out.recv() => {
-                    let Some(frame) = frame else { return End::Stop };
-                    let sent = match &frame {
+                    let Some(outgoing) = frame else { return End::Stop };
+                    let sent = match &outgoing.frame {
                         ClientFrame::Send { client_id, send_id, .. } => {
                             let to = *send_id;
-                            if self.pending.insert(*client_id, frame).is_some() {
+                            if self.pending.insert(*client_id, outgoing).is_some() {
                                 // The same id twice counts once.
                                 self.unanswered.fetch_sub(1, Ordering::Relaxed);
                             }
                             self.pump(&mut ws, to).await
                         }
-                        _ => write(&mut ws, &frame).await,
+                        _ => write(&mut ws, &outgoing.frame).await,
                     };
                     if sent.is_none() {
                         return End::Lost(true);
@@ -509,7 +539,7 @@ impl Link {
             } => *client_id,
             _ => return Answer::Other,
         };
-        let Some(to) = self.pending.get(&id).and_then(queue) else {
+        let Some(to) = self.pending.get(&id).and_then(|o| queue(&o.frame)) else {
             return Answer::Unsolicited;
         };
         if self.in_flight.get(&to) != Some(&id) {
@@ -549,12 +579,22 @@ impl Link {
         if waiting || self.in_flight.contains_key(&to) {
             return Some(());
         }
-        let next = self.pending.iter().find(|(_, f)| queue(f) == Some(to));
-        let Some((id, frame)) = next else {
-            return Some(());
-        };
-        self.in_flight.insert(to, *id);
-        write(ws, frame).await
+        loop {
+            let next = self
+                .pending
+                .iter()
+                .find(|(_, o)| queue(&o.frame) == Some(to));
+            let Some((&id, outgoing)) = next else {
+                return Some(());
+            };
+            // A move or revocation invalidates ciphertext still queued here.
+            if !outgoing.cancelled() {
+                self.in_flight.insert(to, id);
+                return write(ws, &outgoing.frame).await;
+            }
+            self.pending.remove(&id);
+            self.unanswered.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     /// Nothing to wait for: a relay that refuses the version says so in a
@@ -715,6 +755,69 @@ fn jitter(delay: Duration) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn invalidated_group_frames_are_not_sent_or_retried() {
+        use termchat_proto::Envelope;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (relay, mut events) = Relay::connect(
+            &format!("ws://{}/", listener.local_addr().unwrap()),
+            Dial::Direct,
+        )
+        .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(server).await.unwrap();
+        let next = |frame: Message| ClientFrame::decode(&frame.into_data()).unwrap();
+        assert!(matches!(
+            next(ws.next().await.unwrap().unwrap()),
+            ClientFrame::Hello { .. }
+        ));
+        assert!(matches!(events.recv().await, Some(Event::Connected)));
+        let send = |client_id| ClientFrame::Send {
+            client_id,
+            send_id: [7; 16],
+            envelope: Envelope {
+                version: VERSION,
+                olm_type: 0,
+                body: vec![1],
+            },
+        };
+        let session = Arc::new(AtomicBool::new(true));
+        relay.send_scoped(send(1), Some(session.clone())).unwrap();
+        assert!(matches!(
+            next(ws.next().await.unwrap().unwrap()),
+            ClientFrame::Send { client_id: 1, .. }
+        ));
+        relay.send_scoped(send(2), Some(session.clone())).unwrap();
+        session.store(false, Ordering::Release);
+        let retry = ServerFrame::Error {
+            client_id: Some(1),
+            code: ErrorCode::RateLimited,
+        };
+        ws.send(Message::Binary(retry.encode().into()))
+            .await
+            .unwrap();
+        relay.send(send(3)).unwrap();
+        let frame = tokio::time::timeout(Duration::from_secs(10), ws.next())
+            .await
+            .unwrap();
+        assert!(matches!(
+            next(frame.unwrap().unwrap()),
+            ClientFrame::Send { client_id: 3, .. }
+        ));
+        let accepted = ServerFrame::Accepted { client_id: 3 };
+        ws.send(Message::Binary(accepted.encode().into()))
+            .await
+            .unwrap();
+        assert!(matches!(
+            events.recv().await,
+            Some(Event::Frame(ServerFrame::Accepted { client_id: 3 }))
+        ));
+        assert_eq!(relay.unanswered(), 0);
+    }
 
     #[test]
     fn versions_are_three_plain_numbers() {

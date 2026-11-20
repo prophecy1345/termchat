@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +25,7 @@ mod devices;
 #[path = "group.rs"]
 mod group;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
+pub use group::GroupScriptError;
 use subtle::ConstantTimeEq;
 
 /// The `Understands` level that reads answers, edits and reactions (ADR-025).
@@ -173,6 +175,8 @@ pub struct Engine {
     /// One connection per identity (its invite queue) and per contact
     /// (ADR-023, section 7), and per other relay a contact's queue is on.
     links: BTreeMap<Link, Live>,
+    group_writes: BTreeMap<proto::GroupId, Arc<AtomicBool>>,
+    group_move_retries: BTreeMap<proto::GroupId, Instant>,
     /// Links asked to delete their queue, until the relay confirms.
     /// With the `DeleteQueue` sent on it, to send again if a new link for
     /// the same contact and relay starts before this one is done.
@@ -559,6 +563,8 @@ impl Engine {
             data,
             cores,
             links: BTreeMap::new(),
+            group_writes: BTreeMap::new(),
+            group_move_retries: BTreeMap::new(),
             retiring: Vec::new(),
             events,
             events_tx,
@@ -1759,13 +1765,17 @@ impl Engine {
     /// Erases the device; `note` goes on the first-run screen.
     pub fn finish_wipe(&mut self, note: &str) {
         self.leaving = None;
-        self.happened.push(match data::wipe(&self.path) {
+        let happened = match data::wipe(&self.path) {
             Ok(()) => {
                 self.gone = true;
+                for g in 0..self.data.groups.len() {
+                    self.stop_group_writes(g, true);
+                }
                 Happened::Wiped(note.into())
             }
             Err(e) => Happened::Notice(format!("wipe failed: {e}")),
-        });
+        };
+        self.happened.push(happened);
     }
 
     fn set_status(&mut self, client_id: u64, status: Status) {
@@ -1884,6 +1894,14 @@ impl Engine {
                 {
                     self.own_copy(i, *body);
                 }
+                return self.persist();
+            }
+            // Queue addresses and reader grants are not part of the signed roster.
+            // Only the admin's primary device may send them or revoke a reader.
+            if matches!(
+                got.body,
+                Body::GroupInvite { .. } | Body::GroupMove { .. } | Body::GroupLeave { .. }
+            ) {
                 return self.persist();
             }
             // A device of theirs speaks for them.
@@ -2073,7 +2091,7 @@ impl Engine {
                             .map(|c| c.key),
                     );
                     for who in owners {
-                        self.group_devices_changed(who);
+                        self.group_devices_changed(who, &[]);
                     }
                 }
                 return self.persist();
@@ -2179,6 +2197,7 @@ impl Engine {
     /// Timers: disappearing messages, the rotated-out fallback key, a wipe
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
+        self.retry_group_moves();
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
             self.claiming.clear();
@@ -3368,6 +3387,137 @@ mod tests {
             verified: true,
             ..Contact::default()
         }
+    }
+
+    #[tokio::test]
+    async fn group_script_requires_the_exact_ack_and_saves_before_handoff() {
+        use data::Msg;
+
+        let (mut e, dir) = offline("group-script");
+        let g = e.create_group("ops").unwrap();
+        let group = e.data.groups[g].id;
+        let link = Link {
+            who: group::link_who(&group),
+            relay: e.data.relay_url.clone(),
+        };
+        let admin_id = [1; 16];
+        e.on_group_frame(
+            g,
+            ServerFrame::GroupCreated {
+                group_id: admin_id,
+                send_id: [2; 16],
+                token: [3; 32],
+            },
+        );
+        e.on_group_frame(
+            g,
+            ServerFrame::ReaderAdded {
+                group_id: admin_id,
+                recv_id: [4; 16],
+                send_id: [5; 16],
+                token: [6; 32],
+            },
+        );
+        assert!(e.group_access(g));
+
+        let disk = dir.join("state.tmp");
+        std::fs::create_dir(&disk).unwrap();
+        assert!(matches!(
+            e.send_group_text(g, "disk failure"),
+            Err(GroupScriptError::State(_))
+        ));
+        assert!(e.data.groups[g].messages.iter().all(|m| !m.mine));
+        std::fs::remove_dir(&disk).unwrap();
+
+        let id = e.send_group_text(g, "queued while offline").unwrap();
+        e.links.get_mut(&link).unwrap().connected = true;
+        std::fs::create_dir(&disk).unwrap();
+        let client_id = e.data.groups[g].next_client_id;
+        e.flush_group(g);
+        assert!(matches!(
+            e.group_text_accepted(&group, id),
+            Err(GroupScriptError::State(_))
+        ));
+        assert_eq!(e.links[&link].relay.unanswered(), 0);
+        e.on_group_frame(g, ServerFrame::Accepted { client_id });
+        assert!(matches!(
+            e.group_text_accepted(&group, id),
+            Err(GroupScriptError::State(_))
+        ));
+        std::fs::remove_dir(&disk).unwrap();
+
+        let client_id = e.data.groups[g].next_client_id;
+        let id = e.send_group_text(g, "only this frame").unwrap();
+        e.on_group_frame(
+            g,
+            ServerFrame::Accepted {
+                client_id: client_id + 1,
+            },
+        );
+        assert!(e.group_text_accepted(&group, id).unwrap().is_none());
+        e.on_group_frame(g, ServerFrame::Accepted { client_id });
+        assert!(e.group_text_accepted(&group, id).unwrap().is_some());
+        e.data.groups[g].messages.retain(|m| m.id != Some(id));
+        assert!(matches!(
+            e.group_text_accepted(&group, id),
+            Err(GroupScriptError::State(_))
+        ));
+
+        let from = [7; 32];
+        let incoming = Msg {
+            at: now(),
+            text: "current edit".into(),
+            author: Some(from),
+            id: Some(1),
+            status: Status::Received,
+            file: None,
+            group_unfetched: true,
+            ..Msg::default()
+        };
+        let mut deleted = incoming.clone();
+        deleted.id = Some(2);
+        deleted.wipe();
+        let mut expired = incoming.clone();
+        expired.id = Some(3);
+        expired.expires_at = Some(now());
+        let mut own = incoming.clone();
+        own.id = Some(4);
+        own.mine = true;
+        let mut legacy = incoming.clone();
+        legacy.id = Some(5);
+        legacy.group_unfetched = false;
+        legacy.unfetched = true;
+        let mut next = incoming.clone();
+        next.id = Some(6);
+        next.text = "next batch".into();
+        e.data.groups[g]
+            .messages
+            .extend([incoming, deleted, expired, own, legacy, next]);
+        std::fs::create_dir(&disk).unwrap();
+        assert!(matches!(
+            e.take_group_texts(g, 1),
+            Err(GroupScriptError::State(_))
+        ));
+        std::fs::remove_dir(&disk).unwrap();
+        let (got, more) = e.take_group_texts(g, 1).unwrap();
+        assert!(more);
+        assert_eq!(
+            got.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
+            ["current edit"]
+        );
+        let (got, more) = e.take_group_texts(g, 1).unwrap();
+        assert!(!more);
+        assert_eq!(got[0].text, "next batch");
+        assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
+        drop(e);
+        let Unlocked::Open(mut e) =
+            Engine::unlock(&dir.join("state"), b"correct horse battery staple violin").unwrap()
+        else {
+            panic!("state wiped");
+        };
+        assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

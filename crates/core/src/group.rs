@@ -214,7 +214,10 @@ impl Groups {
             return Err(Error::SenderMismatch);
         }
         let index = message.message_index();
-        if !s.seen.insert(index) {
+        if (s.seen.len() >= SEEN_PER_SESSION
+            && s.seen.first().is_some_and(|oldest| index < *oldest))
+            || !s.seen.insert(index)
+        {
             return Err(Error::Duplicate);
         }
         if s.seen.len() > SEEN_PER_SESSION {

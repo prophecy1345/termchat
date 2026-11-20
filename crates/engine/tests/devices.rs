@@ -636,8 +636,18 @@ async fn a_device_linked_later_joins_and_a_removed_one_reads_no_more() {
             && in_group(&e[1], "from the tablet", true, None)
     })
     .await;
+    assert!(
+        e[1].take_group_texts(0, usize::MAX)
+            .unwrap()
+            .0
+            .iter()
+            .all(|m| m.text != "from the tablet")
+    );
 
     // The laptop is removed: the group moves without it.
+    let gid = e[1].data.groups[0].id;
+    e[1].connect_now().unwrap();
+    let pending = e[1].send_group_text(0, "pending at revocation").unwrap();
     e[0].remove_device(&laptop).unwrap();
     pump(&mut e, |e| {
         e[2].data.groups[0].moving.is_none()
@@ -648,6 +658,9 @@ async fn a_device_linked_later_joins_and_a_removed_one_reads_no_more() {
             && e[1].data.groups[0].left
     })
     .await;
+    assert!(!e[1].group_access(0));
+    assert!(e[1].group_text_accepted(&gid, pending).is_err());
+    assert!(e[1].take_group_texts(0, usize::MAX).is_err());
     e[2].send_group(g, "after the laptop went").unwrap();
     pump(&mut e, |e| {
         in_group(&e[0], "after the laptop went", false, Some(bob))

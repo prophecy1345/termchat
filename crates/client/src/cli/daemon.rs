@@ -8,19 +8,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use termchat_core::proto::GroupId;
 use termchat_engine::Engine;
 use termchat_engine::data::{self, Status};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use zeroize::Zeroizing;
 
 use super::{
-    Args, Fail, Mark, USAGE, can_write, contact_rows, fail, last_mark, print_record, record,
+    Args, Fail, Mark, USAGE, can_write, contact_rows, fail, group, last_mark, print_record, record,
     status_of,
 };
 
 mod approval;
+mod groups;
 mod watch;
 
 pub const SOCKET: &str = "daemon.sock";
@@ -29,11 +31,15 @@ const MAX_LINE: u64 = 2 << 20;
 const MAX_CONNECTIONS: usize = 16;
 
 /// A request and where its answer lines go.
-type Job = (Value, mpsc::UnboundedSender<String>);
+enum Job {
+    Command(Value, mpsc::UnboundedSender<String>),
+    GroupReader(Value, mpsc::Sender<String>, oneshot::Sender<String>),
+}
 
 /// Something waiting on the relay: a sent message, or a request out.
 enum Waiting {
     Sent { i: usize, m: Mark },
+    GroupSent { group: GroupId, id: u64 },
     Added { i: usize },
 }
 
@@ -86,6 +92,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
     let (tx, mut rx) = mpsc::channel::<Job>(64);
     let open = Arc::new(AtomicUsize::new(0));
     let (mut pending, mut readers) = (Vec::new(), Vec::new());
+    let mut group_readers = Vec::new();
     let mut watches = Vec::new();
     let mut approvals = Vec::new();
     eprintln!("termchat: daemon ready on {}", path.display());
@@ -105,13 +112,20 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
                     open.fetch_sub(1, Ordering::SeqCst);
                 }
             }
-            Some((request, reply)) = rx.recv() => {
-                if watch::is_request(&request) {
-                    watch::register(e, &request, reply, &mut watches);
-                } else if request["cmd"] == "ask" {
-                    approval::register(e, &request, reply, &mut approvals);
-                } else {
-                    handle(e, request, reply, &mut pending, &mut readers);
+            Some(job) = rx.recv() => {
+                match job {
+                    Job::GroupReader(request, records, done) => {
+                        groups::register(e, request, records, done, &mut group_readers);
+                    }
+                    Job::Command(request, reply) if watch::is_request(&request) => {
+                        watch::register(e, &request, reply, &mut watches);
+                    }
+                    Job::Command(request, reply) if request["cmd"] == "ask" => {
+                        approval::register(e, &request, reply, &mut approvals);
+                    }
+                    Job::Command(request, reply) => {
+                        handle(e, request, reply, &mut pending, &mut readers);
+                    }
                 }
             }
             Some(ev) = e.events.recv() => {
@@ -128,8 +142,10 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
         watch::progress(e, &mut watches);
         e.happened.clear();
         progress(e, &mut pending, &mut readers);
+        groups::progress(e, &mut group_readers);
     }
     drop(approvals);
+    drop(group_readers);
     // No new commands; what they sent must still reach the relay, as at the
     // end of a one-shot command. systemd waits 90 s before it kills.
     let _ = std::fs::remove_file(&path);
@@ -160,10 +176,34 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
             }
             Ok(_) => {}
         }
-        let (reply, mut answers) = mpsc::unbounded_channel();
         let request = serde_json::from_str(&line).unwrap_or(Value::Null);
+        if request["cmd"] == "group_recv" {
+            let (records, mut answers) = mpsc::channel(groups::BUFFER);
+            let (done, result) = oneshot::channel();
+            if jobs
+                .send(Job::GroupReader(request, records, done))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::select! {
+                _ = read.fill_buf() => {}
+                _ = async {
+                    while let Some(record) = answers.recv().await {
+                        write.write_all(format!("{record}\n").as_bytes()).await?;
+                    }
+                    if let Ok(result) = result.await {
+                        write.write_all(format!("{result}\n").as_bytes()).await?;
+                    }
+                    std::io::Result::Ok(())
+                } => {}
+            }
+            return;
+        }
+        let (reply, mut answers) = mpsc::unbounded_channel();
         let dedicated = watch::is_request(&request) || request["cmd"] == "ask";
-        if jobs.send((request, reply)).await.is_err() {
+        if jobs.send(Job::Command(request, reply)).await.is_err() {
             return;
         }
         // Until the last answer, or the client goes away. A client that
@@ -206,6 +246,13 @@ fn handle(
         e.find(&q).map_err(|why| Fail(3, why))
     };
     let answer = match request["cmd"].as_str().unwrap_or_default() {
+        "groups" | "group_send" => {
+            let result = groups::command(e, request, &reply, pending);
+            if let Some(answer) = result {
+                let _ = reply.send(answer.unwrap_or_else(err));
+            }
+            return;
+        }
         "contacts" => {
             let rows: Vec<Value> = contact_rows(e)
                 .into_iter()
@@ -310,6 +357,8 @@ fn progress(e: &mut Engine, pending: &mut Vec<Pending>, readers: &mut Vec<Reader
     let now = Instant::now();
     pending.retain(|p| {
         let done = match p.what {
+            Waiting::GroupSent { group, id } => group::send_result(e, &group, id, p.until)
+                .map(|result| result.map(|()| ok(json!({})))),
             Waiting::Sent { i, m } => match status_of(e, i, m) {
                 Some(Status::Sent) | None => Some(Ok(ok(json!({})))),
                 Some(Status::Failed(why)) => Some(Err(Fail(5, why))),
@@ -388,12 +437,15 @@ pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
 async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
     let request = request(a)?;
     let approval = a.command == "ask";
-    if approval
+    if (approval || a.group.is_some() || a.command == "groups")
         && !stream
             .peer_cred()
             .is_ok_and(|cred| cred.uid() == rustix::process::geteuid().as_raw())
     {
-        return fail(6, "the daemon socket belongs to another user");
+        return fail(
+            if approval { 6 } else { 1 },
+            "the daemon socket belongs to another user",
+        );
     }
     let (read, mut write) = stream.into_split();
     // Closed before any answer: the daemon turned us away (ADR-029).
@@ -432,6 +484,8 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
         let Some(done) = v["ok"].as_bool() else {
             if a.command == "watch" && v["ready"] == true {
                 println!("watch ready");
+            } else if a.group.is_some() || a.command == "groups" {
+                group::print(a, &v)?;
             } else {
                 print_record(a, v)?;
             }
@@ -451,6 +505,11 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
                     println!("{}\t{}\t{}", f("name"), f("fingerprint"), f("state"));
                 }
             }
+            "groups" => {
+                for row in v["groups"].as_array().into_iter().flatten() {
+                    group::print(a, row)?;
+                }
+            }
             "invite" => println!("{}", v["invite"].as_str().unwrap_or_default()),
             "add" => println!(
                 "request sent to {}; they accept it on their device",
@@ -465,6 +524,10 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
 
 /// The request line for the command in `a`.
 fn request(a: &Args) -> Result<Value, Fail> {
+    if a.group.is_some() || a.command == "groups" {
+        return serde_json::to_value(group::request(a)?)
+            .map_err(|why| Fail(1, format!("cannot encode group command: {why}")));
+    }
     let timeout = a.timeout.unwrap_or(60);
     Ok(match (a.command.as_str(), a.positional.as_slice()) {
         ("contacts", _) => json!({ "cmd": "contacts" }),

@@ -233,6 +233,9 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
         said(&e[0], 0, "hi from carol!") && said(&e[1], 0, "hi from carol!")
     })
     .await;
+    let (edited, _) = e[1].take_group_texts(0, usize::MAX).unwrap();
+    assert!(edited.iter().any(|m| m.text == "hi from carol!"));
+    assert!(edited.iter().all(|m| m.text != "hi from carol"));
     e[2].delete_group_message(0, at(&e[2], "hi from carol!"))
         .unwrap();
     pump(&mut e, |e| {
@@ -248,16 +251,35 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
         e[0].data.groups[0].reactions.is_empty(),
         "reactions go with the message"
     );
+    let (texts, _) = e[0].take_group_texts(0, usize::MAX).unwrap();
+    assert!(texts.iter().all(|m| !m.text.starts_with("hi from carol")));
 
     // Alice removes Carol: the group moves, Carol hears so and reads nothing more.
     let carol = e[2].me();
+    let gid = e[0].data.groups[0].id;
+    let old_key = e[0].core().group_key(&gid).unwrap();
     e[0].remove_from_group(0, &carol).unwrap();
+    let queued = e[0].send_group_text(0, "wait for the new queue").unwrap();
+    assert!(
+        e[0].data.groups[0]
+            .messages
+            .iter()
+            .any(|m| m.id == Some(queued) && m.status == termchat_engine::data::Status::Queued)
+    );
+    assert_eq!(&*e[0].core().group_key(&gid).unwrap(), &*old_key);
     pump(&mut e, |e| {
         e[2].data.groups[0].left
             && e[0].data.groups[0].members().len() == 2
             && e[1].data.groups[0].members().len() == 2
     })
     .await;
+    assert_ne!(&*e[0].core().group_key(&gid).unwrap(), &*old_key);
+    pump(&mut e, |e| {
+        e[0].group_text_accepted(&gid, queued).unwrap().is_some()
+            && said(&e[1], 0, "wait for the new queue")
+    })
+    .await;
+    assert!(!said(&e[2], 0, "wait for the new queue"));
     e[1].send_group(0, "just us now").unwrap();
     pump(&mut e, |e| said(&e[0], 0, "just us now")).await;
     settle(&mut e).await;
@@ -265,6 +287,7 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
 
     // Bob leaves; Alice is told, and her next message no longer reaches him.
     e[1].leave_group(0).unwrap();
+    assert!(e[1].take_group_texts(0, usize::MAX).is_err());
     pump(&mut e, |e| said(&e[0], 0, "bob left the group")).await;
     pump(&mut e, |e| e[0].data.groups[0].members().len() == 1).await;
     e[0].send_group(0, "anyone?").unwrap();

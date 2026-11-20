@@ -51,6 +51,18 @@ fn every_member_reads_and_knows_who_wrote() {
 }
 
 #[test]
+fn old_group_frames_stay_rejected_after_the_replay_window_advances() {
+    let mut g = group();
+    let first = g[0].group_encrypt(G, text("first")).unwrap();
+    g[1].group_decrypt(&G, &first).unwrap();
+    for _ in 0..1000 {
+        let bytes = g[0].group_encrypt(G, text("later")).unwrap();
+        g[1].group_decrypt(&G, &bytes).unwrap();
+    }
+    assert_eq!(g[1].group_decrypt(&G, &first), Err(Error::Duplicate));
+}
+
+#[test]
 fn a_member_cannot_write_as_another_and_others_cannot_read() {
     let mut g = group();
     let (alice, bob) = (ed(&g[0]), ed(&g[1]));

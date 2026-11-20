@@ -153,6 +153,8 @@ pub struct Group {
     pub readers: Vec<(Ed25519Key, QueueId)>,
     /// Admin: a move to a new queue under way (ADR-027).
     pub moving: Option<GroupMoving>,
+    /// A member left the old queue and the admin's new grant has yet to arrive.
+    pub waiting_for_move: bool,
     /// Group messages that came before their sender's key, to read later.
     pub early: Vec<Vec<u8>>,
     /// ADR-028: each member's device list, as they signed it, and the reader
@@ -454,6 +456,14 @@ pub struct Msg {
     /// Absent in older files: everything there counts as taken.
     #[serde(default)]
     pub unfetched: bool,
+    /// A group text received since ADR-033, still available to script readers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub group_unfetched: bool,
+    /// A locally queued group text, as opposed to a copy from another device.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub group_local: bool,
+    #[serde(skip)]
+    pub group_accepted_at: Option<std::time::Instant>,
     /// Who wrote it, in a group (ADR-027); a chat has two sides and no need.
     #[serde(default)]
     pub author: Option<Ed25519Key>,
@@ -794,7 +804,9 @@ impl Data {
     /// After a restart, sends that were in flight have no transport to confirm them.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let mut data: Self = serde_json::from_str(json)?;
-        for m in data.contacts.iter_mut().flat_map(|c| c.messages.iter_mut()) {
+        let contacts = data.contacts.iter_mut().flat_map(|c| &mut c.messages);
+        let groups = data.groups.iter_mut().flat_map(|g| &mut g.messages);
+        for m in contacts.chain(groups) {
             if matches!(m.status, Status::Sending(_)) {
                 m.status = Status::Failed("not confirmed before exit".into());
             }

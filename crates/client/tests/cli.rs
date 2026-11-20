@@ -12,14 +12,22 @@ use tokio::net::TcpListener;
 
 const PASSWORD: &str = "correct horse battery staple violin";
 
+#[cfg(unix)]
+#[path = "cli/groups.rs"]
+mod groups;
+
 async fn start_relay() -> String {
+    start_relay_with(Limits::default()).await
+}
+
+async fn start_relay_with(limits: Limits) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
     let config = Config {
         trust_proxy: false,
         db: None,
         reports: None,
-        limits: Limits::default(),
+        limits,
     };
     tokio::spawn(termchat_relay::serve(listener, None, config));
     url

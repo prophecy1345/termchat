@@ -155,7 +155,7 @@ impl Engine {
         self.data.devices = Some(list.clone());
         self.data.device_labels.retain(|(k, _)| k != key);
         let me = self.me();
-        self.group_devices_changed(me);
+        self.group_devices_changed(me, &[*key]);
         // The removed device hears the list without itself, then nothing.
         if let Some(o) = self.index(key) {
             self.data.contacts[o].outbox.push(Body::OwnDevices {
@@ -275,7 +275,7 @@ impl Engine {
         }
         self.deliver(i);
         let me = self.me();
-        self.group_devices_changed(me);
+        self.group_devices_changed(me, &[]);
         // Every contact hears of the new list; the new device learns where
         // we read each of them.
         for c in 0..self.data.contacts.len() {
@@ -506,8 +506,8 @@ impl Engine {
                     (true, _) => "This device is linked.",
                     (false, false) => {
                         // Its groups end here too: the admin moves them without it.
-                        for g in &mut self.data.groups {
-                            g.left = true;
+                        for g in 0..self.data.groups.len() {
+                            self.lose_group_access(g);
                         }
                         "This device was removed from your account: it reads and sends nothing more."
                     }
@@ -844,7 +844,7 @@ impl Engine {
             return self.note(e);
         }
         self.deliver(i);
-        self.group_devices_changed(key);
+        self.group_devices_changed(key, &gone);
     }
 
     /// Whoever else may write to our queue for contact `key`: their other

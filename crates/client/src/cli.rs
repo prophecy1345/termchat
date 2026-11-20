@@ -17,13 +17,15 @@ use zeroize::Zeroizing;
 
 #[cfg(unix)]
 mod daemon;
+mod group;
 
-pub const COMMANDS: [&str; 10] = [
+pub const COMMANDS: [&str; 11] = [
     "init",
     "daemon",
     "invite",
     "add",
     "contacts",
+    "groups",
     "send",
     "send-file",
     "recv",
@@ -37,9 +39,12 @@ const USAGE: &str = "usage:
   termchat invite
   termchat add INVITE
   termchat contacts
+  termchat groups [--json]
   termchat send CONTACT [TEXT]          (TEXT from stdin if not given)
+  termchat send (--group NAME | --group-id ID) [TEXT]
   termchat send-file CONTACT PATH
   termchat recv [--from CONTACT] [--wait SECS] [--follow] [--json] [--save-dir DIR]
+  termchat recv (--group NAME | --group-id ID) [--wait SECS | --follow] [--json]
   termchat watch send WATCHER --every SECS
   termchat watch monitor SERVER --notify OWNER --after SECS
   termchat ask CONTACT QUESTION [--timeout SECS|Nm]   (default 10m)
@@ -69,6 +74,7 @@ struct Args {
     json: bool,
     save_dir: Option<PathBuf>,
     from: Option<String>,
+    group: Option<group::Selector>,
     every: Option<u64>,
     after: Option<u64>,
     notify: Option<String>,
@@ -124,11 +130,22 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
             "--json" => a.json = true,
             "--save-dir" => a.save_dir = Some(data::expand(&value(&mut it, arg)?)),
             "--from" => a.from = Some(value(&mut it, arg)?),
+            "--group" | "--group-id" => {
+                if a.group.is_some() {
+                    return fail(2, "use one group selector");
+                }
+                let query = value(&mut it, arg)?;
+                a.group = Some(if arg == "--group" {
+                    group::Selector::Name(query)
+                } else {
+                    group::Selector::Id(group::parse_id(&query)?)
+                });
+            }
             "--every" => a.every = Some(secs(value(&mut it, arg)?, arg)?),
             "--after" => a.after = Some(secs(value(&mut it, arg)?, arg)?),
             "--notify" => a.notify = Some(value(&mut it, arg)?),
             "--help" | "-h" => return fail(2, USAGE),
-            "--" if a.command == "ask" => {
+            "--" if a.command == "ask" || (a.command == "send" && a.group.is_some()) => {
                 a.positional.extend(it.cloned());
                 break;
             }
@@ -146,8 +163,9 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
     let n = a.positional.len();
     let ok = match a.command.as_str() {
         "init" => n == 0 && a.nickname.is_some(),
-        "invite" | "contacts" | "recv" | "daemon" => n == 0,
+        "invite" | "contacts" | "groups" | "recv" | "daemon" => n == 0,
         "add" => n == 1,
+        "send" if a.group.is_some() => n <= 1 && (n == 1 || !a.password_stdin),
         "send" => n == 1 || n == 2,
         "send-file" => n == 2,
         "ask" => matches!(a.positional.as_slice(), [to, question]
@@ -170,6 +188,9 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
         || (a.command != "watch" && (a.every.is_some() || a.after.is_some() || a.notify.is_some()))
     {
         return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command));
+    }
+    if a.group.is_some() || a.command == "groups" {
+        group::validate_args(&a)?;
     }
     Ok(a)
 }
@@ -232,7 +253,14 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     };
     drop(password);
     e.connect_now().map_err(|why| Fail(1, why))?;
-    let deadline = Instant::now() + Duration::from_secs(a.timeout.unwrap_or(60));
+    let deadline = group::deadline(a.timeout.unwrap_or(60))?;
+    if a.group.is_some() || a.command == "groups" {
+        let done = group::run(&mut e, &a, deadline).await;
+        if done.is_ok() && a.command == "send" {
+            pump(&mut e, deadline, Engine::all_answered).await;
+        }
+        return done;
+    }
     let done = match a.command.as_str() {
         "invite" => invite(&mut e, deadline).await,
         "add" => add(&mut e, &a, deadline).await,
@@ -512,18 +540,8 @@ fn can_write(e: &Engine, i: usize) -> Result<usize, Fail> {
 }
 
 async fn send(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
-    let (query, text) = match a.positional.as_slice() {
-        [query, text] => (query, Zeroizing::new(text.clone())),
-        [query] if !a.password_stdin => {
-            let mut text = Zeroizing::new(String::new());
-            std::io::stdin()
-                .read_to_string(&mut text)
-                .map_err(|e| Fail(1, format!("cannot read stdin: {e}")))?;
-            (query, text)
-        }
-        [_] => return fail(2, "with --password-stdin the text goes as an argument"),
-        _ => return fail(2, format!("send takes a contact and a text\n{USAGE}")),
-    };
+    let query = &a.positional[0];
+    let text = send_input(a, a.positional.get(1))?;
     let text = text.strip_suffix('\n').unwrap_or(&text);
     if text.trim().is_empty() {
         return fail(2, "nothing to send");
@@ -532,6 +550,20 @@ async fn send(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
     e.send(i, text).map_err(|why| Fail(5, why))?;
     let m = last_mark(e, i);
     delivered(e, i, m, deadline).await
+}
+
+fn send_input(a: &Args, text: Option<&String>) -> Result<Zeroizing<String>, Fail> {
+    if let Some(text) = text {
+        return Ok(Zeroizing::new(text.clone()));
+    }
+    if a.password_stdin {
+        return fail(2, "with --password-stdin the text goes as an argument");
+    }
+    let mut text = Zeroizing::new(String::new());
+    std::io::stdin()
+        .read_to_string(&mut text)
+        .map_err(|e| Fail(1, format!("cannot read stdin: {e}")))?;
+    Ok(text)
 }
 
 async fn send_file(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {

@@ -127,6 +127,14 @@ that (ADR-023).
   so it is no way into your main identity; give each server its own. A
   daemon (ADR-029) keeps the password and keys in memory while it runs, and
   any process of its user can send through its socket; other users cannot.
+- **Group scripts** (ADR-033). The server has access to the private groups
+  its device joins. Same-user processes can read pending group texts through
+  the daemon. Scripts can retain plaintext and author fingerprints in logs.
+  Known departures and device revocations stop queued old-session group
+  sends. The relay can still accept bytes already in transit, and a device
+  only acts on membership changes it has learned. A successful send
+  confirms relay acceptance. Read markers are saved before output, so a
+  crash, broken pipe or slow subscriber can lose script output.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the

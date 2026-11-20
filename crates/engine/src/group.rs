@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::data::{FileMsg, Group, GroupInvite, GroupMoving};
+use std::sync::atomic::Ordering;
 use termchat_core::proto::{
     Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Ref, Roster, RosterMember, SecretBytes,
 };
@@ -15,6 +16,25 @@ const MAX_EARLY: usize = 50;
 const MAX_PENDING_KEYS: usize = 32;
 /// The `Understands` level that knows groups (ADR-027).
 const GROUPS_LEVEL: u16 = 2;
+const MOVE_RETRY: Duration = Duration::from_secs(30);
+
+const GROUP_ACCESS_LOST: &str = "this device is not in the group";
+const GROUP_SAVE_FAILED: &str = "could not save the group message before sending";
+const GROUP_ENCRYPT_FAILED: &str = "could not encrypt the group message";
+
+#[derive(Debug)]
+pub enum GroupScriptError {
+    State(String),
+    Refused(String),
+}
+
+impl GroupScriptError {
+    fn message(self) -> String {
+        match self {
+            Self::State(why) | Self::Refused(why) => why,
+        }
+    }
+}
 
 /// The link that carries a group's queue: its own, like a contact's.
 pub(super) fn link_who(id: &GroupId) -> Ed25519Key {
@@ -24,6 +44,86 @@ pub(super) fn link_who(id: &GroupId) -> Ed25519Key {
 }
 
 impl Engine {
+    pub fn group_index(&self, id: &GroupId) -> Option<usize> {
+        self.data.groups.iter().position(|g| g.id == *id)
+    }
+
+    /// A locally accepted reader grant and membership of this identity.
+    pub fn group_access(&self, g: usize) -> bool {
+        let Some(group) = self.data.groups.get(g) else {
+            return false;
+        };
+        self.group_locally_joined(g)
+            && (self.is_primary() || self.lists(&self.me()))
+            && group.reader.is_some()
+            && group
+                .members()
+                .iter()
+                .any(|m| m.ed25519 == self.identity_key())
+    }
+
+    fn group_locally_joined(&self, g: usize) -> bool {
+        !self.gone && !self.removed() && !self.data.groups[g].left
+    }
+
+    fn group_moving(&self, g: usize) -> bool {
+        let group = &self.data.groups[g];
+        group.moving.is_some() || group.waiting_for_move
+    }
+
+    pub(super) fn stop_group_writes(&mut self, g: usize, leaving: bool) {
+        let group = &mut self.data.groups[g];
+        if let Some(session) = self.group_writes.remove(&group.id) {
+            session.store(false, Ordering::Release);
+        }
+        for m in &mut group.messages {
+            if matches!(m.status, Status::Sending(_)) || (leaving && m.status == Status::Queued) {
+                m.status = Status::Failed(
+                    if leaving {
+                        GROUP_ACCESS_LOST
+                    } else {
+                        "the group moved before confirmation"
+                    }
+                    .into(),
+                );
+            }
+        }
+        if leaving {
+            group.outbox.clear();
+        }
+    }
+
+    fn wait_for_group_move(&mut self, g: usize) {
+        self.stop_group_writes(g, false);
+        self.data.groups[g].waiting_for_move = true;
+    }
+
+    fn retry_group_move_later(&mut self, g: usize) {
+        self.group_move_retries
+            .entry(self.data.groups[g].id)
+            .or_insert_with(|| Instant::now() + MOVE_RETRY);
+    }
+
+    pub(super) fn retry_group_moves(&mut self) {
+        let now = Instant::now();
+        let mut due = Vec::new();
+        self.group_move_retries.retain(|id, at| {
+            if *at > now {
+                return true;
+            }
+            due.push(*id);
+            false
+        });
+        for id in due {
+            if let Some(g) = self.group_index(&id)
+                && self.group_locally_joined(g)
+                && self.data.groups[g].moving.is_some()
+            {
+                self.group_connected(g);
+            }
+        }
+    }
+
     pub(super) fn group_of_link(&self, link: &Link) -> Option<usize> {
         self.data
             .groups
@@ -33,6 +133,9 @@ impl Engine {
 
     /// The links groups need, for `start_links`.
     pub(super) fn group_links(&self) -> Vec<(Link, Option<String>)> {
+        if self.removed() {
+            return Vec::new();
+        }
         self.data
             .groups
             .iter()
@@ -49,15 +152,34 @@ impl Engine {
     }
 
     fn group_send(&self, g: usize, frame: ClientFrame) -> bool {
+        self.group_send_scoped(g, frame, None)
+    }
+
+    fn group_send_scoped(
+        &self,
+        g: usize,
+        frame: ClientFrame,
+        session: Option<Arc<AtomicBool>>,
+    ) -> bool {
         let group = &self.data.groups[g];
         let link = Link {
             who: link_who(&group.id),
             relay: group.relay_url.clone(),
         };
         match self.links.get(&link) {
-            Some(l) if l.connected => l.relay.send(frame).is_ok(),
+            Some(l) if l.connected => l.relay.send_scoped(frame, session).is_ok(),
             _ => false,
         }
+    }
+
+    fn group_send_ciphertext(&mut self, g: usize, frame: ClientFrame) -> bool {
+        let id = self.data.groups[g].id;
+        let session = self
+            .group_writes
+            .entry(id)
+            .or_insert_with(|| Arc::new(AtomicBool::new(true)))
+            .clone();
+        self.group_send_scoped(g, frame, Some(session))
     }
 
     /// Reads our reader of group `g`, and asks the relay to wake us for it
@@ -322,6 +444,93 @@ impl Engine {
     /// Writes `text` to group `g`.
     pub fn send_group(&mut self, g: usize, text: &str) -> Result<(), String> {
         self.send_group_with(g, text, None)
+            .map(|_| ())
+            .map_err(GroupScriptError::message)
+    }
+
+    pub fn send_group_text(&mut self, g: usize, text: &str) -> Result<u64, GroupScriptError> {
+        if !self.group_access(g) {
+            return Err(GroupScriptError::Refused(GROUP_ACCESS_LOST.into()));
+        }
+        self.send_group_with(g, text, None)
+    }
+
+    pub fn group_text_accepted(
+        &self,
+        group: &GroupId,
+        id: u64,
+    ) -> Result<Option<Instant>, GroupScriptError> {
+        use GroupScriptError::{Refused, State};
+        let g = self
+            .group_index(group)
+            .ok_or_else(|| State("group disappeared".into()))?;
+        if !self.group_access(g) {
+            return Err(Refused(GROUP_ACCESS_LOST.into()));
+        }
+        let message = self.data.groups[g]
+            .messages
+            .iter()
+            .find(|m| m.group_local && m.id == Some(id) && !m.deleted);
+        match message.map(|m| (&m.status, m.group_accepted_at)) {
+            Some((Status::Sent, Some(at))) => Ok(Some(at)),
+            Some((Status::Queued | Status::Sending(_), _)) => Ok(None),
+            Some((Status::Failed(why), _))
+                if matches!(why.as_str(), GROUP_SAVE_FAILED | GROUP_ENCRYPT_FAILED) =>
+            {
+                Err(State(why.clone()))
+            }
+            Some((Status::Failed(why), _)) => Err(Refused(why.clone())),
+            _ => Err(State(
+                "group message disappeared before confirmation".into(),
+            )),
+        }
+    }
+
+    /// Takes authenticated group texts once, committing the markers before handoff.
+    pub fn take_group_texts(
+        &mut self,
+        g: usize,
+        limit: usize,
+    ) -> Result<(Vec<Msg>, bool), GroupScriptError> {
+        if !self.group_access(g) {
+            return Err(GroupScriptError::Refused(GROUP_ACCESS_LOST.into()));
+        }
+        let at = now();
+        let mut taken = Vec::new();
+        let mut fresh = Vec::new();
+        let mut more = false;
+        for (i, m) in self.data.groups[g].messages.iter_mut().enumerate() {
+            if !m.group_unfetched {
+                continue;
+            }
+            let visible = !m.mine
+                && !m.deleted
+                && m.file.is_none()
+                && m.author.is_some()
+                && m.id.is_some()
+                && m.status == Status::Received
+                && m.expires_at.is_none_or(|expiry| expiry > at);
+            if visible && fresh.len() == limit {
+                more = true;
+                break;
+            }
+            m.group_unfetched = false;
+            taken.push(i);
+            if visible {
+                fresh.push(m.clone());
+            }
+        }
+        if !taken.is_empty() && !self.persist() {
+            for i in taken {
+                self.data.groups[g].messages[i].group_unfetched = true;
+            }
+            // A directory sync can fail after the atomic rename.
+            self.persist();
+            return Err(GroupScriptError::State(
+                "could not save group read markers".into(),
+            ));
+        }
+        Ok((fresh, more))
     }
 
     fn send_group_with(
@@ -329,15 +538,23 @@ impl Engine {
         g: usize,
         text: &str,
         reply_to: Option<Ref>,
-    ) -> Result<(), String> {
+    ) -> Result<u64, GroupScriptError> {
+        use GroupScriptError::{Refused, State};
         if text.len() > proto::MAX_TEXT_BYTES {
-            return Err("message too long".into());
+            return Err(Refused("message too long".into()));
         }
-        let group = self.data.groups.get(g).ok_or("no such group")?;
-        if group.left {
-            return Err("you are not in this group any more".into());
+        let group = self
+            .data
+            .groups
+            .get(g)
+            .ok_or_else(|| State("no such group".into()))?;
+        if !self.group_locally_joined(g) {
+            return Err(Refused(GROUP_ACCESS_LOST.into()));
         }
-        let id = getrandom::u64().map_err(|e| e.to_string())?;
+        let id = getrandom::u64().map_err(|e| State(e.to_string()))?;
+        if group.messages.iter().any(|m| m.mine && m.id == Some(id)) {
+            return Err(State("group message ID collision".into()));
+        }
         let at = now();
         let expires_in = group.timer();
         self.data.groups[g].messages.push(Msg {
@@ -349,19 +566,24 @@ impl Engine {
             file: None,
             id: Some(id),
             reply_to,
+            group_local: true,
             ..Default::default()
         });
-        self.persist();
+        if !self.persist() {
+            self.data.groups[g].messages.pop();
+            self.persist();
+            return Err(State(GROUP_SAVE_FAILED.into()));
+        }
         self.flush_group(g);
-        Ok(())
+        Ok(id)
     }
 
     /// A document of up to 1 MiB into group `g` (ADR-027 amendment): sent in
     /// chunks at the chat pace, one at a time.
     pub fn send_group_file(&mut self, g: usize, name: &str, bytes: Vec<u8>) -> Result<(), String> {
         let group = self.data.groups.get(g).ok_or("no such group")?;
-        if group.left {
-            return Err("you are not in this group any more".into());
+        if !self.group_locally_joined(g) {
+            return Err(GROUP_ACCESS_LOST.into());
         }
         let name = name.trim();
         proto::check_file_name(name).map_err(|_| "this file name cannot be sent")?;
@@ -411,7 +633,7 @@ impl Engine {
             let Some(m) = group.messages.iter().position(queued) else {
                 continue;
             };
-            if group.left || !self.group_link_up(g) {
+            if !self.group_access(g) || self.group_moving(g) || !self.group_link_up(g) {
                 continue;
             }
             let (gid, expires_in) = (group.id, group.timer());
@@ -448,7 +670,7 @@ impl Engine {
                         body: bytes,
                     },
                 };
-                self.group_send(g, frame);
+                self.group_send_ciphertext(g, frame);
                 if last {
                     let msg = &mut self.data.groups[g].messages[m];
                     msg.status = Status::Sending(client_id);
@@ -508,6 +730,8 @@ impl Engine {
     pub fn reply_group(&mut self, g: usize, m: usize, text: &str) -> Result<(), String> {
         let target = self.group_target(g, m)?;
         self.send_group_with(g, text, Some(target))
+            .map(|_| ())
+            .map_err(GroupScriptError::message)
     }
 
     /// Message `m` of group `g` as something to point at.
@@ -604,16 +828,21 @@ impl Engine {
             self.persist();
             return;
         }
+        if !self.group_access(g) || self.group_moving(g) || !self.group_link_up(g) {
+            return;
+        }
         if self.core().group_due(&gid, now()) {
-            self.rotate_group(g);
+            self.start_group_session(g);
+            self.share_key(g);
         }
         let expires_in = self.data.groups[g].timer();
         for m in 0..self.data.groups[g].messages.len() {
             let msg = &self.data.groups[g].messages[m];
             // Documents go chunk by chunk, at their own pace (`send_chunks`).
-            if msg.status != Status::Queued
+            if !msg.mine
+                || msg.status != Status::Queued
                 || msg.file.is_some()
-                || self.data.groups[g].send_id == [0; 16]
+                || msg.expires_at.is_some_and(|expiry| expiry <= now())
             {
                 continue;
             }
@@ -627,12 +856,19 @@ impl Engine {
             let sealed = self.core().group_encrypt(gid, body);
             let bytes = match sealed {
                 Ok(b) => b,
-                Err(e) => return self.note(format!("group: {e}")),
+                Err(e) => {
+                    self.note(format!("group: {e}"));
+                    self.data.groups[g].messages[m].status =
+                        Status::Failed(GROUP_ENCRYPT_FAILED.into());
+                    continue;
+                }
             };
             // The ratchet moved: saved before anything goes out (as `transmit`).
             let client_id = self.data.groups[g].next_client_id;
             self.data.groups[g].next_client_id += 1;
+            self.data.groups[g].messages[m].status = Status::Sending(client_id);
             if !self.persist() {
+                self.data.groups[g].messages[m].status = Status::Failed(GROUP_SAVE_FAILED.into());
                 return;
             }
             let frame = ClientFrame::Send {
@@ -644,8 +880,8 @@ impl Engine {
                     body: bytes,
                 },
             };
-            if self.group_send(g, frame) {
-                self.data.groups[g].messages[m].status = Status::Sending(client_id);
+            if !self.group_send_ciphertext(g, frame) {
+                self.data.groups[g].messages[m].status = Status::Queued;
             }
         }
         // Edits, deletes and reactions, in the order they were made.
@@ -667,8 +903,8 @@ impl Engine {
         self.links.get(&link).is_some_and(|l| l.connected) && group.send_id != [0; 16]
     }
 
-    /// A new Megolm session for group `g`, shared with every member again.
-    fn rotate_group(&mut self, g: usize) {
+    /// A new Megolm session for group `g`.
+    fn start_group_session(&mut self, g: usize) {
         let gid = self.data.groups[g].id;
         if self.core().group_start(gid, now()).is_err() {
             return;
@@ -677,7 +913,6 @@ impl Engine {
         group.shared.clear();
         // Everyone in the group now reads the new session from its start.
         group.since = group.devices().iter().map(|m| (m.ed25519, 0)).collect();
-        self.share_key(g);
     }
 
     /// Our key for member `who`: from the message they joined at, so they
@@ -698,6 +933,9 @@ impl Engine {
     /// they are our contact, else through their reader, with a key claimed
     /// from it (the answer comes as `ClaimedKey`).
     pub(super) fn share_key(&mut self, g: usize) {
+        if self.removed() || self.data.groups[g].left || self.group_moving(g) {
+            return;
+        }
         let me = self.me();
         let gid = self.data.groups[g].id;
         let members: Vec<RosterMember> = self.data.groups[g].devices();
@@ -763,20 +1001,35 @@ impl Engine {
 
     /// The link of group `g` is up: what the relay should know or do now.
     pub(super) fn group_connected(&mut self, g: usize) {
+        if self.removed() {
+            return;
+        }
         if self.data.groups[g].left {
             return self.flush_group(g);
         }
+        if self.data.groups[g].moving.is_some() {
+            if !self.persist() {
+                return self.retry_group_move_later(g);
+            }
+            let group = &self.data.groups[g];
+            if group.asking.is_empty() && group.moving.as_ref().is_some_and(|m| m.old.is_some()) {
+                return self.finish_move(g);
+            }
+        }
         let group = &self.data.groups[g];
-        match group.admin {
-            None if group.is_admin_to_be() => {
+        match (group.admin, group.moving.as_ref()) {
+            (_, Some(m)) if m.old.is_none() => {
                 self.group_send(g, ClientFrame::CreateGroup);
             }
-            Some((group_id, token)) => {
+            (None, None) if group.is_admin_to_be() => {
+                self.group_send(g, ClientFrame::CreateGroup);
+            }
+            (Some((group_id, token)), _) => {
                 for _ in 0..group.asking.len() {
                     self.group_send(g, ClientFrame::AddReader { group_id, token });
                 }
             }
-            None => {}
+            _ => {}
         }
         self.subscribe_group(g);
         self.share_key(g);
@@ -791,15 +1044,20 @@ impl Engine {
                 token,
             } => {
                 let group = &mut self.data.groups[g];
+                let creating = group.is_admin_to_be();
                 match group.moving.as_mut() {
                     // The new queue of a move; the old one goes once all moved.
-                    Some(m) if m.old.is_none() => m.old = group.admin.take(),
-                    _ if group.admin.is_some() => return,
-                    _ => {}
+                    Some(m) if m.old.is_none() && group.admin.is_some() => {
+                        m.old = group.admin.take();
+                    }
+                    None if creating => {}
+                    _ => return,
                 }
                 group.admin = Some((group_id, token));
                 group.send_id = send_id;
-                self.persist();
+                if !self.persist() && self.data.groups[g].moving.is_some() {
+                    return self.retry_group_move_later(g);
+                }
                 for _ in 0..self.data.groups[g].asking.len() {
                     self.group_send(g, ClientFrame::AddReader { group_id, token });
                 }
@@ -808,8 +1066,14 @@ impl Engine {
                 recv_id,
                 send_id,
                 token,
-                ..
+                group_id,
             } => {
+                let group = &self.data.groups[g];
+                if group.admin.is_none_or(|(id, _)| id != group_id)
+                    || group.moving.as_ref().is_some_and(|m| m.old.is_none())
+                {
+                    return;
+                }
                 let grant = ReaderGrant {
                     recv_id,
                     send_id,
@@ -836,7 +1100,7 @@ impl Engine {
                     self.persist();
                     self.flush_group(g);
                     // Our own linked devices join our new group (ADR-028).
-                    self.group_devices_changed(who);
+                    self.group_devices_changed(who, &[]);
                 } else {
                     self.data.groups[g].invited.push((who, grant.clone()));
                     self.persist();
@@ -914,6 +1178,9 @@ impl Engine {
                 );
             }
             ServerFrame::ClaimedKey { send_id, key } => {
+                if self.removed() || self.data.groups[g].left || self.group_moving(g) {
+                    return;
+                }
                 let Some(m) = self.data.groups[g]
                     .devices()
                     .into_iter()
@@ -944,7 +1211,7 @@ impl Engine {
                 }
                 let client_id = self.data.groups[g].next_client_id;
                 self.data.groups[g].next_client_id += 1;
-                if self.group_send(
+                if self.group_send_ciphertext(
                     g,
                     ClientFrame::Send {
                         client_id,
@@ -973,12 +1240,31 @@ impl Engine {
                 }
             }
             ServerFrame::Accepted { client_id } => {
+                let at = Instant::now();
                 for m in &mut self.data.groups[g].messages {
                     if m.status == Status::Sending(client_id) {
                         m.status = Status::Sent;
+                        m.group_accepted_at = Some(at);
                     }
                 }
                 self.persist();
+            }
+            ServerFrame::Error {
+                client_id: Some(client_id),
+                code,
+            } => {
+                for m in &mut self.data.groups[g].messages {
+                    if m.status == Status::Sending(client_id) {
+                        m.status = Status::Failed(why(code));
+                    }
+                }
+                self.persist();
+            }
+            ServerFrame::Error {
+                client_id: None,
+                code: ErrorCode::RateLimited | ErrorCode::Internal,
+            } if self.data.groups[g].moving.is_some() => {
+                self.retry_group_move_later(g);
             }
             // A member's reader has no key yet: try again shortly, as for a contact.
             ServerFrame::Error {
@@ -992,6 +1278,9 @@ impl Engine {
 
     /// One envelope from our reader; `true` once it is dealt with and saved.
     fn group_receive(&mut self, g: usize, envelope: &Envelope) -> bool {
+        if self.removed() || self.data.groups[g].left {
+            return true;
+        }
         let gid = self.data.groups[g].id;
         if envelope.olm_type == OLM_TYPE_MEGOLM {
             let got = self.core().group_decrypt(&gid, &envelope.body);
@@ -1059,7 +1348,7 @@ impl Engine {
 
     /// What a member wrote in group `g`.
     fn group_body(&mut self, g: usize, device: Ed25519Key, body: Body) {
-        if device == self.me() {
+        if device == self.me() || self.removed() || self.data.groups[g].left {
             return;
         }
         // ADR-028: a device speaks for its member; ours for us.
@@ -1087,6 +1376,13 @@ impl Engine {
             } => {
                 let at = now();
                 let group = &mut self.data.groups[g];
+                if group
+                    .messages
+                    .iter()
+                    .any(|m| m.id == Some(id) && (m.author == Some(sender) || (m.mine && mine)))
+                {
+                    return;
+                }
                 group.messages.push(Msg {
                     mine,
                     text,
@@ -1098,6 +1394,7 @@ impl Engine {
                     id: Some(id),
                     reply_to,
                     unfetched: !mine,
+                    group_unfetched: !mine,
                     ..Default::default()
                 });
                 if mine {
@@ -1121,13 +1418,13 @@ impl Engine {
                     self.happened.push(Happened::GroupAlert { group: id });
                 }
             }
-            Body::GroupRoster { roster } => self.take_roster(g, sender, roster),
+            Body::GroupRoster { roster } if device == sender => self.take_roster(g, sender, roster),
             Body::GroupDevices {
                 member,
                 list,
                 readers,
                 ..
-            } => self.take_member_devices(g, sender, member, list, readers),
+            } if device == sender => self.take_member_devices(g, sender, member, list, readers),
             // Edits and deletes reach only the sender's own messages.
             Body::Edit { id, text } => {
                 if let Some(m) = self.data.groups[g]
@@ -1162,11 +1459,13 @@ impl Engine {
                     group.set_reaction(target.id, sender, reaction);
                 }
             }
-            Body::GroupLeave { .. } => {
+            Body::GroupLeave { group } if group == self.data.groups[g].id => {
                 let name = self.member_name(g, &sender);
                 self.group_system(g, format!("{name} left the group"));
                 if self.data.groups[g].is_admin() {
                     let _ = self.remove_from_group(g, &sender);
+                } else if Some(sender) != self.data.groups[g].roster.as_ref().map(|r| r.admin) {
+                    self.wait_for_group_move(g);
                 }
             }
             _ => {}
@@ -1185,11 +1484,25 @@ impl Engine {
         {
             return;
         }
+        let had_access = self.group_access(g);
+        let losing_member = current.is_some_and(|r| {
+            r.members
+                .iter()
+                .any(|old| !roster.members.iter().any(|new| new.ed25519 == old.ed25519))
+        });
         let me = self.me();
         self.data.groups[g].set_roster(roster, &me);
+        if had_access && !self.group_access(g) {
+            self.lose_group_access(g);
+            return;
+        }
+        if losing_member {
+            self.wait_for_group_move(g);
+        }
         self.know_members(g);
         self.replay_pending_keys(g);
         self.share_key(g);
+        self.flush_group(g);
     }
 
     /// Keys that came before the roster or device list that names their
@@ -1244,9 +1557,7 @@ impl Engine {
     /// Admin: the group moves to a new queue without `gone`, members or
     /// devices; every device that stays gets a reader of the new one.
     fn start_move(&mut self, g: usize, gone: Vec<Ed25519Key>) {
-        // shortcut: a reader per device and one queue, all at once; past the
-        // relay's queue budget (20 an hour per IP) the move waits stuck, as
-        // a large member removal already did. Retry refused frames if seen.
+        self.stop_group_writes(g, false);
         let stay: Vec<Ed25519Key> = self.data.groups[g]
             .devices()
             .iter()
@@ -1259,12 +1570,22 @@ impl Engine {
             Some(m) => {
                 m.removed.extend(&gone);
                 m.stay.retain(|k| !gone.contains(k));
-                group.asking.retain(|k| !gone.contains(k));
+                m.reinvite.retain(|k| !gone.contains(k));
             }
             None => {
                 // Invites not answered yet point at the old queue: they are
                 // made again for the new one.
-                let reinvite: Vec<Ed25519Key> = group.invited.drain(..).map(|(k, _)| k).collect();
+                let mut reinvite: Vec<Ed25519Key> = group
+                    .invited
+                    .drain(..)
+                    .map(|(k, _)| k)
+                    .filter(|k| !gone.contains(k))
+                    .collect();
+                for k in &group.asking {
+                    if !gone.contains(k) && !stay.contains(k) && !reinvite.contains(k) {
+                        reinvite.push(*k);
+                    }
+                }
                 let mut asking = stay.clone();
                 asking.extend(&reinvite);
                 group.moving = Some(GroupMoving {
@@ -1275,7 +1596,7 @@ impl Engine {
                     reinvite,
                 });
                 group.asking = asking;
-                self.group_send(g, ClientFrame::CreateGroup);
+                self.group_connected(g);
             }
         }
     }
@@ -1296,7 +1617,7 @@ impl Engine {
     /// the removed, delete the old queue, start a new session.
     fn finish_move(&mut self, g: usize) {
         let me = self.me();
-        let Some(moving) = self.data.groups[g].moving.take() else {
+        let Some(moving) = self.data.groups[g].moving.clone() else {
             return;
         };
         let Some(old_roster) = self.data.groups[g].roster.clone() else {
@@ -1325,6 +1646,10 @@ impl Engine {
         roster.no += 1;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         let group = &mut self.data.groups[g];
+        group.waiting_for_move = false;
+        group
+            .outbox
+            .retain(|body| !matches!(body, Body::GroupRoster { .. } | Body::GroupDevices { .. }));
         group.set_roster(roster.clone(), &me);
         if let Some(mine) = reader_of(&me) {
             group.reader = Some(mine);
@@ -1335,11 +1660,14 @@ impl Engine {
                 .devices
                 .iter()
                 .filter_map(|d| reader_of(&d.ed25519).map(|r| (d.ed25519, r.send_id)))
-                .filter(|(k, _)| *k != list.identity)
+                .filter(|(k, _)| *k != list.identity && !moving.removed.contains(k))
                 .collect();
         }
         let send_id = group.send_id;
-        self.persist();
+        self.reset_group_members(g, &moving.removed);
+        if !self.persist() {
+            return self.retry_group_move_later(g);
+        }
         for (who, grant) in &moving.grants {
             if *who == me || moving.removed.contains(who) || moving.reinvite.contains(who) {
                 continue;
@@ -1355,8 +1683,9 @@ impl Engine {
             let Some(grant) = reader_of(who) else {
                 continue;
             };
-            self.data.groups[g].invited.push((*who, grant.clone()));
-            let group = &self.data.groups[g];
+            let group = &mut self.data.groups[g];
+            group.invited.retain(|(k, _)| k != who);
+            group.invited.push((*who, grant.clone()));
             let body = Body::GroupInvite {
                 roster: roster.clone(),
                 relay_url: group.relay_url.clone(),
@@ -1369,21 +1698,40 @@ impl Engine {
         let gid = self.data.groups[g].id;
         for who in &moving.removed {
             self.group_tell(who, Body::GroupLeave { group: gid });
+            if let (Some((group_id, token)), Some(grant)) =
+                (self.data.groups[g].admin, reader_of(who))
+            {
+                self.group_send(
+                    g,
+                    ClientFrame::RemoveReader {
+                        group_id,
+                        token,
+                        recv_id: grant.recv_id,
+                    },
+                );
+            }
         }
         if let Some((group_id, token)) = moving.old {
             self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
         }
+        self.data.groups[g].moving = None;
+        if !self.persist() {
+            self.data.groups[g].moving = Some(moving);
+            return self.retry_group_move_later(g);
+        }
+        self.group_move_retries.remove(&gid);
         self.subscribe_group(g);
-        self.after_members_left(g, &moving.removed);
+        self.share_key(g);
         let members: Vec<Ed25519Key> = self.data.groups[g]
             .members()
             .iter()
             .map(|m| m.ed25519)
             .collect();
         for who in members {
-            self.group_devices_changed(who);
+            self.group_devices_changed(who, &[]);
         }
         self.resend_devices(g);
+        self.flush_group(g);
     }
 
     /// Admin: every member's device list again, for those who joined or
@@ -1407,6 +1755,12 @@ impl Engine {
     /// Members gone from the roster: their sessions are forgotten and ours
     /// starts again, so they read nothing more.
     fn after_members_left(&mut self, g: usize, gone: &[Ed25519Key]) {
+        self.reset_group_members(g, gone);
+        self.share_key(g);
+        self.persist();
+    }
+
+    fn reset_group_members(&mut self, g: usize, gone: &[Ed25519Key]) {
         let gid = self.data.groups[g].id;
         {
             let mut core = self.core();
@@ -1418,8 +1772,7 @@ impl Engine {
         group.since.retain(|(k, _)| !gone.contains(k));
         group.shared.retain(|k| !gone.contains(k));
         group.readers.retain(|(k, _)| !gone.contains(k));
-        self.rotate_group(g);
-        self.persist();
+        self.start_group_session(g);
     }
 
     /// What a member is called in group `g`: their roster nickname.
@@ -1481,11 +1834,19 @@ impl Engine {
             return Ok(());
         }
         let gid = group.id;
-        self.send_group_body(g, Body::GroupLeave { group: gid });
+        self.stop_group_writes(g, true);
         self.data.groups[g].left = true;
+        self.send_group_body(g, Body::GroupLeave { group: gid });
         // The keys go once the goodbye is out (`flush_group`).
         self.flush_group(g);
         Ok(())
+    }
+
+    pub(super) fn lose_group_access(&mut self, g: usize) {
+        self.stop_group_writes(g, true);
+        let group = &mut self.data.groups[g];
+        group.left = true;
+        self.core().group_forget(&self.data.groups[g].id);
     }
 
     /// The admin puts `who` on the roster, signs it and tells the group.
@@ -1606,20 +1967,33 @@ impl Engine {
 
     /// Admin: `who`'s device list changed. New devices get readers and
     /// invites; devices gone from it make the group move without them.
-    pub(super) fn group_devices_changed(&mut self, who: Ed25519Key) {
+    pub(super) fn group_devices_changed(&mut self, who: Ed25519Key, revoked: &[Ed25519Key]) {
         let Some(list) = self.device_list_of(&who) else {
             return;
         };
         for g in 0..self.data.groups.len() {
             let group = &self.data.groups[g];
-            if !group.is_admin() || group.left || !group.members().iter().any(|m| m.ed25519 == who)
+            if group.left {
+                continue;
+            }
+            if group
+                .member_devices
+                .iter()
+                .any(|(m, old, _)| *m == who && old.no > list.no)
             {
                 continue;
             }
+            let member = group.members().iter().any(|m| m.ed25519 == who);
+            let pending = |key: &Ed25519Key| {
+                group.asking.contains(key)
+                    || group.invited.iter().any(|(k, _)| k == key)
+                    || group
+                        .moving
+                        .as_ref()
+                        .is_some_and(|m| m.grants.iter().any(|(k, _)| k == key))
+            };
             // A move under way: new devices wait for it (`finish_move` asks again).
-            if !self.devices_welcome(g) || group.moving.is_some() {
-                continue;
-            }
+            let welcome = group.is_admin() && member && self.devices_welcome(g);
             let listed = |k: &Ed25519Key| list.devices.iter().any(|d| d.ed25519 == *k);
             let had: Vec<Ed25519Key> = group
                 .member_devices
@@ -1627,7 +2001,27 @@ impl Engine {
                 .filter(|(m, ..)| *m == who)
                 .flat_map(|(_, _, r)| r.iter().map(|(k, _)| *k))
                 .collect();
-            let gone: Vec<Ed25519Key> = had.iter().filter(|k| !listed(k)).copied().collect();
+            let gone: BTreeSet<Ed25519Key> = had
+                .iter()
+                .filter(|k| !listed(k))
+                .copied()
+                .chain(revoked.iter().copied().filter(|k| pending(k)))
+                .collect();
+            if !group.is_admin() {
+                if !gone.is_empty() {
+                    if let Some((_, known, readers)) = self.data.groups[g]
+                        .member_devices
+                        .iter_mut()
+                        .find(|(m, ..)| *m == who)
+                    {
+                        *known = list.clone();
+                        readers.retain(|(k, _)| listed(k));
+                    }
+                    self.wait_for_group_move(g);
+                    self.after_members_left(g, &gone.into_iter().collect::<Vec<_>>());
+                }
+                continue;
+            }
             let new: Vec<Ed25519Key> = list
                 .devices
                 .iter()
@@ -1646,9 +2040,9 @@ impl Engine {
                 entry.2.retain(|(k, _)| listed(k));
             }
             if !gone.is_empty() {
-                self.start_move(g, gone);
+                self.start_move(g, gone.into_iter().collect());
             }
-            if new.is_empty() {
+            if !welcome || new.is_empty() || self.data.groups[g].moving.is_some() {
                 continue;
             }
             let group = &mut self.data.groups[g];
@@ -1688,7 +2082,19 @@ impl Engine {
             || taken
             || list.identity != member
             || termchat_core::verify_devices(&list).is_err()
+            || group
+                .member_devices
+                .iter()
+                .any(|(who, previous, _)| *who == member && previous.no > list.no)
         {
+            return;
+        }
+        let me = self.me();
+        if !self.is_primary()
+            && member == self.identity_key()
+            && !list.devices.iter().any(|d| d.ed25519 == me)
+        {
+            self.lose_group_access(g);
             return;
         }
         let group = &mut self.data.groups[g];
@@ -1697,10 +2103,16 @@ impl Engine {
             .iter()
             .filter(|(m, ..)| *m == member)
             .flat_map(|(_, _, r)| r.iter().map(|(k, _)| *k))
-            .filter(|k| !readers.iter().any(|(x, _)| x == k))
+            .filter(|k| {
+                !readers.iter().any(|(x, _)| x == k)
+                    || !list.devices.iter().any(|d| &d.ed25519 == k)
+            })
             .collect();
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
+        if !gone.is_empty() {
+            self.wait_for_group_move(g);
+        }
         self.know_members(g);
         self.replay_pending_keys(g);
         if gone.is_empty() {
@@ -1712,7 +2124,11 @@ impl Engine {
     }
 
     fn send_group_body(&mut self, g: usize, body: Body) {
-        if !self.group_link_up(g) {
+        let goodbye = matches!(body, Body::GroupLeave { .. });
+        if !goodbye && (self.removed() || self.data.groups[g].left) {
+            return;
+        }
+        if !self.group_link_up(g) || (!goodbye && self.group_moving(g)) {
             self.data.groups[g].outbox.push(body);
             self.persist();
             return;
@@ -1726,7 +2142,7 @@ impl Engine {
         if !self.persist() {
             return;
         }
-        self.group_send(
+        self.group_send_ciphertext(
             g,
             ClientFrame::Send {
                 client_id,
@@ -1830,9 +2246,11 @@ impl Engine {
                     return;
                 };
                 let current = self.data.groups[g].roster.clone();
-                let ok = current
-                    .as_ref()
-                    .is_some_and(|r| r.admin == from && roster.admin == from && roster.no > r.no)
+                let group = &self.data.groups[g];
+                let ok = send_id != group.send_id
+                    && current.as_ref().is_some_and(|r| {
+                        r.admin == from && roster.admin == from && roster.no > r.no
+                    })
                     && verify_roster(&roster).is_ok();
                 if !ok {
                     return;
@@ -1844,13 +2262,26 @@ impl Engine {
                     .map(|m| m.ed25519)
                     .filter(|k| !roster.members.iter().any(|m| m.ed25519 == *k))
                     .collect();
+                let had_access = self.group_access(g);
+                self.stop_group_writes(g, false);
                 let me = self.me();
                 let group = &mut self.data.groups[g];
                 group.set_roster(roster, &me);
                 group.send_id = send_id;
                 group.reader = Some(reader.clone());
+                group.waiting_for_move = false;
+                group.early.clear();
+                for (_, _, readers) in &mut group.member_devices {
+                    // Grants on the old queue do not identify devices on the new one.
+                    readers.clear();
+                }
+                if had_access && !self.group_access(g) {
+                    self.lose_group_access(g);
+                    return self.persist_unit();
+                }
                 self.subscribe_group(g);
                 self.after_members_left(g, &gone);
+                self.flush_group(g);
             }
             // From the admin, over our chat: we were removed.
             Body::GroupLeave { group } => {
@@ -1870,8 +2301,7 @@ impl Engine {
                     return;
                 }
                 self.group_system(g, "the admin removed you from the group".to_string());
-                self.data.groups[g].left = true;
-                self.core().group_forget(&group);
+                self.lose_group_access(g);
             }
             _ => {}
         }

@@ -17,6 +17,7 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `invite` | prints a one-time invite |
 | `add INVITE` | asks a contact; they accept in their app |
 | `contacts` | name, fingerprint and state, one contact per line |
+| `groups [--json]` | group ID and name, one per line |
 | `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
 | `send-file CONTACT PATH` | a document of up to 1 MiB |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
@@ -32,6 +33,26 @@ Commands that open the identity take `--password-file PATH` or `--password-stdin
 - Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
 
 `send` and `send-file` wait for the relay to accept the message within `--timeout`. They return `0` on delivery to the relay, `1` for a password or state error, `2` for invalid arguments, `3` for a missing or ambiguous contact, `4` if the message is still queued, and `5` if it cannot be sent.
+
+## Private groups
+
+Create groups, accept invitations and manage membership in the app. A server can participate with its own identity. Use `groups` to find its groups and copy an ID when names are duplicated or may change.
+
+```sh
+termchat groups --json
+printf '%s\n' 'Backup finished' | termchat send --group 'Operations'
+termchat recv --group-id 2b14b109d9b97317785a7bdb7075ae53 --follow --json
+```
+
+Use the exact displayed name with `--group` or the full 32-digit hexadecimal ID with `--group-id`. These commands use the daemon for the same `TERMCHAT_HOME` when it is running. Otherwise the CLI opens the identity itself.
+
+Group `send` takes one text argument or reads stdin. It returns `0` when the relay accepts that text, `1` for an internal or state error, `2` for invalid arguments, `3` for a missing or ambiguous group, `4` on timeout and `5` for a final refusal or loss of access. A queued text may arrive after a timeout. An in-flight send may reach the relay before a membership change reaches the sender.
+
+Group `recv` takes either `--wait SECS` or `--follow`. An empty timed read exits with `0`. Loss of access ends a wait with `5`. Plain `recv` reads direct chats. Group reads reject `--from` and `--save-dir`.
+
+JSON lists contain `id` and `name`. JSON message records contain `group_id`, `group`, `from`, `fingerprint`, `at` (Unix seconds when received), `id`, `text` and `reply_to` when present. Both message IDs are strings. Group reads include incoming texts and replies received after the upgrade. A text edited before handoff appears in its current form. The app shows earlier history, documents and subsequent changes. Own, deleted and expired texts are excluded.
+
+The daemon hands each batch to the readers already waiting on that group. Each reader can buffer up to 64 records and exits with code `1` on overflow. The read marker is saved before output, so a broken pipe or crash can interrupt output after a text has been taken.
 
 ## Setting up a server
 
@@ -89,7 +110,7 @@ One identity runs one command at a time: a second one at the same moment ends wi
 
 ## A daemon, for a bot that answers
 
-Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it: no password, an answer within a second, and several at a time. When no daemon runs, they work as before.
+Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time. When no daemon runs, they work as before.
 
 ```ini
 # /etc/systemd/system/termchat-daemon.service

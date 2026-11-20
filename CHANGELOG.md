@@ -3,6 +3,13 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.20.0
+
+- Scripts can list private groups, send text, and receive new texts and
+  replies by group name or ID, directly or through the daemon (ADR-033).
+- Group queue moves stop old-session sends and hold new text until the
+  new queue and encryption session are ready.
+
 ## 0.19.0
 
 - `termchat ask` lets scripts wait for an approval from a verified contact
