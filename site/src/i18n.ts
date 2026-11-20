@@ -15,7 +15,7 @@ export const commands = {
 };
 
 export type Lang = "en" | "ru";
-type Item = [title: string, text: string];
+type Item = [title: string, text: string, link?: [label: string, href: string]];
 
 const en = {
   lang: "en",
@@ -64,7 +64,7 @@ const en = {
     ]],
     ["Where you work", [
       ["Terminal, desktop and Android", "The same engine in a terminal, a window on macOS, Linux and Windows, and an app for your phone without Google services. Mouse, themes and UnifiedPush wake-ups if you want them."],
-      ["Scripts and servers", "Send and read encrypted messages from a shell, cron or CI. Use termchat ask to wait for a verified contact's approval and termchat watch to hear when a server goes quiet."],
+      ["Scripts and servers", "Send and read encrypted messages from shell, cron or CI. With termchat ask, a deploy can wait for a verified contact to approve it in chat on their main device, such as their phone. Use termchat watch to hear when a server goes quiet.", ["Set up chat approvals", "/docs/scripts/#ask-for-approval-before-a-script-step"]],
       ["Answers, edits and reactions", "Answer a particular message, edit or delete your own for both of you, react with one of seven pixel sprites. All inside the encryption; the relay sees an ordinary message."],
       ["Documents, offline, searchable", "Files up to 1 MiB in chats and groups, never opened by the app; on the desktop pick one in the system dialog or drop it on the window. Messages wait on the relay for up to 14 days. Search runs on your device only."],
     ]],
@@ -211,7 +211,7 @@ const ru: typeof en = {
     ]],
     ["Там, где вы работаете", [
       ["Терминал, компьютер и Android", "Один движок в терминале, в окне на macOS, Linux и Windows и в приложении для телефона без сервисов Google. Мышь, темы и пробуждения через UnifiedPush — по желанию."],
-      ["Скрипты и серверы", "Отправляйте и читайте зашифрованные сообщения из shell, cron или CI. С termchat ask скрипт ждёт подтверждения от проверенного контакта, а termchat watch сообщает, когда сервер замолчит."],
+      ["Скрипты и серверы", "Отправляйте и читайте зашифрованные сообщения из shell, cron или CI. С termchat ask выкладка может ждать, пока проверенный контакт не подтвердит её в чате на основном устройстве, например на телефоне. termchat watch сообщает, если сервер замолчит.", ["Настроить подтверждение в чате", "/ru/docs/scripts/#запросить-подтверждение-перед-шагом-скрипта"]],
       ["Ответы, правка и реакции", "Ответ на конкретное сообщение, правка и удаление своих у обоих, реакция одним из семи пиксельных спрайтов. Всё внутри шифрования; relay видит обычное сообщение."],
       ["Документы, офлайн, поиск", "Файлы до 1 МиБ в чатах и группах, приложение их не открывает; на компьютере выберите файл в системном окне или перетащите в окно. Сообщения ждут на relay до 14 дней. Поиск работает только на вашем устройстве."],
     ]],

@@ -107,8 +107,11 @@ const ld = {
           <div class="feature-group">
             <h3 class="group-title">{group}</h3>
             <div class="cards">
-              {items.map(([title, text]) => (
-                <article class="card"><h3>{title}</h3><p>{text}</p></article>
+              {items.map(([title, text, link]) => (
+                <article class="card">
+                  <h3>{title}</h3>
+                  <p>{text}{link && <> <a href={url(link[1])}>{link[0]}</a></>}</p>
+                </article>
               ))}
             </div>
           </div>
