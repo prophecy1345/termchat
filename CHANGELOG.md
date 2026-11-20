@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.19.0
+
+- `termchat ask` lets scripts wait for an approval from a verified contact
+  using an encrypted direct message (ADR-032, Linux and macOS).
+
 ## 0.18.0
 
 - `termchat watch` sends an encrypted heartbeat from a server to a second

@@ -20,6 +20,7 @@ use super::{
     status_of,
 };
 
+mod approval;
 mod watch;
 
 pub const SOCKET: &str = "daemon.sock";
@@ -86,8 +87,10 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
     let open = Arc::new(AtomicUsize::new(0));
     let (mut pending, mut readers) = (Vec::new(), Vec::new());
     let mut watches = Vec::new();
+    let mut approvals = Vec::new();
     eprintln!("termchat: daemon ready on {}", path.display());
     loop {
+        let mut answer = None;
         tokio::select! {
             Ok((stream, _)) = listener.accept() => {
                 // Only our own user; anyone else is closed without a word.
@@ -105,20 +108,28 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
             Some((request, reply)) = rx.recv() => {
                 if watch::is_request(&request) {
                     watch::register(e, &request, reply, &mut watches);
+                } else if request["cmd"] == "ask" {
+                    approval::register(e, &request, reply, &mut approvals);
                 } else {
                     handle(e, request, reply, &mut pending, &mut readers);
                 }
             }
-            Some(ev) = e.events.recv() => e.on_relay(ev),
+            Some(ev) = e.events.recv() => {
+                e.on_relay_observing_direct_text(ev, &mut |key, text| {
+                    answer = approval::matching_reply(&approvals, key, text);
+                });
+            }
             () = tokio::time::sleep(Duration::from_millis(200)) => {}
             _ = term.recv() => break,
             _ = int.recv() => break,
         }
+        approval::progress(e, &mut approvals, answer);
         e.tick();
         watch::progress(e, &mut watches);
         e.happened.clear();
         progress(e, &mut pending, &mut readers);
     }
+    drop(approvals);
     // No new commands; what they sent must still reach the relay, as at the
     // end of a one-shot command. systemd waits 90 s before it kills.
     let _ = std::fs::remove_file(&path);
@@ -151,7 +162,7 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
         }
         let (reply, mut answers) = mpsc::unbounded_channel();
         let request = serde_json::from_str(&line).unwrap_or(Value::Null);
-        let long_watch = watch::is_request(&request);
+        let dedicated = watch::is_request(&request) || request["cmd"] == "ask";
         if jobs.send((request, reply)).await.is_err() {
             return;
         }
@@ -173,7 +184,7 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
                 }
                 more = read.fill_buf(), if watch => match more {
                     Ok([]) | Err(_) => return,
-                    Ok(_) if long_watch => return,
+                    Ok(_) if dedicated => return,
                     Ok(_) => watch = false,
                 },
             }
@@ -376,15 +387,35 @@ pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
 
 async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
     let request = request(a)?;
+    let approval = a.command == "ask";
+    if approval
+        && !stream
+            .peer_cred()
+            .is_ok_and(|cred| cred.uid() == rustix::process::geteuid().as_raw())
+    {
+        return fail(6, "the daemon socket belongs to another user");
+    }
     let (read, mut write) = stream.into_split();
     // Closed before any answer: the daemon turned us away (ADR-029).
     const REFUSED: &str = "the daemon for this identity closed the connection before \
         answering: it lets in only its own user and at most 16 commands at once, or it stopped";
-    let refused = |_| Fail(1, REFUSED.into());
+    let closed = || Fail(if approval { 6 } else { 1 }, REFUSED.into());
     write
         .write_all(format!("{request}\n").as_bytes())
         .await
-        .map_err(refused)?;
+        .map_err(|_| closed())?;
+    if approval {
+        let mut line = String::new();
+        BufReader::new(read)
+            .take(1024)
+            .read_line(&mut line)
+            .await
+            .map_err(|_| closed())?;
+        if !line.ends_with('\n') {
+            return Err(closed());
+        }
+        return approval::result(&line);
+    }
     let mut lines = BufReader::new(read).lines();
     let mut answered = false;
     loop {
@@ -474,6 +505,9 @@ fn request(a: &Args) -> Result<Value, Fail> {
         ("watch", [role, peer]) if role == "monitor" => {
             json!({ "cmd": "watch_monitor", "peer": peer, "owner": a.notify, "seconds": a.after })
         }
+        ("ask", [to, text]) => json!({
+            "cmd": "ask", "to": to, "text": text, "timeout": a.timeout.unwrap_or(600)
+        }),
         _ => return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command)),
     })
 }

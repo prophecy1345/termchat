@@ -82,7 +82,7 @@ pub(super) fn register(
                 .ok_or_else(|| Fail(2, "watch needs a contact".into()))?;
             let i = e.find(name).map_err(|why| Fail(3, why))?;
             let key = e.data.contacts[i].key;
-            e.watch_contact(&key).map_err(|why| Fail(5, why))?;
+            e.verified_contact(&key).map_err(|why| Fail(5, why))?;
             Ok(key)
         };
         let peer = contact("peer")?;
@@ -160,7 +160,7 @@ impl Watch {
         now: Instant,
         heartbeat: Option<(Ed25519Key, u64)>,
     ) -> Result<(), String> {
-        let peer = e.watch_contact(&self.peer)?;
+        let peer = e.verified_contact(&self.peer)?;
         match &mut self.task {
             Task::Send { every, next } => {
                 if now >= *next {
@@ -175,7 +175,7 @@ impl Watch {
                 deadline,
                 pending,
             } => {
-                let owner = e.watch_contact(owner)?;
+                let owner = e.verified_contact(owner)?;
                 pending.retain(|&(mark, until)| match status_of(e, owner, mark) {
                     Some(Status::Sent) => false,
                     Some(Status::Failed(why)) => {

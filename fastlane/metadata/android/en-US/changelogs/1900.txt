@@ -1,0 +1,1 @@
+Scripts can use the new termchat ask command on Linux and macOS to request approval from a verified contact. You can reply in your usual chat on your primary device.

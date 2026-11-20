@@ -10,6 +10,7 @@ use termchat_relay::{Config, Limits};
 use tokio::net::TcpListener;
 
 const PASSWORD: &str = "correct horse battery staple violin";
+const GROUP_APPROVAL: &str = "yes 0123456789abcdef";
 
 async fn start_relay() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -65,7 +66,9 @@ async fn pump(e: &mut [Box<Engine>; 3], done: impl Fn(&[Box<Engine>; 3]) -> bool
         }
         let [a, b, c] = e;
         tokio::select! {
-            Some(ev) = a.events.recv() => a.on_relay(ev),
+            Some(ev) = a.events.recv() => a.on_relay_observing_direct_text(ev, &mut |_, text| {
+                assert_ne!(text, GROUP_APPROVAL, "group messages cannot be direct approvals");
+            }),
             Some(ev) = b.events.recv() => b.on_relay(ev),
             Some(ev) = c.events.recv() => c.on_relay(ev),
             () = tokio::time::sleep(Duration::from_millis(50)) => {}
@@ -159,15 +162,15 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
     assert_eq!(e[1].data.groups[0].name(), "weekend");
 
     e[0].send_group(0, "hi both").unwrap();
-    e[1].send_group(0, "hi from bob").unwrap();
+    e[1].send_group(0, GROUP_APPROVAL).unwrap();
     e[2].send_group(0, "hi from carol").unwrap();
     pump(&mut e, |e| {
-        said(&e[0], 0, "hi from bob")
+        said(&e[0], 0, GROUP_APPROVAL)
             && said(&e[0], 0, "hi from carol")
             && said(&e[1], 0, "hi both")
             && said(&e[1], 0, "hi from carol")
             && said(&e[2], 0, "hi both")
-            && said(&e[2], 0, "hi from bob")
+            && said(&e[2], 0, GROUP_APPROVAL)
     })
     .await;
     // ADR-030: nothing withheld, so no gap shows.
@@ -182,7 +185,7 @@ async fn three_people_talk_in_a_group_and_strangers_read_each_other() {
         at_bob
             .iter()
             .filter(|m| m.mine)
-            .all(|m| m.text == "hi from bob")
+            .all(|m| m.text == GROUP_APPROVAL)
     );
 
     // Answers, reactions, edits and deletes, as in a chat; a member changes

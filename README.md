@@ -93,6 +93,9 @@ same guide.
 Run `termchat watch` on two hosts to get a private message when a server
 goes quiet. [Set up server monitoring](docs/guide/scripts.md#get-a-message-when-a-server-goes-quiet)
 
+Use `termchat ask` to pause a script or CI job for approval from a verified
+contact. [Set up script approvals](docs/guide/scripts.md#ask-for-approval-before-a-script-step)
+
 ## Public relay
 
 | | |

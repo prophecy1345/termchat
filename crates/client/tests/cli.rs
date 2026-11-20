@@ -62,7 +62,7 @@ async fn termchat(phone: &mut Engine, home: &Path, args: &[&str]) -> Output {
     }
 }
 
-async fn pump(phone: &mut Engine, done: impl Fn(&Engine) -> bool) {
+async fn pump(phone: &mut Engine, mut done: impl FnMut(&Engine) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !done(phone) {
         assert!(Instant::now() < deadline, "timed out: {:?}", phone.happened);
@@ -71,6 +71,260 @@ async fn pump(phone: &mut Engine, done: impl Fn(&Engine) -> bool) {
             () = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
         phone.tick();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn ask_accepts_only_the_current_reply_from_the_verified_contact() {
+    use std::io::{BufRead, BufReader, Read};
+
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    impl Child {
+        async fn result(&mut self, phone: &mut Engine) -> (Option<i32>, String, String) {
+            pump(phone, |_| self.0.try_wait().unwrap().is_some()).await;
+            let code = self.0.wait().unwrap().code();
+            let (mut out, mut err) = (String::new(), String::new());
+            self.0
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_string(&mut out)
+                .unwrap();
+            self.0
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut err)
+                .unwrap();
+            (code, out, err)
+        }
+    }
+
+    async fn question(phone: &mut Engine, i: usize, topic: &str) -> (usize, String) {
+        let prefix = format!("{topic}\n\n");
+        let find = |e: &Engine| {
+            e.data.contacts[i]
+                .messages
+                .iter()
+                .position(|m| !m.mine && m.text.starts_with(&prefix))
+        };
+        pump(phone, |e| find(e).is_some()).await;
+        let m = find(phone).unwrap();
+        let text = &phone.data.contacts[i].messages[m].text;
+        let (_, yes) = text
+            .lines()
+            .find_map(|l| l.split_once("To approve, send: "))
+            .unwrap();
+        let code = yes.strip_prefix("yes ").unwrap();
+        assert_eq!(code.len(), 16);
+        assert!(text.ends_with(&format!("To decline, send: no {code}")));
+        (m, code.to_owned())
+    }
+
+    let url = start_relay().await;
+    let dir = tmp("ask");
+    let pw = secret(&dir, PASSWORD, 0o600);
+    let engine = |name| {
+        Engine::setup(
+            &dir.join(name).join("state"),
+            &Setup {
+                relay_url: &url,
+                onion_url: None,
+                tor: false,
+                nickname: name,
+                password: PASSWORD,
+            },
+        )
+        .unwrap()
+    };
+    let (mut box_, mut alice, mut other) = (engine("box"), engine("alice"), engine("other"));
+    pair(&mut box_, &mut alice).await;
+    pair(&mut box_, &mut other).await;
+    let alice_chat = alice.index(&box_.me()).unwrap();
+    let other_chat = other.index(&box_.me()).unwrap();
+    drop(box_);
+    let home = dir.join("box");
+    let start = |args: &[&str]| {
+        Child(
+            Command::new(env!("CARGO_BIN_EXE_termchat"))
+                .env("TERMCHAT_HOME", &home)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let daemon_args = ["daemon", "--password-file", pw.to_str().unwrap()];
+    let ask = |topic, timeout| start(&["ask", "alice", topic, "--timeout", timeout]);
+    assert_eq!(
+        text(&termchat(&mut alice, &home, &["ask", "alice", "Hi"]).await).0,
+        Some(6)
+    );
+    for timeout in [
+        "0",
+        "0m",
+        "-1",
+        "+1",
+        "1.2m",
+        "18446744073709551615",
+        "18446744073709551615m",
+    ] {
+        let result = termchat(
+            &mut alice,
+            &home,
+            &["ask", "alice", "Hi", "--timeout", timeout],
+        )
+        .await;
+        assert_eq!(result.status.code(), Some(2), "{timeout}");
+    }
+    let private = "--private question";
+    let result = termchat(&mut alice, &home, &["ask", "alice", private]).await;
+    assert_eq!(result.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&result.stderr).contains(private));
+
+    let mut daemon = start(&daemon_args);
+    pump(&mut alice, |_| home.join("daemon.sock").exists()).await;
+    let mut follower = start(&["recv", "--follow", "--json"]);
+    let output = BufReader::new(follower.0.stdout.take().unwrap());
+    let (seen, mut messages) = tokio::sync::mpsc::unbounded_channel();
+    let read = tokio::task::spawn_blocking(move || {
+        for line in output.lines().map_while(Result::ok) {
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if let Some(text) = value["text"].as_str()
+                && seen.send(text.to_owned()).is_err()
+            {
+                break;
+            }
+        }
+    });
+    let mut first = start(&[
+        "ask",
+        "alice",
+        "--timeout",
+        "10m",
+        "--",
+        "--Deploy build 42?",
+    ]);
+    let (m, code) = question(&mut alice, alice_chat, "--Deploy build 42?").await;
+    let yes = format!("yes {code}");
+    let malformed = format!("{yes}\n");
+    assert_eq!(
+        text(&termchat(&mut alice, &home, &["ask", "missing", "Hi"]).await).0,
+        Some(3)
+    );
+
+    other.send(other_chat, &yes).unwrap();
+    pump(&mut other, Engine::all_answered).await;
+    alice.send(alice_chat, &malformed).unwrap();
+    pump(&mut alice, Engine::all_answered).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let (mut wrong_contact, mut wrong_text) = (false, false);
+        while !(wrong_contact && wrong_text) {
+            let reply = messages.recv().await.unwrap();
+            wrong_contact |= reply == yes;
+            wrong_text |= reply == malformed;
+        }
+    })
+    .await
+    .unwrap();
+
+    let busy = text(&termchat(&mut alice, &home, &["ask", "alice", "Collision?"]).await);
+    assert_eq!(busy.0, Some(5));
+    assert!(busy.2.contains("already pending"));
+    alice.reply(alice_chat, m, &yes).unwrap();
+    assert_eq!(
+        first.result(&mut alice).await,
+        (Some(0), String::new(), String::new())
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while messages.recv().await.unwrap() != yes {}
+    })
+    .await
+    .unwrap();
+    drop(follower);
+    read.await.unwrap();
+
+    let mut timed = ask("Time out?", "2");
+    let (_, expired) = question(&mut alice, alice_chat, "Time out?").await;
+    let (status, stdout, stderr) = timed.result(&mut alice).await;
+    assert_eq!(status, Some(4));
+    assert!(stdout.is_empty() && !stderr.contains(&expired) && !stderr.contains("Time out?"));
+
+    let mut interrupted = ask("Lose daemon?", "10m");
+    let (_, old) = question(&mut alice, alice_chat, "Lose daemon?").await;
+    let kill = Command::new("kill")
+        .args(["-TERM", &daemon.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(kill.success());
+    assert_eq!(interrupted.result(&mut alice).await.0, Some(6));
+    assert_eq!(daemon.result(&mut alice).await.0, Some(0));
+
+    let daemon = start(&daemon_args);
+    pump(&mut alice, |_| home.join("daemon.sock").exists()).await;
+    let mut last = ask("Deploy build 43?", "10m");
+    let (_, code) = question(&mut alice, alice_chat, "Deploy build 43?").await;
+    assert_ne!(code, old);
+    assert_ne!(code, expired);
+    for stale in [old, expired] {
+        alice.send(alice_chat, &format!("yes {stale}")).unwrap();
+    }
+    alice.send(alice_chat, &format!("no {code}")).unwrap();
+    let (status, stdout, stderr) = last.result(&mut alice).await;
+    assert_eq!(status, Some(1));
+    assert!(stdout.is_empty() && !stderr.contains(&code) && !stderr.contains("Deploy build 43?"));
+
+    let mut departed = ask("Contact leaves?", "10m");
+    question(&mut alice, alice_chat, "Contact leaves?").await;
+    assert!(alice.leave(false));
+    assert_eq!(departed.result(&mut alice).await.0, Some(5));
+    drop(daemon);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+async fn pair(a: &mut Engine, b: &mut Engine) {
+    let (a_key, b_key) = (a.me(), b.me());
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut added = false;
+    loop {
+        if !added && b.data.fallback_published && b.all_connected() {
+            a.add(&b.invite().unwrap(), false).unwrap();
+            added = true;
+        }
+        if let Some(i) = b.index(&a_key)
+            && b.is_request(&a_key)
+            && b.data.contacts[i].theirs.is_some()
+        {
+            b.accept(i);
+        }
+        if let (Some(i), Some(j)) = (a.index(&b_key), b.index(&a_key))
+            && a.rich(i)
+            && b.rich(j)
+            && a.all_answered()
+            && b.all_answered()
+        {
+            a.edit(i, |c| c.verified = true);
+            b.edit(j, |c| c.verified = true);
+            return;
+        }
+        assert!(Instant::now() < deadline, "contact pairing timed out");
+        tokio::select! {
+            Some(ev) = a.events.recv() => a.on_relay(ev),
+            Some(ev) = b.events.recv() => b.on_relay(ev),
+            () = tokio::time::sleep(Duration::from_millis(25)) => {}
+        }
+        a.tick();
+        b.tick();
     }
 }
 
@@ -483,41 +737,6 @@ async fn watch_alerts_the_owner_once_and_rearms_after_a_pulse() {
                 .unwrap(),
             "watch ready"
         );
-    }
-    async fn pair(a: &mut Engine, b: &mut Engine) {
-        let (a_key, b_key) = (a.me(), b.me());
-        let deadline = Instant::now() + Duration::from_secs(15);
-        let mut added = false;
-        loop {
-            if !added && b.data.fallback_published && b.all_connected() {
-                a.add(&b.invite().unwrap(), false).unwrap();
-                added = true;
-            }
-            if let Some(i) = b.index(&a_key)
-                && b.is_request(&a_key)
-                && b.data.contacts[i].theirs.is_some()
-            {
-                b.accept(i);
-            }
-            if let (Some(i), Some(j)) = (a.index(&b_key), b.index(&a_key))
-                && a.rich(i)
-                && b.rich(j)
-                && a.all_answered()
-                && b.all_answered()
-            {
-                a.edit(i, |c| c.verified = true);
-                b.edit(j, |c| c.verified = true);
-                return;
-            }
-            assert!(Instant::now() < deadline, "contact pairing timed out");
-            tokio::select! {
-                Some(ev) = a.events.recv() => a.on_relay(ev),
-                Some(ev) = b.events.recv() => b.on_relay(ev),
-                () = tokio::time::sleep(Duration::from_millis(25)) => {}
-            }
-            a.tick();
-            b.tick();
-        }
     }
 
     let url = start_relay().await;

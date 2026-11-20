@@ -88,6 +88,12 @@ that (ADR-023).
   reveal when a server is active or goes quiet through traffic timing. The
   relay sees encrypted messages and can delay or drop both heartbeats and
   alerts. The watcher needs a separate awake host and synchronized clocks.
+- **Script approvals** (ADR-032). A response must come from the verified
+  contact's primary device on its direct queue and match the current
+  request's code. Anyone who can send as that device can approve a pending
+  request. The script acts on the exit status and defines the step in
+  advance. Questions and answers appear as ordinary chat messages. The
+  question may also appear in the calling shell or CI logs.
 - **Groups** (ADR-027). The relay sees a group queue, how many readers it
   has, and when each message is written and read by each reader: a group's
   size is visible to its operator. Key shares come in bursts when someone

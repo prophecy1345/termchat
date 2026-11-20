@@ -2,7 +2,7 @@
 //!
 //! Exit codes: 0 done, 1 password/state/input error, 2 bad arguments,
 //! 3 no such contact or more than one, 4 the relay did not take it in time
-//! (it stays queued), 5 cannot send to that contact.
+//! (it stays queued), 5 cannot send to that contact. See ADR-032 for `ask`.
 
 use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 #[cfg(unix)]
 mod daemon;
 
-pub const COMMANDS: [&str; 9] = [
+pub const COMMANDS: [&str; 10] = [
     "init",
     "daemon",
     "invite",
@@ -28,6 +28,7 @@ pub const COMMANDS: [&str; 9] = [
     "send-file",
     "recv",
     "watch",
+    "ask",
 ];
 
 const USAGE: &str = "usage:
@@ -41,7 +42,8 @@ const USAGE: &str = "usage:
   termchat recv [--from CONTACT] [--wait SECS] [--follow] [--json] [--save-dir DIR]
   termchat watch send WATCHER --every SECS
   termchat watch monitor SERVER --notify OWNER --after SECS
-options for all: --password-file PATH | --password-stdin, --timeout SECS (default 60)
+  termchat ask CONTACT QUESTION [--timeout SECS|Nm]   (default 10m)
+identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
 state folder: TERMCHAT_HOME, or ~/.termchat";
 
 /// A failure and its exit code.
@@ -95,7 +97,28 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
             "--tor" => a.tor = true,
             "--password-file" => a.password_file = Some(value(&mut it, arg)?.into()),
             "--password-stdin" => a.password_stdin = true,
-            "--timeout" => a.timeout = Some(secs(value(&mut it, arg)?, arg)?),
+            "--timeout" => {
+                let timeout = value(&mut it, arg)?;
+                a.timeout = Some(if a.command == "ask" {
+                    let (count, scale) = timeout
+                        .strip_suffix('m')
+                        .map_or((timeout.as_str(), 1), |m| (m, 60));
+                    count
+                        .parse::<u64>()
+                        .ok()
+                        .and_then(|n| n.checked_mul(scale))
+                        .filter(|&n| n > 0 && count.bytes().all(|b| b.is_ascii_digit()))
+                        .filter(|&n| Instant::now().checked_add(Duration::from_secs(n)).is_some())
+                        .ok_or_else(|| {
+                            Fail(
+                                2,
+                                "ask timeout takes positive whole seconds or minutes (10m)".into(),
+                            )
+                        })?
+                } else {
+                    secs(timeout, arg)?
+                });
+            }
             "--wait" => a.wait = Some(secs(value(&mut it, arg)?, arg)?),
             "--follow" => a.follow = true,
             "--json" => a.json = true,
@@ -105,6 +128,13 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
             "--after" => a.after = Some(secs(value(&mut it, arg)?, arg)?),
             "--notify" => a.notify = Some(value(&mut it, arg)?),
             "--help" | "-h" => return fail(2, USAGE),
+            "--" if a.command == "ask" => {
+                a.positional.extend(it.cloned());
+                break;
+            }
+            s if a.command == "ask" && s.starts_with("--") => {
+                return fail(2, format!("unknown ask option\n{USAGE}"));
+            }
             s if s.starts_with("--") => return fail(2, format!("unknown option {s}\n{USAGE}")),
             _ => a.positional.push(arg.clone()),
         }
@@ -120,6 +150,8 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
         "add" => n == 1,
         "send" => n == 1 || n == 2,
         "send-file" => n == 2,
+        "ask" => matches!(a.positional.as_slice(), [to, question]
+            if !to.trim().is_empty() && !question.trim().is_empty()),
         "watch" => {
             let valid = |s: Option<u64>| s.is_some_and(|s| s > 0);
             match a.positional.as_slice() {
@@ -158,6 +190,14 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     let path = data::home().join("state");
     if a.command == "init" {
         return init(&a, &path).await;
+    }
+    if a.command == "ask" {
+        #[cfg(unix)]
+        return daemon::ask(&a, &data::home())
+            .await
+            .unwrap_or_else(|| fail(6, "ask needs a running termchat daemon for this identity"));
+        #[cfg(not(unix))]
+        return fail(2, "termchat ask needs Linux or macOS");
     }
     if a.command == "watch" {
         #[cfg(unix)]

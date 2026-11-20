@@ -1376,7 +1376,16 @@ impl Engine {
     }
 
     /// One relay event on `link`.
-    pub fn on_relay(&mut self, (link, ev): RelayEvent) {
+    pub fn on_relay(&mut self, event: RelayEvent) {
+        self.on_relay_observing_direct_text(event, &mut |_, _| {});
+    }
+
+    /// ADR-032: a saved original text from the authenticated direct sender.
+    pub fn on_relay_observing_direct_text(
+        &mut self,
+        (link, ev): RelayEvent,
+        observe: &mut dyn FnMut(Ed25519Key, &str),
+    ) {
         if let Some(r) = self.retiring.iter().position(|(l, ..)| *l == link) {
             // Gone from the relay, or at least from here.
             if matches!(
@@ -1443,11 +1452,16 @@ impl Engine {
                     self.connected = false;
                 }
             }
-            Event::Frame(frame) => self.on_frame(&link, frame),
+            Event::Frame(frame) => self.on_frame(&link, frame, observe),
         }
     }
 
-    fn on_frame(&mut self, link: &Link, frame: ServerFrame) {
+    fn on_frame(
+        &mut self,
+        link: &Link,
+        frame: ServerFrame,
+        observe: &mut dyn FnMut(Ed25519Key, &str),
+    ) {
         if let Some(g) = self.group_of_link(link) {
             return self.on_group_frame(g, frame);
         }
@@ -1534,8 +1548,13 @@ impl Engine {
                 if self.link_who(&owner) != who {
                     return;
                 }
+                let queue_relay = self
+                    .queue_of(&owner)
+                    .is_some_and(|q| same_url(&q.relay_url, &link.relay));
+                let mut ignore = |_, _: &str| {};
+                let observe = if queue_relay { observe } else { &mut ignore };
                 // Not saved means not acked: the relay keeps it for the next connection.
-                if self.receive(owner, &envelope)
+                if self.receive(owner, &envelope, observe)
                     && let Some(l) = self.links.get(link)
                 {
                     let _ = l.relay.send(ClientFrame::Ack { recv_id, relay_id });
@@ -1797,7 +1816,12 @@ impl Engine {
     /// identities (its invite queue) or a contact (our queue for them).
     /// `true` once it is safe to ack: the message is on disk, or there was
     /// nothing worth keeping.
-    fn receive(&mut self, who: Ed25519Key, envelope: &proto::Envelope) -> bool {
+    fn receive(
+        &mut self,
+        who: Ed25519Key,
+        envelope: &proto::Envelope,
+        observe: &mut dyn FnMut(Ed25519Key, &str),
+    ) -> bool {
         let invite_slot = self.slot_of(&who);
         let (slot, from) = match invite_slot {
             Some(slot) => (slot, None),
@@ -1839,6 +1863,10 @@ impl Engine {
                 return true;
             }
         };
+        let original_direct_text = from == Some(got.sender)
+            && via == from
+            && !got.request
+            && matches!(got.body, Body::Text { .. } | Body::Message { .. });
         if let (Some(k), Some(v)) = (from, via)
             && v != k
         {
@@ -2001,7 +2029,7 @@ impl Engine {
                     && from == Some(sender)
                     && via == from
                     && !got.request
-                    && self.watch_contact(&sender).is_ok()
+                    && self.verified_contact(&sender).is_ok()
                 {
                     self.heartbeat = Some((sender, sent_at));
                 }
@@ -2117,7 +2145,14 @@ impl Engine {
         if self.open != Some(sender) {
             self.data.contacts[i].unread += 1;
         }
-        self.persist()
+        let saved = self.persist();
+        if saved
+            && original_direct_text
+            && let Some(message) = self.data.contacts[i].messages.last()
+        {
+            observe(sender, &message.text);
+        }
+        saved
     }
 
     /// The app came on screen: every link checks itself now (ADR-012).
@@ -2377,22 +2412,24 @@ impl Engine {
         Ok(c)
     }
 
-    /// ADR-031: keep using the original verified contact, even if names change.
-    pub fn watch_contact(&self, key: &Ed25519Key) -> Result<usize, String> {
-        let i = self.index(key).ok_or("watch contact was removed")?;
+    /// ADR-031 and ADR-032: pin a verified contact even if names change.
+    pub fn verified_contact(&self, key: &Ed25519Key) -> Result<usize, String> {
+        let i = self.index(key).ok_or("contact was removed")?;
         let c = self.writable(i)?;
         let accepted = self
             .slot_for(key)
             .is_some_and(|slot| self.core_at(slot).is_request(key) == Some(false));
         if !self.is_primary() || !c.verified || c.request_pending || !accepted {
-            return Err("watch needs the main device and an accepted, verified contact".into());
+            return Err(
+                "this command needs the main device and an accepted, verified contact".into(),
+            );
         }
         Ok(i)
     }
 
     /// Sends at most one unanswered pulse per contact without a chat entry.
     pub fn send_heartbeat(&mut self, key: &Ed25519Key) -> Result<(), String> {
-        let i = self.watch_contact(key)?;
+        let i = self.verified_contact(key)?;
         let Some(to) = &self.data.contacts[i].theirs else {
             return Ok(());
         };
@@ -3334,7 +3371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_verified_direct_heartbeats_reach_the_watcher() {
+    async fn direct_receipts_keep_authorship_and_heartbeats_stay_out_of_chat() {
         let (mut e, dir) = offline("heartbeat");
         let me = e.core().identity();
         let key = e.core().prekeys(0, true).fallback.unwrap();
@@ -3381,14 +3418,15 @@ mod tests {
                 .unwrap()
         };
 
-        assert!(e.receive(me.ed25519, &pulse(&mut server, 1)));
-        assert!(e.receive(other, &pulse(&mut server, 2)));
-        assert!(e.receive(server_key, &pulse(&mut linked, 3)));
+        let mut ignore = |_, _: &str| {};
+        assert!(e.receive(me.ed25519, &pulse(&mut server, 1), &mut ignore));
+        assert!(e.receive(other, &pulse(&mut server, 2), &mut ignore));
+        assert!(e.receive(server_key, &pulse(&mut linked, 3), &mut ignore));
         assert_eq!(e.take_heartbeat(), None, "wrong queue or device");
         let live = pulse(&mut server, 4);
-        assert!(e.receive(server_key, &live));
+        assert!(e.receive(server_key, &live, &mut ignore));
         assert_eq!(e.take_heartbeat(), Some((server_key, 4)));
-        assert!(e.receive(server_key, &live));
+        assert!(e.receive(server_key, &live, &mut ignore));
         assert_eq!(e.take_heartbeat(), None, "repeated delivery");
         assert_eq!(e.data.contacts[0].unread, 0);
         assert!(e.take_new(None).is_empty());
@@ -3409,8 +3447,92 @@ mod tests {
 
         e.edit(0, |c| c.verified = false);
         assert!(e.send_heartbeat(&server_key).is_err());
-        assert!(e.receive(server_key, &pulse(&mut server, 5)));
+        assert!(e.receive(server_key, &pulse(&mut server, 5), &mut ignore));
         assert_eq!(e.take_heartbeat(), None, "verification was removed");
+
+        let reply = "yes 0123456789abcdef";
+        let text = |text: &str| Body::Text {
+            text: text.into(),
+            sent_at: now(),
+            expires_in: None,
+        };
+        let mut observed = Vec::new();
+        let mut receive = |queue, client: &mut Client, body| {
+            let envelope = client.encrypt(&me.ed25519, body).unwrap();
+            assert!(e.receive(queue, &envelope, &mut |key, text| {
+                observed.push((key, text.to_owned()));
+            }));
+            envelope
+        };
+        receive(me.ed25519, &mut server, text(reply));
+        receive(other, &mut server, text(reply));
+        receive(server_key, &mut linked, text(reply));
+        receive(
+            server_key,
+            &mut server,
+            Body::Copy {
+                contact: server_key,
+                body: Box::new(text(reply)),
+            },
+        );
+        receive(
+            server_key,
+            &mut server,
+            Body::Message {
+                id: 42,
+                sent_at: now(),
+                expires_in: None,
+                reply_to: None,
+                text: "question".into(),
+            },
+        );
+        receive(
+            server_key,
+            &mut server,
+            Body::Edit {
+                id: 42,
+                text: reply.into(),
+            },
+        );
+        let replay = receive(server_key, &mut server, text(reply));
+        assert!(e.receive(server_key, &replay, &mut |_, _| panic!(
+            "duplicate did not stay suppressed"
+        )));
+        assert_eq!(
+            observed,
+            [(server_key, "question".into()), (server_key, reply.into())]
+        );
+
+        let recv_id = [8; 16];
+        e.data.contacts[0].mine = Some(Queue {
+            relay_url: e.home(),
+            recv_id,
+            send_id: [9; 16],
+            token: [10; 32],
+            onion_url: None,
+        });
+        let wrong_link = Link {
+            who: server_key,
+            relay: "ws://127.0.0.1:10/".into(),
+        };
+        let envelope = server.encrypt(&me.ed25519, text(reply)).unwrap();
+        e.on_frame(
+            &wrong_link,
+            ServerFrame::Deliver {
+                recv_id,
+                relay_id: 1,
+                envelope,
+            },
+            &mut |_, _| panic!("another relay is not the contact's own queue"),
+        );
+
+        // Replacing the state path with a directory prevents saving after decryption.
+        e.path = dir.join("not-a-directory");
+        std::fs::create_dir(&e.path).unwrap();
+        let unsaved = server.encrypt(&me.ed25519, text(reply)).unwrap();
+        assert!(!e.receive(server_key, &unsaved, &mut |_, _| panic!(
+            "unsaved reply observed"
+        )));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

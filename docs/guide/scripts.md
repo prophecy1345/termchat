@@ -20,9 +20,10 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
 | `send-file CONTACT PATH` | a document of up to 1 MiB |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
+| `ask CONTACT QUESTION [--timeout SECS or Nm]` | waits for a verified contact to approve or decline (requires a daemon) |
 | `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
-Every command also takes `--password-file PATH` or `--password-stdin`, and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
+Commands that open the identity take `--password-file PATH` or `--password-stdin` and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
 
 - `CONTACT` is the name the app shows, or the start of the fingerprint. If more than one contact matches, nothing is sent.
 - **The password never comes from the environment**: every child process inherits it. Use a file that belongs to you and has mode `600`, stdin, or the keyboard. Without any of them termchat asks at the keyboard, and a script has none: it ends with "no terminal to type the password".
@@ -30,7 +31,7 @@ Every command also takes `--password-file PATH` or `--password-stdin`, and `--ti
 - The owner accepts contact requests in the app. The CLI and daemon have no command to accept a request.
 - Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
 
-Exit codes: 0 done, 1 password or state, 2 arguments, 3 contact not found or more than one, 4 the relay did not take it in time (it goes with the next command), 5 cannot write to that contact. A command exits only once the relay took everything it sent, within `--timeout`.
+`send` and `send-file` wait for the relay to accept the message within `--timeout`. They return `0` on delivery to the relay, `1` for a password or state error, `2` for invalid arguments, `3` for a missing or ambiguous contact, `4` if the message is still queued, and `5` if it cannot be sent.
 
 ## Setting up a server
 
@@ -157,6 +158,24 @@ termchat watch monitor backup-box --notify alice --after 900
 The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options and leave room for reconnects. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
 
 Keep the watcher awake and the clocks synchronized. A relay outage can cause an alert or prevent delivery. The daemon logs locally when it queues an alert and when it cannot confirm delivery. A fresh heartbeat lets the watcher report the next outage.
+
+## Ask for approval before a script step
+
+Set up a server identity, add the approver and [compare safety numbers](contacts.md). Mark the approver as verified on the server, then run `termchat daemon`. Run `ask` as the same user with the same `TERMCHAT_HOME` on Linux or macOS.
+
+```sh
+if termchat ask alice "Deploy build 42 to staging?" --timeout 10m; then
+    ./deploy-staging build-42
+fi
+```
+
+On their primary device, Alice sees an ordinary chat message with two possible replies, for example `yes f4bc2801e9029d71` and `no f4bc2801e9029d71`. She sends one of those lines exactly. The server waits for a reply with the current code from her verified primary device. Only one request per contact can wait at a time. The timeout defaults to 10 minutes, and `600` and `10m` mean the same thing.
+
+If the question begins with `--`, put it after the `--` separator and put any options before that separator.
+
+The command writes nothing to stdout. It returns `0` for approval, `1` for refusal and `4` for timeout. Other errors use `2` for invalid input, `3` for an unknown or ambiguous contact, `5` for an ineligible contact, a pending request or failed send, and `6` for an unavailable daemon or internal error. A delayed question may still arrive after the request closes. A reply to it has no effect.
+
+Anyone who can send as Alice's primary device, including someone with her unlocked phone, can approve a pending request. The question and reply may appear in chat history and notifications, and the question may appear in shell history or CI logs. Keep secrets out of the question.
 
 ## More examples
 
