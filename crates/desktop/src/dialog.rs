@@ -350,6 +350,12 @@ impl Chat {
                 for row in groups.chunks(4) {
                     ui.label(RichText::new(row.join(" ")).monospace().strong().size(16.0));
                 }
+                // ADR-037: their phone can scan this instead of reading the digits.
+                if let Some(code) = self.engine.safety_code(i) {
+                    ui.add_space(6.0);
+                    ui.label("Or let their phone scan this code.");
+                    crate::synth::qr(ui, &code, 180.0);
+                }
                 ui.add_space(6.0);
                 let verified = c.verified;
                 match verified {
