@@ -1,0 +1,1 @@
+termchat ask on servers accepts a reply regardless of letter case and spaces at the ends. termchat watch now has minimum intervals.

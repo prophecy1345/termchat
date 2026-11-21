@@ -3,6 +3,13 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.20.1
+
+- `termchat ask` accepts a reply regardless of letter case and spaces at
+  the ends, so `Yes CODE ` from a phone keyboard counts (ADR-034).
+- `termchat watch send --every` takes at least 10 seconds and
+  `watch monitor --after` at least 30.
+
 ## 0.20.0
 
 - Scripts can list private groups, send text, and receive new texts and
