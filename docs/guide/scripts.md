@@ -176,7 +176,7 @@ termchat watch send watcher --every 300
 termchat watch monitor backup-box --notify alice --after 900
 ```
 
-The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options and leave room for reconnects. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
+The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options. Set `--after` to at least twice `--every` plus a minute for reconnects. A threshold at or below the send interval makes the watcher send an alert after nearly every heartbeat. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
 
 Keep the watcher awake and the clocks synchronized. A relay outage can cause an alert or prevent delivery. The daemon logs locally when it queues an alert and when it cannot confirm delivery. A fresh heartbeat lets the watcher report the next outage.
 
