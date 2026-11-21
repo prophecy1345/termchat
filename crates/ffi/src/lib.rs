@@ -889,6 +889,26 @@ impl Account {
         e.open = key;
     }
 
+    /// What was typed in chat `index` and not sent yet, kept with the state.
+    pub fn draft(&self, index: u32) -> String {
+        self.with(index, |e, i| e.data.contacts[i].draft.clone())
+            .unwrap_or_default()
+    }
+
+    /// Kept in memory as it is typed; saved with the state on lock.
+    pub fn set_draft(&self, index: u32, text: String) {
+        let _ = self.with(index, |e, i| e.data.contacts[i].draft = text);
+    }
+
+    pub fn group_draft(&self, group: u32) -> String {
+        self.with_group(group, |e, g| e.data.groups[g].draft.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_group_draft(&self, group: u32, text: String) {
+        let _ = self.with_group(group, |e, g| e.data.groups[g].draft = text);
+    }
+
     pub fn send(&self, index: u32, text: String) -> Result<()> {
         Ok(self.with(index, |e, i| e.send(i, &text))??)
     }

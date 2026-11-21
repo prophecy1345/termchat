@@ -346,19 +346,50 @@ impl Chat {
     }
 
     pub(crate) fn select(&mut self, key: Key) {
+        self.stash_draft();
         self.open = Some(key);
         self.group = None;
-        self.input.clear();
-        self.compose = Compose::New;
-        self.search = None;
+        self.switched();
     }
 
     pub(crate) fn select_group(&mut self, g: usize) {
+        self.stash_draft();
         self.group = self.engine.data.groups.get(g).map(|g| g.id);
         self.open = None;
-        self.input.clear();
+        self.switched();
+    }
+
+    fn switched(&mut self) {
         self.compose = Compose::New;
         self.search = None;
+        self.input = self.draft_slot().map(|d| d.clone()).unwrap_or_default();
+    }
+
+    /// The unsent text of the open chat or group, where its draft is kept.
+    fn draft_slot(&mut self) -> Option<&mut String> {
+        if let Some(g) = self.open_group() {
+            return Some(&mut self.engine.data.groups[g].draft);
+        }
+        let i = self.open.and_then(|k| self.engine.index(&k))?;
+        Some(&mut self.engine.data.contacts[i].draft)
+    }
+
+    /// Text being typed becomes the open chat's draft; an edit of a sent
+    /// message does not.
+    fn stash_draft(&mut self) {
+        let text = match self.compose {
+            Compose::Edit(_) => String::new(),
+            _ => self.input.clone(),
+        };
+        if let Some(draft) = self.draft_slot() {
+            *draft = text;
+        }
+    }
+
+    /// Saves the state with the draft being typed: on lock and on quit.
+    pub(crate) fn persist(&mut self) {
+        self.stash_draft();
+        self.engine.persist();
     }
 
     pub(crate) fn open_group(&self) -> Option<usize> {
@@ -1072,7 +1103,12 @@ impl Chat {
             },
         };
         match sent {
-            Ok(()) => self.compose = Compose::New,
+            Ok(()) => {
+                self.compose = Compose::New;
+                if let Some(draft) = self.draft_slot() {
+                    draft.clear();
+                }
+            }
             Err(e) => {
                 self.input = text;
                 self.status = e;

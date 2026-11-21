@@ -25,7 +25,7 @@ fun Group(m: Model, index: UInt) {
     @Suppress("UNUSED_EXPRESSION") m.version
     val g = a.groups().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.groupMessages(index) }.getOrDefault(emptyList())
-    var text by remember { mutableStateOf("") }
+    var text by remember(index) { mutableStateOf(runCatching { a.groupDraft(index) }.getOrDefault("")) }
     // "members", "invite", "leave", or a member's fingerprint to remove.
     var dialog by remember(index) { mutableStateOf<String?>(null) }
     var compose by remember(index) { mutableStateOf<Triple<UInt, Boolean, String>?>(null) }
@@ -73,7 +73,7 @@ fun Group(m: Model, index: UInt) {
                 Bubble(msg, true, { what ->
                     when (what) {
                         "answer" -> compose = Triple(at, false, msg.text.lineSequence().first())
-                        "edit" -> { compose = Triple(at, true, ""); text = msg.text }
+                        "edit" -> { compose = Triple(at, true, ""); text = msg.text; a.setGroupDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         else -> {
@@ -111,7 +111,7 @@ fun Group(m: Model, index: UInt) {
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
-            Field(text, { text = it }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false)
+            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false)
             Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime) {
                 runCatching {
                     val cm = compose
@@ -120,7 +120,7 @@ fun Group(m: Model, index: UInt) {
                         cm.second -> a.editGroupMessage(index, cm.first, text)
                         else -> a.replyGroup(index, cm.first, text)
                     }
-                }.onSuccess { text = ""; compose = null; m.note = ""; m.changed() }.onFailure(fail)
+                }.onSuccess { a.setGroupDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }.onFailure(fail)
             }
         }
     }

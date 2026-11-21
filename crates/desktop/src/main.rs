@@ -132,7 +132,7 @@ impl App {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            chat.engine.persist();
+            chat.persist();
         }
         self.screen = Screen::Unlock(Unlock::default());
     }
@@ -234,7 +234,7 @@ impl eframe::App for App {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Screen::Main(chat) = &mut self.screen {
-            chat.engine.persist();
+            chat.persist();
         }
     }
 }

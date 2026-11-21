@@ -74,7 +74,8 @@ fun Chat(m: Model, index: UInt) {
     @Suppress("UNUSED_EXPRESSION") m.version
     val c = a.contacts().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.messages(index) }.getOrDefault(emptyList())
-    var text by remember { mutableStateOf("") }
+    // The draft comes back when the chat opens again, also after a lock.
+    var text by remember(index) { mutableStateOf(runCatching { a.draft(index) }.getOrDefault("")) }
     var dialog by remember { mutableStateOf<String?>(null) }
     // ponytail: by index, so a message that expires meanwhile shifts it; ids if that bites.
     var compose by remember(index) { mutableStateOf<Compose?>(null) }
@@ -137,7 +138,7 @@ fun Chat(m: Model, index: UInt) {
                 val act: (String) -> Unit = { what ->
                     when (what) {
                         "answer" -> compose = Compose(at, false, msg.text.lineSequence().first())
-                        "edit" -> { compose = Compose(at, true, ""); text = msg.text }
+                        "edit" -> { compose = Compose(at, true, ""); text = msg.text; a.setDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         else -> {
@@ -222,7 +223,7 @@ fun Chat(m: Model, index: UInt) {
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (closed || c.request) Tc.line else Tc.dim) }
             Field(
-                text, { text = it },
+                text, { text = it; if (compose?.edit != true) a.setDraft(index, it) },
                 when {
                     c.left -> "This contact left"
                     c.blocked -> "Blocked"
@@ -241,7 +242,7 @@ fun Chat(m: Model, index: UInt) {
                         else -> a.reply(index, cm.at, text)
                     }
                 }
-                    .onSuccess { text = ""; compose = null; m.note = ""; m.changed() }
+                    .onSuccess { a.setDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }
                     .onFailure { m.note = it.message ?: "$it" }
             }
         }

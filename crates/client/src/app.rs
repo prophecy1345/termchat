@@ -640,6 +640,7 @@ impl Main {
         });
         main.absorb();
         main.resort();
+        main.load_draft();
         main
     }
 
@@ -710,8 +711,40 @@ impl Main {
     }
 
     fn persist(&mut self) {
+        self.stash_draft();
         self.engine.persist();
         self.absorb();
+    }
+
+    /// The unsent text of the open chat or group, where its draft is kept.
+    fn draft_slot(&mut self) -> Option<&mut String> {
+        let n = self.engine.data.people();
+        match self.selected.checked_sub(n) {
+            None => self
+                .engine
+                .data
+                .contacts
+                .get_mut(self.selected)
+                .map(|c| &mut c.draft),
+            Some(g) => self.engine.data.groups.get_mut(g).map(|g| &mut g.draft),
+        }
+    }
+
+    /// Text being typed becomes the open chat's draft; an edit of a sent
+    /// message does not.
+    fn stash_draft(&mut self) {
+        let text = match self.compose {
+            Compose::Edit(_) => String::new(),
+            _ => self.input.to_string(),
+        };
+        if let Some(draft) = self.draft_slot() {
+            *draft = text;
+        }
+    }
+
+    fn load_draft(&mut self) {
+        let text = self.draft_slot().map(|d| d.clone()).unwrap_or_default();
+        self.input = Input::from(text.as_str());
     }
 
     fn on_relay(&mut self, ev: RelayEvent) {
@@ -981,20 +1014,23 @@ impl Main {
 
     fn select(&mut self, i: usize) {
         let n = self.engine.data.people();
-        if i >= n && i < n + self.engine.data.groups.len() {
-            self.selected = i;
-            self.scroll = 0;
-            self.picked = None;
-            self.compose = Compose::New;
-            self.engine.data.groups[i - n].unread = 0;
+        if i >= n + self.engine.data.groups.len() {
             return;
         }
-        if i < n {
-            self.selected = i;
-            self.scroll = 0;
-            self.picked = None;
-            self.compose = Compose::New;
-            self.engine.data.contacts[i].unread = 0;
+        let moved = i != self.selected;
+        if moved {
+            self.stash_draft();
+        }
+        self.selected = i;
+        self.scroll = 0;
+        self.picked = None;
+        self.compose = Compose::New;
+        match i.checked_sub(n) {
+            Some(g) => self.engine.data.groups[g].unread = 0,
+            None => self.engine.data.contacts[i].unread = 0,
+        }
+        if moved {
+            self.load_draft();
         }
     }
 
@@ -1220,7 +1256,12 @@ impl Main {
             },
         };
         match sent {
-            Ok(()) => self.compose = Compose::New,
+            Ok(()) => {
+                self.compose = Compose::New;
+                if let Some(draft) = self.draft_slot() {
+                    draft.clear();
+                }
+            }
             Err(e) => {
                 self.input = text;
                 self.status = e;
@@ -1738,6 +1779,45 @@ mod tests {
         assert_eq!(m.engine.data.nickname, NEW_DEVICE_NICKNAME);
         assert!(m.linking, "waits for the relay");
         assert!(m.popup.is_none(), "nothing in the way of the code");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each chat keeps what was typed in it, across switching and a restart.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn drafts_stay_with_their_chat() {
+        let dir = std::env::temp_dir().join(format!("termchat-drafts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap_or_default();
+        let password = "correct horse battery staple violin";
+        let setup = termchat_engine::Setup {
+            relay_url: "ws://127.0.0.1:9/",
+            onion_url: None,
+            tor: false,
+            nickname: "alice",
+            password,
+        };
+        let Ok(engine) = Engine::setup(&dir.join("state"), &setup) else {
+            panic!("setup");
+        };
+        let mut main = Main::new(engine, &dir);
+        assert!(main.engine.create_group("one").is_ok());
+        assert!(main.engine.create_group("two").is_ok());
+        let first = main.engine.data.people();
+        main.select(first);
+        main.input.insert("half a thought");
+        main.select(first + 1);
+        assert!(main.input.is_empty(), "the other chat has its own field");
+        main.input.insert("for two");
+        main.select(first);
+        assert_eq!(&*main.input, "half a thought");
+        main.persist();
+        drop(main);
+        let Ok(Unlocked::Open(engine)) = Engine::unlock(&dir.join("state"), password.as_bytes())
+        else {
+            panic!("unlock");
+        };
+        assert_eq!(engine.data.groups[0].draft, "half a thought");
+        assert_eq!(engine.data.groups[1].draft, "for two");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -115,6 +115,9 @@ pub type MemberDevices = (Ed25519Key, DeviceList, Vec<(Ed25519Key, QueueId)>);
 #[serde(default)]
 pub struct Group {
     pub id: GroupId,
+    /// Text typed and not sent yet, kept with the state.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
     pub roster: Option<Roster>,
     pub relay_url: String,
     pub onion_url: Option<String>,
@@ -354,6 +357,9 @@ pub struct Contact {
     pub expires_in: Option<u32>,
     /// Keep this chat in memory only, never on disk.
     pub no_history: bool,
+    /// Text typed and not sent yet, kept with the state (not for `no_history`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
     /// Their messages are dropped unread; we cannot write to them.
     pub blocked: bool,
     /// Texts from a request not accepted yet, shown once it is (ADR-007).
@@ -792,6 +798,7 @@ impl Data {
         for c in copy.contacts.iter_mut().filter(|c| c.no_history) {
             c.messages.clear();
             c.hidden.clear();
+            c.draft.clear();
         }
         for (p, state) in copy.profiles.iter_mut().zip(states) {
             p.state.clone_from(state);
@@ -1442,10 +1449,17 @@ mod tests {
         };
         secret.no_history = true;
         secret.messages.push(msg(Status::Sent));
+        secret.draft = "half a secret".into();
+        kept.draft = "see you at".into();
         data.contacts = vec![kept, secret];
 
         let back = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
         assert!(back.contacts[1].messages.is_empty());
+        assert_eq!(back.contacts[0].draft, "see you at");
+        assert!(
+            back.contacts[1].draft.is_empty(),
+            "no-history drafts stay in memory"
+        );
         assert!(matches!(
             back.contacts[0].messages[0].status,
             Status::Failed(_)

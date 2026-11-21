@@ -15,6 +15,8 @@ Next to your messages: `…` (terminal) or "sending" while it goes out, `✓` or
 
 If your contact is offline, the relay keeps the encrypted message for up to 14 days and hands it over when they come back.
 
+A message you started and did not send stays in its chat as a draft: when you open another chat, lock the app or quit, and on the next start. Drafts live in the encrypted state file, never in a chat with **No history**. Editing one of your sent messages takes the place of the draft.
+
 ## Answers, edits, deletes, reactions
 
 Since version 0.9, between apps that both run 0.9 or newer:
