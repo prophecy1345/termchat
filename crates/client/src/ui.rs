@@ -48,7 +48,7 @@ Ctrl+L       send a file (up to 1 MiB)
 Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
 Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
-             1-7 react; Esc back to typing
+             f forward, 1-7 react; Esc back to typing
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe,
              g new group
 In a group   Ctrl+R members (admin: a invite, x remove), Ctrl+T timer
@@ -1567,6 +1567,15 @@ fn popup_pane(
                 56,
                 false,
             );
+        }
+        Popup::Forward { to, .. } => {
+            let mut rows: Vec<(char, String)> = (0..m.engine.data.people())
+                .map(|i| ('·', name(m, &m.engine.data.contacts[i])))
+                .collect();
+            rows.extend(m.engine.data.groups.iter().map(|g| ('#', clean(g.name()))));
+            let lines = menu_rows(t, &rows, *to, 52);
+            let buttons = [("↵ forward", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "forward to", lines, &buttons, 56, false);
         }
         Popup::InviteToGroup(at) => {
             let Some(gi) = m.group_index() else { return };

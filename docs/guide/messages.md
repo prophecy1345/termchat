@@ -34,6 +34,14 @@ How:
 
 A contact on 0.8 or older cannot read these. Until their app says it can, yours sends them plain messages and offers no answers or reactions in that chat ("their app is older"). When you first update, contacts still on 0.8 see one "could not be decrypted" line and one "1 message lost": nothing is lost in fact.
 
+## Forward
+
+Send a message or a received document on to another chat or group. It goes as a new message of yours, with no mark of where it came from, and follows the timer of the chat it lands in. A document can be forwarded until you save or discard it; after that it is a file on your disk, and you send it from there.
+
+- **Terminal:** pick the message (**Shift+↑**), press **f**, choose the chat and press **Enter**.
+- **Desktop:** right-click the message → **Forward…**, then click the chat.
+- **Android:** long press the message → **Forward…**, then tap the chat.
+
 ## Documents
 
 Files of up to 1 MiB, end-to-end encrypted like messages. 200 KB takes about 10 seconds, 1 MiB about 3 minutes. Files work only between accepted contacts, and in groups.

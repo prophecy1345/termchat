@@ -128,6 +128,11 @@ pub enum Popup {
     Members(usize),
     /// Contacts the admin can invite, with the highlighted row.
     InviteToGroup(usize),
+    /// Message `at` of the open chat goes to the chosen chat or group.
+    Forward {
+        at: usize,
+        to: usize,
+    },
     /// Remove this member from the open group?
     RemoveMember(Ed25519Key),
     /// Leave the open group?
@@ -1010,6 +1015,12 @@ impl Main {
                 }
                 _ => self.status = engine::OLDER_APP.into(),
             },
+            KeyCode::Char('f') => match self.messages().get(at).and_then(|m| m.forwardable()) {
+                Some(_) => self.popup = Some(Popup::Forward { at, to: 0 }),
+                None => {
+                    self.status = "nothing here to forward: a saved document goes from disk".into()
+                }
+            },
             KeyCode::Char('d') if !mine => self.status = not_ours.into(),
             KeyCode::Char('d') => self.popup = Some(Popup::Unsend(at)),
             KeyCode::Char(c @ '1'..='9') => {
@@ -1566,6 +1577,36 @@ impl Main {
                     }
                     KeyCode::Esc => None,
                     _ => Some(Popup::Members(at)),
+                }
+            }
+            Popup::Forward { at, to } => {
+                let n = self.engine.data.people();
+                let last = (n + self.engine.data.groups.len()).saturating_sub(1);
+                match k.code {
+                    KeyCode::Up => Some(Popup::Forward {
+                        at,
+                        to: to.saturating_sub(1),
+                    }),
+                    KeyCode::Down => Some(Popup::Forward {
+                        at,
+                        to: (to + 1).min(last),
+                    }),
+                    KeyCode::Enter => {
+                        let what = self.messages().get(at).and_then(|m| m.forwardable());
+                        let sent = match (what, to.checked_sub(n)) {
+                            (None, _) => Err("the message is gone".to_string()),
+                            (Some(w), Some(g)) => self.engine.forward_group(g, w),
+                            (Some(w), None) => self.engine.forward(to, w),
+                        };
+                        self.status = match sent {
+                            Ok(()) => "forwarded".into(),
+                            Err(e) => e,
+                        };
+                        self.picked = None;
+                        None
+                    }
+                    KeyCode::Esc => None,
+                    _ => Some(Popup::Forward { at, to }),
                 }
             }
             Popup::InviteToGroup(at) => {

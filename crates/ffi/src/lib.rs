@@ -106,6 +106,13 @@ pub struct ContactView {
     pub archived: bool,
 }
 
+/// A chat or a group, for `forward`.
+#[derive(uniffi::Enum)]
+pub enum Place {
+    Chat { index: u32 },
+    Group { index: u32 },
+}
+
 #[derive(uniffi::Record)]
 pub struct MessageView {
     pub mine: bool,
@@ -120,6 +127,8 @@ pub struct MessageView {
     pub file_unsaved: bool,
     /// It can be answered and reacted to (ADR-025).
     pub pointable: bool,
+    /// Its text, or a received document still here, can go to another chat.
+    pub forwardable: bool,
     pub edited: bool,
     pub deleted: bool,
     /// What it answers: the first line of that message, or a note that it is gone.
@@ -457,6 +466,7 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
                 .as_ref()
                 .is_some_and(|f| f.complete() && f.data.is_some()),
         pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
+        forwardable: m.forwardable().is_some(),
         edited: m.edited,
         deleted: m.deleted,
         quote: m.reply_to.map(|r| {
@@ -996,6 +1006,28 @@ impl Account {
         let name = name.trim();
         let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
         self.with(index, |e, i| e.edit(i, |c| c.petname = name))
+    }
+
+    /// Message `msg` of one chat or group into another, as a new message of ours.
+    pub fn forward(&self, from: Place, msg: u32, to: Place) -> Result<()> {
+        let _rt = runtime().enter();
+        let mut e = self.lock();
+        let at = |n: u32| usize::try_from(n).unwrap_or(usize::MAX);
+        let msgs = match from {
+            Place::Chat { index } => e.data.contacts.get(at(index)).map(|c| &c.messages),
+            Place::Group { index } => e.data.groups.get(at(index)).map(|g| &g.messages),
+        };
+        let what = msgs
+            .and_then(|m| m.get(at(msg)))
+            .and_then(Msg::forwardable)
+            .ok_or_else(|| String::from("nothing here to forward"))?;
+        Ok(match to {
+            Place::Chat { index } if at(index) < e.data.people() => e.forward(at(index), what),
+            Place::Group { index } if at(index) < e.data.groups.len() => {
+                e.forward_group(at(index), what)
+            }
+            _ => Err(String::from("no such chat")),
+        }?)
     }
 
     /// The list is sorted by the app; the order of indices stays.

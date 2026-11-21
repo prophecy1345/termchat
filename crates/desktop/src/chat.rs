@@ -196,6 +196,7 @@ enum Compose {
 /// What a click in the history asks for, by message index.
 enum Act {
     Save(usize),
+    Forward(usize),
     Reply(usize),
     Edit(usize),
     Delete(usize),
@@ -803,6 +804,7 @@ impl Chat {
         };
         match act {
             Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
+            Act::Forward(n) => self.dialog = Some(Dialog::Forward(n)),
             _ if !rich => self.status = OLDER_APP.into(),
             Act::Reply(n) => {
                 self.compose = target(n).map_or(Compose::New, Compose::Reply);
@@ -1426,6 +1428,10 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         act = Some(Act::Reply(n));
                         ui.close();
                     }
+                    if m.forwardable().is_some() && ui.button("Forward…").clicked() {
+                        act = Some(Act::Forward(n));
+                        ui.close();
+                    }
                     if m.mine && m.file.is_none() && ui.button("Edit").clicked() {
                         act = Some(Act::Edit(n));
                         ui.close();
@@ -1760,6 +1766,7 @@ mod tests {
             (Dialog::Rename(String::new()), "Rename"),
             (Dialog::Delete, "Delete the contact"),
             (Dialog::DeleteMessage(1), "Delete the message"),
+            (Dialog::Forward(0), "Forward to"),
             (Dialog::Report("x".into()), "Report to the relay operator"),
             (Dialog::Settings, "Settings"),
             (Dialog::backup(), "Back up your identity"),

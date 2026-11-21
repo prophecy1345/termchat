@@ -2678,6 +2678,23 @@ impl Engine {
 
     /// Queues a document to contact `i` (ADR-017); its chunks go out at the
     /// pace `send_chunks` allows.
+    /// Sends what `forwardable` gave into chat `i`, as a new message of ours:
+    /// no mark of where it came from.
+    pub fn forward(&mut self, i: usize, what: data::Forward) -> Result<(), String> {
+        match what {
+            data::Forward::Text(text) => self.send(i, &text),
+            data::Forward::File(name, bytes) => self.send_file(i, &name, bytes),
+        }
+    }
+
+    /// The same into group `g`.
+    pub fn forward_group(&mut self, g: usize, what: data::Forward) -> Result<(), String> {
+        match what {
+            data::Forward::Text(text) => self.send_group(g, &text),
+            data::Forward::File(name, bytes) => self.send_group_file(g, &name, bytes),
+        }
+    }
+
     pub fn send_file(&mut self, i: usize, name: &str, bytes: Vec<u8>) -> Result<(), String> {
         let c = self.writable(i)?;
         let name = name.trim();

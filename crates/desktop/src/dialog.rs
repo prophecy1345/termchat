@@ -44,6 +44,8 @@ pub enum Dialog {
     Delete,
     /// Delete our message `m` of the open chat for both sides (ADR-025)?
     DeleteMessage(usize),
+    /// Message `m` of the open chat or group, to another chat or group.
+    Forward(usize),
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
     Settings,
@@ -378,6 +380,52 @@ impl Chat {
                     return false;
                 }
                 stay
+            }
+            Dialog::Forward(m) => {
+                let from = match self.open_group() {
+                    Some(g) => &self.engine.data.groups[g].messages,
+                    None => match open {
+                        Some(i) => &self.engine.data.contacts[i].messages,
+                        None => return false,
+                    },
+                };
+                let Some(what) = from.get(*m).and_then(|x| x.forwardable()) else {
+                    return false;
+                };
+                ui.heading("Forward to");
+                ui.label("It goes as a new message of yours, with no mark of where it came from.");
+                // Ok: a chat, Err: a group.
+                let mut to: Option<Result<usize, usize>> = None;
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for i in 0..self.engine.data.people() {
+                            if ui
+                                .button(self.engine.name(&self.engine.data.contacts[i]))
+                                .clicked()
+                            {
+                                to = Some(Ok(i));
+                            }
+                        }
+                        for (g, group) in self.engine.data.groups.iter().enumerate() {
+                            let label = format!("# {}", termchat_engine::clean(group.name()));
+                            if ui.button(label).clicked() {
+                                to = Some(Err(g));
+                            }
+                        }
+                    });
+                ui.add_space(10.0);
+                let stay = !ui.button("Cancel").clicked();
+                let sent = match to {
+                    None => return stay,
+                    Some(Ok(i)) => self.engine.forward(i, what),
+                    Some(Err(g)) => self.engine.forward_group(g, what),
+                };
+                self.status = match sent {
+                    Ok(()) => "forwarded".into(),
+                    Err(e) => e,
+                };
+                false
             }
             Dialog::DeleteMessage(m) if self.open_group().is_some() => {
                 let Some(g) = self.open_group() else {

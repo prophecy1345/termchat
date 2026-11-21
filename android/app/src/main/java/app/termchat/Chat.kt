@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
+import app.termchat.engine.Place
 import app.termchat.engine.reactions
 
 /** ADR-017: the largest document, as in the Rust core. */
@@ -80,6 +81,7 @@ fun Chat(m: Model, index: UInt) {
     // ponytail: by index, so a message that expires meanwhile shifts it; ids if that bites.
     var compose by remember(index) { mutableStateOf<Compose?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
+    var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
     // Search runs here, over what is already on the phone; `null` is off.
     var query by remember(index) { mutableStateOf<String?>(null) }
     DisposableEffect(index) {
@@ -141,6 +143,7 @@ fun Chat(m: Model, index: UInt) {
                         "edit" -> { compose = Compose(at, true, ""); text = msg.text; a.setDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
+                        "forward" -> forwarding = at
                         else -> {
                             // A reaction; the same one again takes it back.
                             val r = what.toUByte()
@@ -248,6 +251,7 @@ fun Chat(m: Model, index: UInt) {
         }
     }
     dialog?.let { ContactDialog(m, c, it) { dialog = null } }
+    forwarding?.let { at -> ForwardTo(m, Place.Chat(index), at) { forwarding = null } }
     unsend?.let { at ->
         AlertDialog(
             onDismissRequest = { unsend = null },
@@ -386,6 +390,7 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     item("Answer", "answer")
                 }
                 if (msg.fileName == null) item("Copy", "copy")
+                if (msg.forwardable) item("Forward…", "forward")
                 if (rich && msg.pointable && msg.mine) {
                     item("Edit", "edit")
                     item(if (group) "Delete for everyone…" else "Delete for both…", "delete")
@@ -507,5 +512,35 @@ private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> 
             }
         },
         dismissButton = { Flat("Cancel", color = Tc.dim, onClick = close) },
+    )
+}
+
+/** Where a message goes when forwarded: any chat or group, as a new message of ours. */
+@Composable
+internal fun ForwardTo(m: Model, from: Place, at: UInt, done: () -> Unit) {
+    val a = m.account ?: return done()
+    val send = { to: Place ->
+        runCatching { a.forward(from, at, to) }
+            .onSuccess { m.note = "forwarded" }
+            .onFailure { m.note = it.message ?: "$it" }
+        m.changed()
+        done()
+    }
+    AlertDialog(
+        onDismissRequest = done,
+        containerColor = Tc.surface,
+        shape = corner,
+        title = { Text("Forward to", style = Tc.name) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                items(a.contacts().filter { !it.request }) { c ->
+                    Text(c.name, style = Tc.mono, modifier = Modifier.fillMaxWidth().clickable { send(Place.Chat(c.index)) }.padding(vertical = 10.dp))
+                }
+                items(a.groups().filter { !it.left }) { g ->
+                    Text("# ${g.name}", style = Tc.mono, modifier = Modifier.fillMaxWidth().clickable { send(Place.Group(g.index)) }.padding(vertical = 10.dp))
+                }
+            }
+        },
+        confirmButton = { Flat("Cancel", color = Tc.dim) { done() } },
     )
 }

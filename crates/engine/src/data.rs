@@ -933,7 +933,31 @@ pub fn lock(state: &Path) -> io::Result<Option<fs::File>> {
     }
 }
 
+/// What a message would carry when forwarded to another chat.
+pub enum Forward {
+    Text(String),
+    /// A received document still held here, before it is saved.
+    File(String, Vec<u8>),
+}
+
 impl Msg {
+    /// Its text, or a received document whose bytes are still here; nothing
+    /// for notices, deleted messages and documents already saved or sent.
+    pub fn forwardable(&self) -> Option<Forward> {
+        if self.deleted || self.status == Status::System {
+            return None;
+        }
+        match &self.file {
+            Some(f) if !self.mine && f.complete() => f
+                .data
+                .clone()
+                .map(|bytes| Forward::File(f.name.clone(), bytes)),
+            Some(_) => None,
+            None if self.text.trim().is_empty() => None,
+            None => Some(Forward::Text(self.text.clone())),
+        }
+    }
+
     /// Its author deleted it (ADR-025): the text goes, a line stays.
     pub fn wipe(&mut self) {
         self.text.zeroize();
@@ -1436,6 +1460,47 @@ mod tests {
         data.contacts[0].told = 1;
         let data = Data::from_json(&data.to_json(&[]).unwrap()).unwrap();
         assert_eq!(told(&data), [1, 1]);
+    }
+
+    #[test]
+    fn forwarding_takes_text_and_documents_still_held() {
+        let text = |t: &str| {
+            let mut m = Msg::default();
+            m.text = t.into();
+            m
+        };
+        assert!(matches!(text("hi").forwardable(), Some(Forward::Text(t)) if t == "hi"));
+        assert!(text("  ").forwardable().is_none());
+        let mut notice = text("⚠ 1 message missing");
+        notice.status = Status::System;
+        assert!(notice.forwardable().is_none());
+        let mut gone = text("secret");
+        gone.wipe();
+        assert!(gone.forwardable().is_none());
+        let file = |mine, data: Option<Vec<u8>>| {
+            let mut m = text("📄 a.txt");
+            m.mine = mine;
+            m.file = Some(FileMsg {
+                id: 1,
+                name: "a.txt".into(),
+                size: 2,
+                done: 1,
+                data,
+            });
+            m
+        };
+        assert!(matches!(
+            file(false, Some(b"ok".to_vec())).forwardable(),
+            Some(Forward::File(name, bytes)) if name == "a.txt" && bytes == b"ok"
+        ));
+        assert!(
+            file(false, None).forwardable().is_none(),
+            "saved: from disk"
+        );
+        assert!(
+            file(true, Some(b"ok".to_vec())).forwardable().is_none(),
+            "ours, on its way"
+        );
     }
 
     #[test]

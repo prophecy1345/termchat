@@ -30,6 +30,7 @@ fun Group(m: Model, index: UInt) {
     var dialog by remember(index) { mutableStateOf<String?>(null) }
     var compose by remember(index) { mutableStateOf<Triple<UInt, Boolean, String>?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
+    var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
     DisposableEffect(index) {
         a.openGroup(index)
         onDispose { if (m.account === a) a.openGroup(null) }
@@ -76,6 +77,7 @@ fun Group(m: Model, index: UInt) {
                         "edit" -> { compose = Triple(at, true, ""); text = msg.text; a.setGroupDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
+                        "forward" -> forwarding = at
                         else -> {
                             val r = what.toUByte()
                             runCatching { a.reactGroup(index, at, if (msg.myReaction == r) null else r) }.onFailure(fail)
@@ -138,6 +140,7 @@ fun Group(m: Model, index: UInt) {
             }
         }
     }
+    forwarding?.let { at -> ForwardTo(m, app.termchat.engine.Place.Group(index), at) { forwarding = null } }
     unsend?.let { at ->
         Confirm(m, "Delete the message?", "It goes for everyone in the group. A copy or screenshot someone made stays.", "Delete", { unsend = null }) {
             runCatching { a.deleteGroupMessage(index, at) }.onFailure(fail)
