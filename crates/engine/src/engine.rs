@@ -1326,13 +1326,17 @@ impl Engine {
                 Err(e) => return self.note(e),
             }
         }
-        let expires_in = self.data.contacts[i].expires_in;
         let rich = self.data.contacts[i].understands >= RICH_LEVEL;
         for m in 0..self.data.contacts[i].messages.len() {
             let msg = &self.data.contacts[i].messages[m];
             if msg.status != Status::Queued || msg.file.is_some() {
                 continue;
             }
+            // The timer it was written with, not the chat's now: the two copies
+            // disappear after the same time even if it waited in the queue.
+            let expires_in = msg
+                .expires_at
+                .map(|end| u32::try_from(end.saturating_sub(msg.at)).unwrap_or(u32::MAX));
             let body = match msg.id {
                 Some(id) if rich => Body::Message {
                     id,
@@ -2476,20 +2480,34 @@ impl Engine {
 
     /// Queues `text` to contact `i` and sends it as soon as there is a session.
     pub fn send(&mut self, i: usize, text: &str) -> Result<(), String> {
-        self.send_text(i, text, None)
+        let timer = self.writable(i)?.expires_in;
+        self.send_text(i, text, None, timer)
+    }
+
+    /// Like `send`, with a timer of its own instead of the chat's: the
+    /// scriptable `send --expires` (`expires_in` travels in every message).
+    pub fn send_expiring(&mut self, i: usize, text: &str, expires_in: u32) -> Result<(), String> {
+        self.send_text(i, text, None, Some(expires_in))
     }
 
     /// `text` as an answer to message `m` of chat `i` (ADR-025).
     pub fn reply(&mut self, i: usize, m: usize, text: &str) -> Result<(), String> {
         let target = self.target(i, m)?;
-        self.send_text(i, text, Some(target))
+        let timer = self.writable(i)?.expires_in;
+        self.send_text(i, text, Some(target), timer)
     }
 
-    fn send_text(&mut self, i: usize, text: &str, reply_to: Option<Ref>) -> Result<(), String> {
+    fn send_text(
+        &mut self,
+        i: usize,
+        text: &str,
+        reply_to: Option<Ref>,
+        expires_in: Option<u32>,
+    ) -> Result<(), String> {
         if text.len() > proto::MAX_TEXT_BYTES {
             return Err("message too long".into());
         }
-        let expires_in = self.writable(i)?.expires_in;
+        self.writable(i)?;
         let id = getrandom::u64().map_err(|e| e.to_string())?;
         let at = now();
         self.data.contacts[i].messages.push(Msg {

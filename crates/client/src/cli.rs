@@ -43,7 +43,7 @@ const USAGE: &str = "usage:
   termchat add INVITE
   termchat contacts
   termchat groups [--json]
-  termchat send CONTACT [TEXT]          (TEXT from stdin if not given)
+  termchat send CONTACT [TEXT] [--expires 30s|5m|1h|1d]   (TEXT from stdin if not given)
   termchat send (--group NAME | --group-id ID) [TEXT]
   termchat send-file CONTACT PATH
   termchat recv [--from CONTACT] [--wait SECS] [--follow] [--json] [--save-dir DIR]
@@ -55,6 +55,34 @@ const USAGE: &str = "usage:
                [--lines N] [--failures-only] -- COMMAND [ARGS...]
 identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
 state folder: TERMCHAT_HOME, or ~/.termchat";
+
+/// `send --expires`: from 10 seconds to a week, the longest timer in the apps.
+const EXPIRES: std::ops::RangeInclusive<u64> = 10..=604_800;
+
+fn expires(seconds: u64) -> Result<u32, Fail> {
+    u32::try_from(seconds)
+        .ok()
+        .filter(|s| EXPIRES.contains(&u64::from(*s)))
+        .ok_or_else(|| Fail(2, "--expires takes 10s to 7d".into()))
+}
+
+/// `30s`, `5m`, `1h` or `1d`; a bare number counts as seconds.
+fn parse_expires(text: &str) -> Result<u32, Fail> {
+    let (count, scale) = match text.char_indices().last() {
+        Some((at, 's')) => (&text[..at], 1),
+        Some((at, 'm')) => (&text[..at], 60),
+        Some((at, 'h')) => (&text[..at], 3600),
+        Some((at, 'd')) => (&text[..at], 86_400),
+        _ => (text, 1),
+    };
+    let seconds = count
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| count.parse::<u64>().ok())
+        .flatten()
+        .and_then(|n| n.checked_mul(scale));
+    expires(seconds.unwrap_or(0))
+}
 
 /// A failure and its exit code.
 struct Fail(i32, String);
@@ -87,6 +115,7 @@ struct Args {
     name: Option<String>,
     lines: Option<usize>,
     failures_only: bool,
+    expires: Option<u32>,
 }
 
 fn parse(args: &[String]) -> Result<Args, Fail> {
@@ -166,6 +195,7 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
                 );
             }
             "--failures-only" => a.failures_only = true,
+            "--expires" => a.expires = Some(parse_expires(&value(&mut it, arg)?)?),
             "--help" | "-h" => return fail(2, USAGE),
             "--" if a.command == "ask"
                 || a.command == "run"
@@ -190,7 +220,9 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
         "init" => n == 0 && a.nickname.is_some(),
         "invite" | "contacts" | "groups" | "recv" | "daemon" => n == 0,
         "add" => n == 1,
-        "send" if a.group.is_some() => n <= 1 && (n == 1 || !a.password_stdin),
+        "send" if a.group.is_some() => {
+            n <= 1 && (n == 1 || !a.password_stdin) && a.expires.is_none()
+        }
         "send" => n == 1 || n == 2,
         "send-file" => n == 2,
         "ask" => matches!(a.positional.as_slice(), [to, question]
@@ -228,6 +260,7 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
     if !ok
         || (a.command != "watch" && (a.every.is_some() || a.after.is_some() || a.notify.is_some()))
         || (a.command != "run" && run_only)
+        || (a.command != "send" && a.expires.is_some())
     {
         return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command));
     }
@@ -650,7 +683,11 @@ async fn send(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fail> {
         return fail(2, "nothing to send");
     }
     let i = writable(e, query, deadline).await?;
-    e.send(i, text).map_err(|why| Fail(5, why))?;
+    match a.expires {
+        None => e.send(i, text),
+        Some(s) => e.send_expiring(i, text, s),
+    }
+    .map_err(|why| Fail(5, why))?;
     let m = last_mark(e, i);
     delivered(e, i, m, deadline).await
 }
@@ -871,4 +908,32 @@ fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
     };
     written.map_err(|e| Fail(1, format!("cannot write: {e}")))?;
     Ok(saved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_takes_seconds_to_days() {
+        let ok = |t: &str| parse_expires(t).ok();
+        assert_eq!(ok("30s"), Some(30));
+        assert_eq!(ok("5m"), Some(300));
+        assert_eq!(ok("1h"), Some(3600));
+        assert_eq!(ok("7d"), Some(604_800));
+        assert_eq!(ok("600"), Some(600));
+        for bad in [
+            "9s",
+            "8d",
+            "",
+            "m",
+            "5x",
+            "-5m",
+            "+5m",
+            "1.5h",
+            "99999999999999999999d",
+        ] {
+            assert!(parse_expires(bad).is_err(), "{bad}");
+        }
+    }
 }

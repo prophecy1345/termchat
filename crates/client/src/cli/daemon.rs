@@ -295,9 +295,12 @@ fn handle(
                     let sent = match cmd {
                         "send" => {
                             let text = Zeroizing::new(s("text").unwrap_or_default());
-                            match text.trim().is_empty() {
-                                true => return Err(Fail(2, "nothing to send".into())),
-                                false => e.send(i, &text),
+                            if text.trim().is_empty() {
+                                return Err(Fail(2, "nothing to send".into()));
+                            }
+                            match request["expires"].as_u64() {
+                                None => e.send(i, &text),
+                                Some(s) => e.send_expiring(i, &text, super::expires(s)?),
                             }
                         }
                         _ => {
@@ -538,14 +541,14 @@ fn request(a: &Args) -> Result<Value, Fail> {
         ("invite", _) => json!({ "cmd": "invite" }),
         ("add", [invite]) => json!({ "cmd": "add", "invite": invite, "timeout": timeout }),
         ("send", [to, text]) => {
-            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout })
+            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout, "expires": a.expires })
         }
         ("send", [to]) => {
             let mut text = Zeroizing::new(String::new());
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
                 .map_err(|e| Fail(1, format!("cannot read stdin: {e}")))?;
             let text = text.strip_suffix('\n').unwrap_or(&text);
-            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout })
+            json!({ "cmd": "send", "to": to, "text": text, "timeout": timeout, "expires": a.expires })
         }
         ("send-file", [to, file]) => {
             // The command reads the file as its own user; the daemon opens no paths.

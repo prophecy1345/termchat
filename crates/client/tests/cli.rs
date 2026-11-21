@@ -549,6 +549,12 @@ fn bad_arguments_exit_with_2() {
         vec!["run", "--to", "a", "--password-stdin", "--", "true"],
         vec!["run", "--to", "a"],
         vec!["send", "alice", "hi", "--failures-only"],
+        vec!["send", "alice", "hi", "--expires", "5s"],
+        vec!["send", "alice", "hi", "--expires", "8d"],
+        vec!["send", "alice", "hi", "--expires", "5x"],
+        vec!["send", "alice", "hi", "--expires", "-5m"],
+        vec!["send", "--group", "ops", "hi", "--expires", "5m"],
+        vec!["recv", "--expires", "5m"],
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_termchat"))
             .env("TERMCHAT_HOME", &home)
@@ -903,7 +909,11 @@ async fn run_reports_how_a_command_ended() {
         e.data.contacts[0]
             .messages
             .iter()
-            .filter(|m| !m.mine && m.status != termchat_engine::data::Status::System)
+            .filter(|m| {
+                !m.mine
+                    && m.status != termchat_engine::data::Status::System
+                    && m.expires_at.is_none()
+            })
             .map(|m| m.text.clone())
             .collect()
     };
@@ -995,6 +1005,30 @@ async fn run_reports_how_a_command_ended() {
     pump(&mut phone, |e| reports(e).len() == 2).await;
     assert!(reports(&phone)[1].starts_with("nightly finished after "));
 
+    // send --expires: the message carries its own timer, with or without a daemon.
+    let expiring = |e: &Engine, text: &str| {
+        e.data.contacts[0]
+            .messages
+            .iter()
+            .find(|m| m.text == text)
+            .and_then(|m| m.expires_at.map(|end| end - m.at))
+    };
+    let secret = [
+        "send",
+        "alice",
+        "pin 1234",
+        "--expires",
+        "5m",
+        "--password-file",
+        pw,
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &secret).await.status.code(),
+        Some(0)
+    );
+    pump(&mut phone, |e| expiring(e, "pin 1234").is_some()).await;
+    assert_eq!(expiring(&phone, "pin 1234"), Some(300));
+
     // Through a daemon: no password, and a program that is not there.
     struct Daemon(std::process::Child);
     impl Drop for Daemon {
@@ -1014,6 +1048,13 @@ async fn run_reports_how_a_command_ended() {
     );
     let socket = home.join("daemon.sock");
     pump(&mut phone, |_| socket.exists()).await;
+    let token = ["send", "alice", "token", "--expires", "30s"];
+    assert_eq!(
+        termchat(&mut phone, &home, &token).await.status.code(),
+        Some(0)
+    );
+    pump(&mut phone, |e| expiring(e, "token").is_some()).await;
+    assert_eq!(expiring(&phone, "token"), Some(30));
     let missing = [
         "run",
         "--to",
