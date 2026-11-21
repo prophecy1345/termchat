@@ -1,0 +1,1 @@
+Server monitoring alerts from termchat watch now count in minutes.

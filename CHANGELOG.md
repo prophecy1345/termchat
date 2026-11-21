@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.20.2
+
+- The `termchat watch` alert counts in whole minutes when it can, as in
+  "backup-box has been silent for 15 minutes".
+
 ## 0.20.1
 
 - `termchat ask` accepts a reply regardless of letter case and spaces at
