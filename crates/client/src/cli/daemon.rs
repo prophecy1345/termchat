@@ -246,13 +246,17 @@ fn handle(
         e.find(&q).map_err(|why| Fail(3, why))
     };
     let answer = match request["cmd"].as_str().unwrap_or_default() {
-        "groups" | "group_send" => {
+        "groups" | "group_send" | "group_check" => {
             let result = groups::command(e, request, &reply, pending);
             if let Some(answer) = result {
                 let _ = reply.send(answer.unwrap_or_else(err));
             }
             return;
         }
+        // ADR-035: `run` checks its recipient before its command starts.
+        "check" => find(e, s("to"))
+            .and_then(|i| can_write(e, i))
+            .map(|_| ok(json!({}))),
         "contacts" => {
             let rows: Vec<Value> = contact_rows(e)
                 .into_iter()
@@ -568,6 +572,7 @@ fn request(a: &Args) -> Result<Value, Fail> {
         ("watch", [role, peer]) if role == "monitor" => {
             json!({ "cmd": "watch_monitor", "peer": peer, "owner": a.notify, "seconds": a.after })
         }
+        ("run", _) => json!({ "cmd": "check", "to": a.to }),
         ("ask", [to, text]) => json!({
             "cmd": "ask", "to": to, "text": text, "timeout": a.timeout.unwrap_or(600)
         }),

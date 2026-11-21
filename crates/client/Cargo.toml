@@ -23,10 +23,11 @@ tokio-tungstenite = "0.29.0"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal", "io-util"] }
 zeroize = "1.9.1"
 
-# geteuid, to check who owns a password file (ADR-024); already in the tree through engine.
+# geteuid, to check who owns a password file (ADR-024), and uname for run reports
+# (ADR-035); already in the tree through engine.
 [target."cfg(unix)".dependencies]
 getrandom = "0.4.3"
-rustix = { version = "1.1.5", default-features = false, features = ["process", "std"] }
+rustix = { version = "1.1.5", default-features = false, features = ["process", "std", "system"] }
 
 [features]
 default = ["tor"]

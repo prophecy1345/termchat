@@ -2,7 +2,8 @@
 //!
 //! Exit codes: 0 done, 1 password/state/input error, 2 bad arguments,
 //! 3 no such contact or more than one, 4 the relay did not take it in time
-//! (it stays queued), 5 cannot send to that contact. See ADR-032 for `ask`.
+//! (it stays queued), 5 cannot send to that contact. See ADR-032 for `ask`
+//! and ADR-035 for `run`, which exits with its command's status.
 
 use std::io::{BufRead, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -18,8 +19,9 @@ use zeroize::Zeroizing;
 #[cfg(unix)]
 mod daemon;
 mod group;
+mod run;
 
-pub const COMMANDS: [&str; 11] = [
+pub const COMMANDS: [&str; 12] = [
     "init",
     "daemon",
     "invite",
@@ -31,6 +33,7 @@ pub const COMMANDS: [&str; 11] = [
     "recv",
     "watch",
     "ask",
+    "run",
 ];
 
 const USAGE: &str = "usage:
@@ -48,6 +51,8 @@ const USAGE: &str = "usage:
   termchat watch send WATCHER --every SECS
   termchat watch monitor SERVER --notify OWNER --after SECS
   termchat ask CONTACT QUESTION [--timeout SECS|Nm]   (default 10m)
+  termchat run (--to CONTACT | --group NAME | --group-id ID) [--name LABEL]
+               [--lines N] [--failures-only] -- COMMAND [ARGS...]
 identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
 state folder: TERMCHAT_HOME, or ~/.termchat";
 
@@ -78,6 +83,10 @@ struct Args {
     every: Option<u64>,
     after: Option<u64>,
     notify: Option<String>,
+    to: Option<String>,
+    name: Option<String>,
+    lines: Option<usize>,
+    failures_only: bool,
 }
 
 fn parse(args: &[String]) -> Result<Args, Fail> {
@@ -144,8 +153,24 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
             "--every" => a.every = Some(secs(value(&mut it, arg)?, arg)?),
             "--after" => a.after = Some(secs(value(&mut it, arg)?, arg)?),
             "--notify" => a.notify = Some(value(&mut it, arg)?),
+            "--to" => a.to = Some(value(&mut it, arg)?),
+            "--name" => a.name = Some(value(&mut it, arg)?),
+            "--lines" => {
+                let lines = value(&mut it, arg)?;
+                a.lines = Some(
+                    lines
+                        .parse()
+                        .ok()
+                        .filter(|&n| n <= run::MAX_LINES)
+                        .ok_or_else(|| Fail(2, format!("--lines takes 0 to {}", run::MAX_LINES)))?,
+                );
+            }
+            "--failures-only" => a.failures_only = true,
             "--help" | "-h" => return fail(2, USAGE),
-            "--" if a.command == "ask" || (a.command == "send" && a.group.is_some()) => {
+            "--" if a.command == "ask"
+                || a.command == "run"
+                || (a.command == "send" && a.group.is_some()) =>
+            {
                 a.positional.extend(it.cloned());
                 break;
             }
@@ -182,10 +207,27 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
                 _ => false,
             }
         }
+        // ADR-035: one recipient, a command, and no stdin taken from it.
+        "run" => {
+            n >= 1
+                && !a.positional[0].is_empty()
+                && a.to.is_some() != a.group.is_some()
+                && !a.password_stdin
+                && a.wait.is_none()
+                && !a.follow
+                && !a.json
+                && a.from.is_none()
+                && a.save_dir.is_none()
+                && a.name
+                    .as_ref()
+                    .is_none_or(|l| !l.trim().is_empty() && l.len() <= run::MAX_NAME)
+        }
         _ => false,
     };
+    let run_only = a.to.is_some() || a.name.is_some() || a.lines.is_some() || a.failures_only;
     if !ok
         || (a.command != "watch" && (a.every.is_some() || a.after.is_some() || a.notify.is_some()))
+        || (a.command != "run" && run_only)
     {
         return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command));
     }
@@ -200,7 +242,10 @@ pub async fn run(args: &[String]) -> i32 {
     match command(args).await {
         Ok(()) => 0,
         Err(Fail(code, why)) => {
-            eprintln!("termchat: {why}");
+            // An empty reason is `run` passing on its command's status.
+            if !why.is_empty() {
+                eprintln!("termchat: {why}");
+            }
             code
         }
     }
@@ -208,13 +253,64 @@ pub async fn run(args: &[String]) -> i32 {
 
 async fn command(args: &[String]) -> Result<(), Fail> {
     let a = parse(args)?;
+    if a.command == "run" {
+        return run_job(a).await;
+    }
+    execute(&a).await
+}
+
+/// ADR-035: check the recipient, run the command, then report on it.
+async fn run_job(a: Args) -> Result<(), Fail> {
+    execute(&a).await?;
+    let (program, args) = a
+        .positional
+        .split_first()
+        .ok_or_else(|| Fail(2, USAGE.into()))?;
+    let label = a.name.clone().unwrap_or_else(|| run::label(program));
+    let lines = a.lines.unwrap_or(run::DEFAULT_LINES);
+    let (program, args) = (program.clone(), args.to_vec());
+    let outcome = {
+        // Signals go to the command; termchat stays to report how it ended.
+        #[cfg(unix)]
+        let _keep = (
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()),
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()),
+        );
+        tokio::task::spawn_blocking(move || run::run(&label, &program, &args, lines))
+            .await
+            .map_err(|why| Fail(1, format!("run: {why}")))?
+    };
+    if a.failures_only && outcome.code == 0 {
+        return Ok(());
+    }
+    let report = Args {
+        command: "send".into(),
+        positional: a.to.iter().cloned().chain([outcome.text]).collect(),
+        group: a.group.clone(),
+        password_file: a.password_file.clone(),
+        timeout: a.timeout,
+        ..Args::default()
+    };
+    match (execute(&report).await, outcome.code) {
+        (Ok(()), 0) => Ok(()),
+        (Err(f), 0) => Err(f),
+        (sent, code) => {
+            if let Err(Fail(_, why)) = sent {
+                eprintln!("termchat: the report was not sent: {why}");
+            }
+            Err(Fail(code, String::new()))
+        }
+    }
+}
+
+async fn execute(a: &Args) -> Result<(), Fail> {
     let path = data::home().join("state");
     if a.command == "init" {
-        return init(&a, &path).await;
+        return init(a, &path).await;
     }
     if a.command == "ask" {
         #[cfg(unix)]
-        return daemon::ask(&a, &data::home())
+        return daemon::ask(a, &data::home())
             .await
             .unwrap_or_else(|| fail(6, "ask needs a running termchat daemon for this identity"));
         #[cfg(not(unix))]
@@ -222,7 +318,7 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     }
     if a.command == "watch" {
         #[cfg(unix)]
-        return daemon::ask(&a, &data::home())
+        return daemon::ask(a, &data::home())
             .await
             .unwrap_or_else(|| fail(1, "watch needs a running termchat daemon for this identity"));
         #[cfg(not(unix))]
@@ -231,7 +327,7 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     // ADR-029: a running daemon answers without a password.
     #[cfg(unix)]
     if a.command != "daemon"
-        && let Some(answer) = daemon::ask(&a, &data::home()).await
+        && let Some(answer) = daemon::ask(a, &data::home()).await
     {
         return answer;
     }
@@ -243,7 +339,11 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     if !path.exists() {
         return fail(1, "no identity here yet: run termchat init first");
     }
-    let password = password(&a, false)?;
+    // ADR-035: a job's stdin and terminal belong to the command it runs.
+    if a.command == "run" && a.password_file.is_none() {
+        return fail(2, "run needs a running daemon or --password-file");
+    }
+    let password = password(a, false)?;
     let mut e = match Engine::unlock(&path, password.as_bytes()) {
         Ok(Unlocked::Open(e)) => e,
         // The duress password erased everything (ADR-003): say no more than
@@ -255,7 +355,7 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     e.connect_now().map_err(|why| Fail(1, why))?;
     let deadline = group::deadline(a.timeout.unwrap_or(60))?;
     if a.group.is_some() || a.command == "groups" {
-        let done = group::run(&mut e, &a, deadline).await;
+        let done = group::run(&mut e, a, deadline).await;
         if done.is_ok() && a.command == "send" {
             pump(&mut e, deadline, Engine::all_answered).await;
         }
@@ -263,14 +363,17 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     }
     let done = match a.command.as_str() {
         "invite" => invite(&mut e, deadline).await,
-        "add" => add(&mut e, &a, deadline).await,
+        "add" => add(&mut e, a, deadline).await,
         "contacts" => {
             contacts(&e);
             Ok(())
         }
-        "send" => send(&mut e, &a, deadline).await,
-        "send-file" => send_file(&mut e, &a, deadline).await,
-        "recv" => recv(&mut e, &a).await,
+        "send" => send(&mut e, a, deadline).await,
+        "send-file" => send_file(&mut e, a, deadline).await,
+        "recv" => recv(&mut e, a).await,
+        "run" => writable(&mut e, a.to.as_deref().unwrap_or_default(), deadline)
+            .await
+            .map(drop),
         #[cfg(unix)]
         "daemon" => daemon::serve(&mut e, &data::home()).await,
         other => fail(2, format!("unknown command {other}\n{USAGE}")),

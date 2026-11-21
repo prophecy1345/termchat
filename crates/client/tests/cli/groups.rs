@@ -347,6 +347,36 @@ async fn private_groups_through_cli_and_daemon() {
             .any(|m| m.text == "direct from stdin")
     })
     .await;
+    // ADR-035: run checks the group first and reports into it.
+    let ambiguous = [
+        "run",
+        "--group",
+        "team",
+        "--password-file",
+        pw,
+        "--",
+        "true",
+    ];
+    assert_code(cli(&home, &ambiguous, None).output(peers).await, 3);
+    let job = [
+        "run",
+        "--group-id",
+        first,
+        "--name",
+        "group-job",
+        "--password-file",
+        pw,
+        "--",
+        "true",
+    ];
+    assert_code(cli(&home, &job, None).output(peers).await, 0);
+    advance(peers, |es| {
+        es[1].data.groups[0]
+            .messages
+            .iter()
+            .any(|m| m.text.starts_with("group-job finished after "))
+    })
+    .await;
     let at = peers[0].data.groups[1]
         .messages
         .iter()
@@ -435,6 +465,23 @@ async fn private_groups_through_cli_and_daemon() {
             .messages
             .iter()
             .any(|m| m.text == "late acceptance")
+    })
+    .await;
+    let job = [
+        "run",
+        "--group-id",
+        first,
+        "--name",
+        "daemon-job",
+        "--",
+        "false",
+    ];
+    assert_code(cli(&home, &job, None).output(peers).await, 1);
+    advance(peers, |es| {
+        es[1].data.groups[0]
+            .messages
+            .iter()
+            .any(|m| m.text.starts_with("daemon-job failed with exit 1 after "))
     })
     .await;
 

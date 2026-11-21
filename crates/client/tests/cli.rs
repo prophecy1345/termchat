@@ -542,6 +542,13 @@ fn bad_arguments_exit_with_2() {
         vec!["recv", "--wait", "soon"],
         vec!["init"],
         vec!["contacts", "--password-file", "a", "--password-stdin"],
+        vec!["run", "--", "true"],
+        vec!["run", "--to", "a", "--group", "b", "--", "true"],
+        vec!["run", "--to", "a", "--wait", "5", "--", "true"],
+        vec!["run", "--to", "a", "--lines", "51", "--", "true"],
+        vec!["run", "--to", "a", "--password-stdin", "--", "true"],
+        vec!["run", "--to", "a"],
+        vec!["send", "alice", "hi", "--failures-only"],
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_termchat"))
             .env("TERMCHAT_HOME", &home)
@@ -846,4 +853,183 @@ async fn watch_alerts_the_owner_once_and_rearms_after_a_pulse() {
     pump(&mut owner, |e| alerts(e) == 2).await;
     drop((monitor, watcher_daemon));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn run_reports_how_a_command_ended() {
+    let url = start_relay().await;
+    let dir = tmp("run");
+    let setup = Setup {
+        relay_url: &url,
+        onion_url: None,
+        tor: false,
+        nickname: "alice",
+        password: PASSWORD,
+    };
+    let mut phone = Engine::setup(&dir.join("phone"), &setup).unwrap();
+    pump(&mut phone, |e| e.data.fallback_published).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let invite = phone.invite().unwrap();
+    let home = dir.join("server");
+    std::fs::create_dir_all(&home).unwrap();
+    let pw = secret(&dir, PASSWORD, 0o600);
+    let pw = pw.to_str().unwrap();
+    let init = [
+        "init",
+        "--nickname",
+        "box",
+        "--relay",
+        &url,
+        "--password-file",
+        pw,
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &init).await.status.code(),
+        Some(0)
+    );
+    let add = ["add", &invite, "--password-file", pw];
+    assert_eq!(
+        termchat(&mut phone, &home, &add).await.status.code(),
+        Some(0)
+    );
+    pump(&mut phone, |e| {
+        e.data.contacts.first().is_some_and(|c| c.theirs.is_some())
+    })
+    .await;
+    phone.accept(0);
+    pump(&mut phone, |e| !e.data.contacts[0].accept_pending).await;
+    let reports = |e: &Engine| -> Vec<String> {
+        e.data.contacts[0]
+            .messages
+            .iter()
+            .filter(|m| !m.mine && m.status != termchat_engine::data::Status::System)
+            .map(|m| m.text.clone())
+            .collect()
+    };
+
+    // Without a daemon: the command's status, and one report with its output.
+    let failing = [
+        "run",
+        "--to",
+        "alice",
+        "--password-file",
+        pw,
+        "--",
+        "sh",
+        "-c",
+        "echo hello; echo token=s3cret-arg >/dev/null; exit 3",
+    ];
+    let (code, out, _) = text(&termchat(&mut phone, &home, &failing).await);
+    assert_eq!(code, Some(3));
+    assert_eq!(out, "hello\n", "output still reaches the caller");
+    pump(&mut phone, |e| !reports(e).is_empty()).await;
+    let report = &reports(&phone)[0];
+    assert!(
+        report.starts_with("sh failed with exit 3 after "),
+        "{report}"
+    );
+    assert!(report.ends_with("\nhello"), "{report}");
+    assert!(
+        !report.contains("s3cret"),
+        "arguments stay out of the report"
+    );
+
+    // A recipient that cannot be written to stops run before the command.
+    let marker = dir.join("ran");
+    let marker = marker.to_str().unwrap();
+    let unknown = [
+        "run",
+        "--to",
+        "nobody",
+        "--password-file",
+        pw,
+        "--",
+        "touch",
+        marker,
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &unknown).await.status.code(),
+        Some(3)
+    );
+    let no_password = ["run", "--to", "alice", "--", "touch", marker];
+    assert_eq!(
+        termchat(&mut phone, &home, &no_password)
+            .await
+            .status
+            .code(),
+        Some(2)
+    );
+    assert!(!Path::new(marker).exists(), "the command must not start");
+
+    // Success is quiet with --failures-only, and named with --name.
+    let quiet = [
+        "run",
+        "--to",
+        "alice",
+        "--failures-only",
+        "--password-file",
+        pw,
+        "--",
+        "true",
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &quiet).await.status.code(),
+        Some(0)
+    );
+    let named = [
+        "run",
+        "--to",
+        "alice",
+        "--name",
+        "nightly",
+        "--password-file",
+        pw,
+        "--",
+        "true",
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &named).await.status.code(),
+        Some(0)
+    );
+    pump(&mut phone, |e| reports(e).len() == 2).await;
+    assert!(reports(&phone)[1].starts_with("nightly finished after "));
+
+    // Through a daemon: no password, and a program that is not there.
+    struct Daemon(std::process::Child);
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_termchat"))
+            .env("TERMCHAT_HOME", &home)
+            .args(["daemon", "--password-file", pw])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let socket = home.join("daemon.sock");
+    pump(&mut phone, |_| socket.exists()).await;
+    let missing = [
+        "run",
+        "--to",
+        "alice",
+        "--lines",
+        "0",
+        "--",
+        "/nonexistent/job",
+    ];
+    assert_eq!(
+        termchat(&mut phone, &home, &missing).await.status.code(),
+        Some(127)
+    );
+    pump(&mut phone, |e| reports(e).len() == 3).await;
+    let report = &reports(&phone)[2];
+    assert!(report.starts_with("job could not start: "), "{report}");
+    assert_eq!(report.lines().count(), 1, "{report}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

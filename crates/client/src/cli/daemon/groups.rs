@@ -53,7 +53,11 @@ pub(super) fn command(
                 });
                 Ok(None)
             }
-            _ => fail(2, "expected a group list or send request"),
+            Request::GroupCheck { group } => {
+                group.locate(e)?;
+                Ok(Some(ok(json!({}))))
+            }
+            _ => fail(2, "expected a group list, send or check request"),
         }
     };
     start().transpose()

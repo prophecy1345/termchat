@@ -32,6 +32,10 @@ pub(super) enum Request {
         wait: Option<u64>,
         follow: bool,
     },
+    /// ADR-035: `run` checks the group before its command starts.
+    GroupCheck {
+        group: Selector,
+    },
 }
 
 pub(super) fn deadline(seconds: u64) -> Result<Instant, Fail> {
@@ -107,6 +111,7 @@ pub(super) fn validate_args(a: &Args) -> Result<(), Fail> {
             "groups" => a.group.is_none() && a.wait.is_none() && !a.follow,
             "send" => a.wait.is_none() && !a.follow && !a.json,
             "recv" => a.wait.is_none() || !a.follow,
+            "run" => a.wait.is_none() && !a.follow && !a.json,
             _ => false,
         }
     {
@@ -130,6 +135,9 @@ pub(super) fn request(a: &Args) -> Result<Request, Fail> {
                 timeout: a.timeout.unwrap_or(60),
             }
         }
+        (Some(group), "run") => Request::GroupCheck {
+            group: group.clone(),
+        },
         (Some(group), "recv") => Request::GroupRecv {
             group: group.clone(),
             wait: a.wait,
@@ -269,6 +277,9 @@ pub(super) async fn run(e: &mut Engine, a: &Args, until: Instant) -> Result<(), 
             pump(e, until, |e| send_result(e, &group, id, until).is_some()).await;
             return send_result(e, &group, id, until)
                 .unwrap_or_else(|| fail(1, "missing group delivery result"));
+        }
+        Request::GroupCheck { group } => {
+            group.locate(e)?;
         }
         Request::GroupRecv {
             group,
