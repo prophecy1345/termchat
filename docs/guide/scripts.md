@@ -18,7 +18,7 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `add INVITE` | asks a contact; they accept in their app |
 | `contacts` | name, fingerprint and state, one contact per line |
 | `groups [--json]` | group ID and name, one per line |
-| `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
+| `send CONTACT [TEXT] [--expires 5m]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
 | `send-file CONTACT PATH` | a document of up to 1 MiB |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
 | `watch send WATCHER --every SECS` | sends hidden heartbeats to a watcher host (requires a daemon) |
@@ -34,6 +34,14 @@ Commands that open the identity take `--password-file PATH` or `--password-stdin
 - There is no "send to all": one command, one contact.
 - The owner accepts contact requests in the app. The CLI and daemon have no command to accept a request.
 - Text from the other side is cleaned of control characters before it reaches your terminal or log. Files are saved only into the folder you name, never opened.
+
+**A message that disappears.** `send --expires` gives one direct message a timer of its own: `30s`, `5m`, `1h` or `1d`, from 10 seconds to 7 days. Your copy disappears that long after sending, and theirs that long after it reaches their device, as with the chat timer in the apps. Pass a secret on stdin, so it stays out of shell history and the process list:
+
+```sh
+printf '%s\n' "$DB_PASSWORD" | termchat send alice --expires 5m
+```
+
+The timer limits how long the text stays in both chats. It does not stop a screenshot, a notification on screen or a copy. Group messages follow the group's timer, so `--expires` works only for a contact.
 
 `send` and `send-file` wait for the relay to accept the message within `--timeout`. They return `0` on delivery to the relay, `1` for a password or state error, `2` for invalid arguments, `3` for a missing or ambiguous contact, `4` if the message is still queued, and `5` if it cannot be sent.
 
