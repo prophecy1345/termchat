@@ -1,6 +1,6 @@
 # ADR-037 — Comparing safety numbers with a QR code
 
-Status — **proposed**, awaiting the maintainer. [Русская версия](037-safety-number-qr.ru.md).
+Status — **accepted by the maintainer**. [Русская версия](037-safety-number-qr.ru.md).
 
 ## Context
 
@@ -8,12 +8,12 @@ A contact is verified when both people compare their 60-digit safety number out 
 
 ## Decision
 
-1. **What the code holds.** `termchat-safety:` followed by the 60 digits of the pair's safety number, without spaces. The number is already public between the two people and symmetric, so both sides show the same code. It names both identity keys through their fingerprints; it holds no key, address or name.
+1. **What the code holds.** `TERMCHAT-SAFETY:` followed by the 60 digits of the pair's safety number, without spaces: capitals and digits only, so the code uses the QR alphanumeric mode and stays small enough for a terminal. A scan accepts the prefix in either case. The number is already public between the two people and symmetric, so both sides show the same code. It names both identity keys through their fingerprints; it holds no key, address or name.
 2. **Who shows it.** The safety-number window shows the code next to the digits: Android, the desktop app and the terminal (as Unicode half blocks, through the `qrcode` crate the desktop app already uses).
 3. **Who scans.** Android, with the camera scanner it already has for invites, from the safety-number window of the open contact.
 4. **What a scan does.** The phone computes the safety number of the open contact and compares it with the scanned one, digit for digit.
    - Equal: the contact is marked verified on the phone, and the window says so. The other side is not changed: it verifies on its own, by scanning back or comparing the digits.
-   - Different, or not a `termchat-safety:` code: a clear warning that it does not match, and nothing changes. A previously verified contact stays verified; the warning tells the person to find out why before trusting the chat.
+   - Different, or not a `TERMCHAT-SAFETY:` code: a clear warning that it does not match, and nothing changes. A previously verified contact stays verified; the warning tells the person to find out why before trusting the chat.
 5. Comparing the digits by eye stays, and so does **v** to mark a contact verified by hand.
 
 ## Threat model

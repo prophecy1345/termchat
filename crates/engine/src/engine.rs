@@ -117,6 +117,9 @@ pub fn age(at: u64) -> String {
 }
 
 /// A duration, short and rounded down: "59m", "2h", "3d".
+/// ADR-037: the start of a safety-number QR code.
+pub const SAFETY_CODE: &str = "TERMCHAT-SAFETY:";
+
 /// `2026-11-21 14:03 UTC` for Unix seconds, with no calendar library: the
 /// days-to-civil-date arithmetic of Howard Hinnant's `civil_from_days`.
 pub fn utc_minute(at: u64) -> String {
@@ -2720,6 +2723,33 @@ impl Engine {
 
     /// Queues a document to contact `i` (ADR-017); its chunks go out at the
     /// pace `send_chunks` allows.
+    /// ADR-037: what the safety-number QR code of contact `i` holds. Capitals
+    /// and digits only, so the code stays small (QR alphanumeric mode).
+    pub fn safety_code(&self, i: usize) -> Option<String> {
+        let c = self.data.contacts.get(i)?;
+        let number = termchat_core::safety_number(&self.me_for(c), &c.key);
+        Some(format!("{SAFETY_CODE}{}", number.replace(' ', "")))
+    }
+
+    /// ADR-037: a code scanned from the other screen. Equal: contact `i` is
+    /// verified here and true. Anything else: false and nothing changes.
+    pub fn verify_by_code(&mut self, i: usize, scanned: &str) -> bool {
+        let scanned = scanned.trim();
+        // Scanned text comes from outside: `get`, never a slice that could
+        // split a character.
+        let same = self.safety_code(i).is_some_and(|code| {
+            let at = SAFETY_CODE.len();
+            scanned
+                .get(..at)
+                .is_some_and(|start| start.eq_ignore_ascii_case(SAFETY_CODE))
+                && scanned.get(at..) == code.get(at..)
+        });
+        if same {
+            self.edit(i, |c| c.verified = true);
+        }
+        same
+    }
+
     /// File name and plain text of chat `i`, for an export the person asked for.
     pub fn export_chat(&self, i: usize) -> Option<(String, String)> {
         let c = self.data.contacts.get(i)?;
@@ -3678,6 +3708,38 @@ mod tests {
         };
         assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_scanned_safety_code_verifies_only_when_it_matches() {
+        let (mut e, dir) = offline("safety-qr");
+        let mut c = contact(1, "bob");
+        c.verified = false;
+        e.data.contacts.push(c);
+        e.data.contacts.push(contact(2, "carol"));
+        let code = e.safety_code(0).unwrap();
+        assert!(
+            code.starts_with("TERMCHAT-SAFETY:") && code.len() == 16 + 60,
+            "{code}"
+        );
+        assert!(code[16..].bytes().all(|b| b.is_ascii_digit()));
+        let carol = e.safety_code(1).unwrap();
+        for wrong in [
+            carol.as_str(),
+            "TERMCHAT-SAFETY:123",
+            "termchat:invite",
+            "",
+            "TERMCHAT-SAFETY:\u{1f600}",
+        ] {
+            assert!(!e.verify_by_code(0, wrong), "{wrong}");
+            assert!(!e.data.contacts[0].verified);
+        }
+        assert!(!e.verify_by_code(1, &code), "a mismatch never unverifies");
+        assert!(e.data.contacts[1].verified);
+        let lower = format!("termchat-safety:{}\n", &code[16..]);
+        assert!(e.verify_by_code(0, &lower));
+        assert!(e.data.contacts[0].verified);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
