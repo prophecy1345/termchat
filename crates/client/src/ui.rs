@@ -43,6 +43,7 @@ Ctrl+X       report contact to the relay operator (and block)
 Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
+Ctrl+V       mute: off/1h/1d/always (no sound; unread still counts)
 Ctrl+L       send a file (up to 1 MiB)
 Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
@@ -51,7 +52,8 @@ Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe,
              g new group
 In a group   Ctrl+R members (admin: a invite, x remove), Ctrl+T timer
-             (admin), Ctrl+D leave; join from the admin's chat: Ctrl+Y
+             (admin), Ctrl+V mute, Ctrl+D leave; join from the admin's
+             chat: Ctrl+Y
 Ctrl+K       lock now (also after the idle time in settings)
 Ctrl+Q       quit
 ? / F1       this help
@@ -634,6 +636,12 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         if let Some(s) = g.timer() {
             flag(format!("⏱ {}", span(u64::from(s))), t.teal);
         }
+        if crate::engine::muted(g.muted_until) {
+            flag(
+                format!("muted {}", crate::engine::mute_label(g.muted_until)),
+                t.overlay0,
+            );
+        }
         if g.is_admin() {
             flag("admin".into(), t.mauve);
         }
@@ -657,6 +665,12 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         }
         if c.no_history {
             flag("no history".into(), t.mauve);
+        }
+        if crate::engine::muted(c.muted_until) {
+            flag(
+                format!("muted {}", crate::engine::mute_label(c.muted_until)),
+                t.overlay0,
+            );
         }
         let waiting = c.hidden.len() + c.held_back as usize;
         if waiting > 0 {

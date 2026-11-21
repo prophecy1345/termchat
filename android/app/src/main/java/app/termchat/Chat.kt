@@ -327,6 +327,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 item("Rename") { ask("rename") }
                 item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
                 item("No history: ${if (c.noHistory) "on" else "off"}") { runCatching { a.setNoHistory(c.index, !c.noHistory) }; m.changed() }
+                item("Mute: ${c.mute}") { runCatching { a.nextMute(c.index) }; m.changed() }
                 item(if (c.blocked) "Unblock" else "Block") { runCatching { a.setBlocked(c.index, !c.blocked) }; m.changed() }
                 item("Report to the relay operator") { ask("report") }
                 item("Delete") { ask("delete") }

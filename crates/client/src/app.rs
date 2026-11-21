@@ -798,6 +798,24 @@ impl Main {
             (true, KeyCode::Char('d')) if self.group_index().is_some() => {
                 self.popup = Some(Popup::LeaveGroup)
             }
+            (true, KeyCode::Char('v')) => {
+                let until = match self.group_index() {
+                    Some(g) => {
+                        let group = &mut self.engine.data.groups[g];
+                        group.muted_until = engine::next_mute(group.muted_until);
+                        let until = group.muted_until;
+                        self.engine.persist();
+                        until
+                    }
+                    None if self.current().is_some() => {
+                        self.engine
+                            .edit(i, |c| c.muted_until = engine::next_mute(c.muted_until));
+                        self.current().and_then(|c| c.muted_until)
+                    }
+                    None => return,
+                };
+                self.status = format!("mute: {}", engine::mute_label(until));
+            }
             (true, KeyCode::Char('r')) if self.group_index().is_some() => {
                 self.popup = Some(Popup::Members(0))
             }
@@ -1225,6 +1243,7 @@ impl Main {
                 'e',
                 format!("no history: {}", if c.no_history { "on" } else { "off" }),
             ),
+            ('v', format!("mute: {}", engine::mute_label(c.muted_until))),
             ('b', if c.blocked { "unblock" } else { "block" }.into()),
             ('x', "report to the relay operator".into()),
             ('d', "delete".into()),

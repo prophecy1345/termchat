@@ -117,7 +117,9 @@ class Model(private val context: Context) : Listener {
      *  no connection of this identity. An unlocked account dials it again (ADR-012). */
     fun woken(instance: String) {
         account?.woken(instance)
-        if (account == null || !visible) {
+        // Unlocked, the message itself alerts once it is read, and a muted chat
+        // stays quiet; locked, nothing can tell which chat it is for.
+        if (account == null) {
             context.getSystemService(android.app.NotificationManager::class.java)
                 .notify(ID_MESSAGE, notification(context, CHANNEL_MESSAGES, "New message"))
         }

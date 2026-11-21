@@ -98,6 +98,8 @@ pub struct ContactView {
     pub needs_invite: bool,
     /// Their app reads answers, edits, deletes and reactions (ADR-025).
     pub rich: bool,
+    /// "off", "always" or the time left: no notification for its messages.
+    pub mute: String,
 }
 
 #[derive(uniffi::Record)]
@@ -150,6 +152,8 @@ pub struct GroupView {
     /// The admin's disappearing timer, seconds.
     pub expires_in: Option<u32>,
     pub last_at: u64,
+    /// As for a chat: "off", "always" or the time left.
+    pub mute: String,
 }
 
 /// One of our devices (ADR-028), the main one first.
@@ -523,6 +527,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         last_at: c.last_at(),
         needs_invite: e.needs_invite(c),
         rich: e.rich(i),
+        mute: engine::mute_label(c.muted_until),
     }
 }
 
@@ -719,6 +724,7 @@ impl Account {
                 left: x.left,
                 expires_in: x.timer(),
                 last_at: x.messages.last().map_or(0, |m| m.at),
+                mute: engine::mute_label(x.muted_until),
             })
             .collect()
     }
@@ -984,6 +990,21 @@ impl Account {
         let name = name.trim();
         let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
         self.with(index, |e, i| e.edit(i, |c| c.petname = name))
+    }
+
+    /// Cycles the mute like Ctrl+V: off, an hour, a day, always.
+    pub fn next_mute(&self, index: u32) -> Result<()> {
+        self.with(index, |e, i| {
+            e.edit(i, |c| c.muted_until = engine::next_mute(c.muted_until));
+        })
+    }
+
+    pub fn next_group_mute(&self, group: u32) -> Result<()> {
+        self.with_group(group, |e, g| {
+            let x = &mut e.data.groups[g];
+            x.muted_until = engine::next_mute(x.muted_until);
+            e.persist();
+        })
     }
 
     /// Cycles the disappearing timer like Ctrl+T; returns the new one.

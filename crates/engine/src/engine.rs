@@ -117,6 +117,31 @@ pub fn age(at: u64) -> String {
 }
 
 /// A duration, short and rounded down: "59m", "2h", "3d".
+/// Whether a chat muted until `until` (Unix seconds, `u64::MAX` for always) is quiet now.
+pub fn muted(until: Option<u64>) -> bool {
+    until.is_some_and(|t| t > now())
+}
+
+/// The next step of a chat's mute: off, an hour, a day, always, off again.
+pub fn next_mute(until: Option<u64>) -> Option<u64> {
+    let now = now();
+    match until.filter(|&t| t > now) {
+        None => Some(now + 3600),
+        Some(u64::MAX) => None,
+        Some(t) if t - now <= 3600 => Some(now + 86_400),
+        Some(_) => Some(u64::MAX),
+    }
+}
+
+/// How a chat's mute reads: "off", "always", or the time left ("23h").
+pub fn mute_label(until: Option<u64>) -> String {
+    match until.filter(|_| muted(until)) {
+        None => "off".into(),
+        Some(u64::MAX) => "always".into(),
+        Some(t) => format!("for {}", span(t.saturating_sub(now()).max(60))),
+    }
+}
+
 pub fn span(s: u64) -> String {
     match s {
         0..3600 => format!("{}m", s / 60),
@@ -1392,6 +1417,41 @@ impl Engine {
 
     /// ADR-032: a saved original text from the authenticated direct sender.
     pub fn on_relay_observing_direct_text(
+        &mut self,
+        event: RelayEvent,
+        observe: &mut dyn FnMut(Ed25519Key, &str),
+    ) {
+        let before = self.happened.len();
+        self.on_relay_event(event, observe);
+        self.quiet_muted(before);
+    }
+
+    /// A muted chat or group still counts unread, without a sound or a
+    /// notification; a stranger's request is never muted. From `before` on.
+    fn quiet_muted(&mut self, before: usize) {
+        let data = &self.data;
+        let mut n = 0;
+        self.happened.retain(|h| {
+            n += 1;
+            n <= before
+                || match h {
+                    Happened::Alert {
+                        key,
+                        request: false,
+                    } => !data
+                        .contacts
+                        .iter()
+                        .any(|c| c.key == *key && muted(c.muted_until)),
+                    Happened::GroupAlert { group } => !data
+                        .groups
+                        .iter()
+                        .any(|g| g.id == *group && muted(g.muted_until)),
+                    _ => true,
+                }
+        });
+    }
+
+    fn on_relay_event(
         &mut self,
         (link, ev): RelayEvent,
         observe: &mut dyn FnMut(Ed25519Key, &str),
@@ -3535,6 +3595,62 @@ mod tests {
         };
         assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn muted_chats_and_groups_stay_quiet() {
+        let (mut e, dir) = offline("mute");
+        e.data.contacts.push(contact(1, "loud"));
+        e.data.contacts.push(contact(2, "quiet"));
+        let g = e.create_group("ops").unwrap();
+        e.data.contacts[1].muted_until = Some(u64::MAX);
+        e.data.groups[g].muted_until = next_mute(None);
+        let group = e.data.groups[g].id;
+        let loud = Happened::Alert {
+            key: [1; 32],
+            request: false,
+        };
+        e.happened = vec![
+            loud.clone(),
+            Happened::Alert {
+                key: [2; 32],
+                request: false,
+            },
+            Happened::Alert {
+                key: [2; 32],
+                request: true,
+            },
+            Happened::GroupAlert { group },
+        ];
+        e.quiet_muted(0);
+        assert_eq!(
+            e.happened,
+            [
+                loud,
+                Happened::Alert {
+                    key: [2; 32],
+                    request: true
+                }
+            ],
+            "a request still alerts"
+        );
+        e.data.contacts[1].muted_until = Some(now() - 1);
+        e.happened = vec![Happened::Alert {
+            key: [2; 32],
+            request: false,
+        }];
+        e.quiet_muted(0);
+        assert_eq!(e.happened.len(), 1, "an expired mute is off");
+
+        let hour = next_mute(None).unwrap() - now();
+        assert!((3599..=3600).contains(&hour));
+        let day = next_mute(next_mute(None)).unwrap() - now();
+        assert!((86_399..=86_400).contains(&day));
+        assert_eq!(next_mute(next_mute(next_mute(None))), Some(u64::MAX));
+        assert_eq!(next_mute(Some(u64::MAX)), None);
+        assert_eq!(mute_label(Some(u64::MAX)), "always");
+        assert_eq!(mute_label(None), "off");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

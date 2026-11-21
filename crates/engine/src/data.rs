@@ -118,6 +118,9 @@ pub struct Group {
     /// Text typed and not sent yet, kept with the state.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
+    /// As for a chat: quiet until then, `u64::MAX` for always.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_until: Option<u64>,
     pub roster: Option<Roster>,
     pub relay_url: String,
     pub onion_url: Option<String>,
@@ -360,6 +363,10 @@ pub struct Contact {
     /// Text typed and not sent yet, kept with the state (not for `no_history`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
+    /// No sound or notification for its messages until then (Unix seconds,
+    /// `u64::MAX` for always); unread still counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_until: Option<u64>,
     /// Their messages are dropped unread; we cannot write to them.
     pub blocked: bool,
     /// Texts from a request not accepted yet, shown once it is (ADR-007).

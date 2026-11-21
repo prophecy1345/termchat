@@ -644,6 +644,7 @@ impl Chat {
         let admin = group.is_admin();
         let mut next = None;
         let mut search = false;
+        let mut mute_next = false;
         egui::Panel::top("chat-header")
             .frame(
                 egui::Frame::new()
@@ -676,6 +677,10 @@ impl Chat {
                         if ui.button("Search").clicked() {
                             search = true;
                         }
+                        let mute = termchat_engine::engine::mute_label(group.muted_until);
+                        if ui.button(format!("Mute: {mute}")).clicked() {
+                            mute_next = true;
+                        }
                     });
                 });
             });
@@ -684,6 +689,11 @@ impl Chat {
         }
         if search {
             self.open_search();
+        }
+        if mute_next {
+            let group = &mut self.engine.data.groups[g];
+            group.muted_until = termchat_engine::engine::next_mute(group.muted_until);
+            self.engine.persist();
         }
     }
 
@@ -900,6 +910,11 @@ impl Chat {
             Some(Menu::Open(d)) => self.dialog = Some(d),
             Some(Menu::Search) => {
                 self.open_search();
+            }
+            Some(Menu::Mute) => {
+                self.engine.edit(i, |c| {
+                    c.muted_until = termchat_engine::engine::next_mute(c.muted_until)
+                });
             }
             Some(Menu::Block) => {
                 let on = !self.engine.data.contacts[i].blocked;
@@ -1189,6 +1204,7 @@ impl Chat {
 enum Menu {
     Open(Dialog),
     Search,
+    Mute,
     Block,
     NoHistory,
     Report,
@@ -1204,6 +1220,16 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
     let pick = |ui: &mut egui::Ui, label: &str| ui.button(label).clicked();
     let next = match () {
         _ if pick(ui, "Search") => Menu::Search,
+        _ if pick(
+            ui,
+            &format!(
+                "Mute: {}",
+                termchat_engine::engine::mute_label(c.muted_until)
+            ),
+        ) =>
+        {
+            Menu::Mute
+        }
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
         _ if pick(ui, "Rename…") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
