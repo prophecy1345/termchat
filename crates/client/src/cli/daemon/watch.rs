@@ -203,8 +203,10 @@ impl Watch {
                 });
                 if deadline.due(now) {
                     let contact = e.name(&e.data.contacts[peer]);
-                    let seconds = deadline.after.as_secs();
-                    let text = format!("{contact} has been silent for {seconds} seconds");
+                    let text = format!(
+                        "{contact} has been silent for {}",
+                        span(deadline.after.as_secs())
+                    );
                     e.send(owner, &text)?;
                     eprintln!("termchat watch: outage detected; alert queued");
                     pending.push((last_mark(e, owner), now + ALERT_WAIT));
@@ -220,9 +222,26 @@ impl Watch {
     }
 }
 
+/// ADR-031 words the alert in minutes ("15 minutes") when they are whole.
+fn span(seconds: u64) -> String {
+    match (seconds / 60, seconds % 60) {
+        (1, 0) => "1 minute".into(),
+        (minutes, 0) => format!("{minutes} minutes"),
+        _ => format!("{seconds} seconds"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn alerts_say_whole_minutes() {
+        assert_eq!(span(900), "15 minutes");
+        assert_eq!(span(60), "1 minute");
+        assert_eq!(span(90), "90 seconds");
+        assert_eq!(span(4), "4 seconds");
+    }
 
     #[test]
     fn delayed_pulses_get_only_the_time_they_have_left() {
