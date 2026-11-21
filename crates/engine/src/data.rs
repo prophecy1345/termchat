@@ -367,6 +367,12 @@ pub struct Contact {
     /// `u64::MAX` for always); unread still counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted_until: Option<u64>,
+    /// Kept at the top of the list.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Kept at the bottom of the list, out of the way; still receives.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
     /// Their messages are dropped unread; we cannot write to them.
     pub blocked: bool,
     /// Texts from a request not accepted yet, shown once it is (ADR-007).

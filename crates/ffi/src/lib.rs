@@ -100,6 +100,10 @@ pub struct ContactView {
     pub rich: bool,
     /// "off", "always" or the time left: no notification for its messages.
     pub mute: String,
+    /// At the top of the list.
+    pub pinned: bool,
+    /// At the bottom of the list, under "Archived".
+    pub archived: bool,
 }
 
 #[derive(uniffi::Record)]
@@ -528,6 +532,8 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         needs_invite: e.needs_invite(c),
         rich: e.rich(i),
         mute: engine::mute_label(c.muted_until),
+        pinned: c.pinned,
+        archived: c.archived,
     }
 }
 
@@ -990,6 +996,15 @@ impl Account {
         let name = name.trim();
         let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
         self.with(index, |e, i| e.edit(i, |c| c.petname = name))
+    }
+
+    /// The list is sorted by the app; the order of indices stays.
+    pub fn set_pinned(&self, index: u32, on: bool) -> Result<()> {
+        self.with(index, |e, i| e.edit(i, |c| c.pinned = on))
+    }
+
+    pub fn set_archived(&self, index: u32, on: bool) -> Result<()> {
+        self.with(index, |e, i| e.edit(i, |c| c.archived = on))
     }
 
     /// Cycles the mute like Ctrl+V: off, an hour, a day, always.

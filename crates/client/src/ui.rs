@@ -469,6 +469,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 _ if m.engine.needs_invite(c) => ("↻", t.peach),
                 _ if c.unread > 0 => ("●", t.accent),
                 _ if !c.verified => ("!", t.peach),
+                _ if c.pinned => ("^", t.accent),
                 _ => (" ", t.overlay0),
             };
             let badge = match c.unread {
@@ -478,9 +479,10 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             };
             let label = fit(&name(m, c), width.saturating_sub(5 + badge.len()));
             let pad = width.saturating_sub(4 + Span::raw(&label).width() + badge.len());
-            let style = match i == m.selected {
-                true => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
-                false => Style::new().fg(t.subtext0),
+            let style = match (i == m.selected, c.archived) {
+                (true, _) => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
+                (false, true) => Style::new().fg(t.overlay0),
+                (false, false) => Style::new().fg(t.subtext0),
             };
             ListItem::new(Line::from(vec![
                 Span::styled(format!(" {mark} "), Style::new().fg(colour)),

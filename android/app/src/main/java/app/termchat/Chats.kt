@@ -15,13 +15,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.termchat.engine.ContactView
 
 /** The contact list, most recent first. */
 @Composable
 fun Chats(m: Model) {
     val a = m.account ?: return
     @Suppress("UNUSED_EXPRESSION") m.version
-    val contacts = a.contacts().sortedByDescending { it.lastAt }
+    // Pinned on top, archived at the bottom under their own heading.
+    val (archived, contacts) = a.contacts()
+        .sortedWith(compareBy<ContactView> { !it.pinned }.thenByDescending { it.lastAt })
+        .partition { it.archived }
     val groups = a.groups().sortedByDescending { it.lastAt }
     val invitedBy = a.groupInvites().map { it.from }.toSet()
     var newGroup by remember { mutableStateOf(false) }
@@ -64,14 +68,14 @@ fun Chats(m: Model) {
             }
         }
         LazyColumn {
-            items(contacts, key = { it.fingerprint }) { c ->
+            val row: @Composable (ContactView) -> Unit = { c ->
                 Row(
                     Modifier.fillMaxWidth().clickable { m.screen = Screen.Chat(c.index) }.padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Avatar(c.name)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text(c.name, style = Tc.mono.copy(color = if (c.blocked) Tc.dim else Tc.text))
+                        Text((if (c.pinned) "📌 " else "") + c.name, style = Tc.mono.copy(color = if (c.blocked || c.archived) Tc.dim else Tc.text))
                         val state = when {
                             c.request -> "CONTACT REQUEST"
                             c.left -> "LEFT"
@@ -95,6 +99,12 @@ fun Chats(m: Model) {
                 }
                 Line()
             }
+            items(contacts, key = { it.fingerprint }) { row(it) }
+            if (archived.isNotEmpty()) item {
+                Text("ARCHIVED", style = Tc.caps.copy(color = Tc.dim), modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
+                Line()
+            }
+            items(archived, key = { it.fingerprint }) { row(it) }
             // ADR-027: small private groups, after the contacts.
             if (groups.isNotEmpty()) item {
                 Text("GROUPS", style = Tc.caps.copy(color = Tc.dim), modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))

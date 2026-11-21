@@ -1097,7 +1097,45 @@ impl Main {
         if e.is_primary() || e.data.devices.is_some() {
             rows.push(('v', "devices".into()));
         }
+        rows.extend(self.place_rows());
         rows
+    }
+
+    /// Pin and archive for the open chat, in both menus.
+    fn place_rows(&self) -> Vec<(char, String)> {
+        let Some(c) = self.current() else {
+            return Vec::new();
+        };
+        vec![
+            (
+                'i',
+                if c.pinned {
+                    "unpin this chat"
+                } else {
+                    "pin this chat"
+                }
+                .into(),
+            ),
+            (
+                'z',
+                if c.archived {
+                    "unarchive this chat"
+                } else {
+                    "archive this chat"
+                }
+                .into(),
+            ),
+        ]
+    }
+
+    /// `i` pins or unpins the open chat, `z` archives or brings it back.
+    fn place(&mut self, what: char) {
+        let i = self.selected;
+        match what {
+            'i' => self.engine.edit(i, |c| c.pinned = !c.pinned),
+            _ => self.engine.edit(i, |c| c.archived = !c.archived),
+        }
+        self.resort();
     }
 
     /// Rows of a settings tab: label and whether it is ticked.
@@ -1248,6 +1286,7 @@ impl Main {
             ('x', "report to the relay operator".into()),
             ('d', "delete".into()),
         ]);
+        items.extend(self.place_rows());
         items
     }
 
@@ -1334,6 +1373,10 @@ impl Main {
                     }
                 },
                 Ok(Some('v')) => Some(Popup::Devices(0)),
+                Ok(Some(c @ ('i' | 'z'))) => {
+                    self.place(c);
+                    None
+                }
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1346,6 +1389,10 @@ impl Main {
             Popup::Actions(at) => match pick(&self.actions(), at, k) {
                 Err(at) => Some(Popup::Actions(at)),
                 Ok(None) => None,
+                Ok(Some(c @ ('i' | 'z'))) => {
+                    self.place(c);
+                    None
+                }
                 // The same as pressing Ctrl+key in the chat.
                 Ok(Some(c)) => {
                     return self.on_key(

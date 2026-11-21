@@ -3277,7 +3277,7 @@ impl Engine {
     pub fn resort(&mut self) {
         self.data
             .contacts
-            .sort_by_key(|c| (c.own, std::cmp::Reverse(c.last_at())));
+            .sort_by_key(|c| (c.own, c.archived, !c.pinned, std::cmp::Reverse(c.last_at())));
     }
 }
 
@@ -3595,6 +3595,32 @@ mod tests {
         };
         assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn pinned_chats_lead_and_archived_ones_trail() {
+        let (mut e, dir) = offline("pin");
+        let said = |at| {
+            let mut m = Msg::default();
+            m.at = at;
+            m
+        };
+        for (key, name, at, pinned, archived) in [
+            (1, "old", 10, false, false),
+            (2, "new", 30, false, false),
+            (3, "pinned", 5, true, false),
+            (4, "archived", 40, false, true),
+        ] {
+            let mut c = contact(key, name);
+            c.messages.push(said(at));
+            c.pinned = pinned;
+            c.archived = archived;
+            e.data.contacts.push(c);
+        }
+        e.resort();
+        let order: Vec<u8> = e.data.contacts.iter().map(|c| c.key[0]).collect();
+        assert_eq!(order, [3, 2, 1, 4]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

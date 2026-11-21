@@ -446,14 +446,21 @@ impl Chat {
         ui.add_space(8.0);
         let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.people())
             .partition(|&i| self.engine.is_request(&self.engine.data.contacts[i].key));
+        let (archived, contacts): (Vec<_>, Vec<_>) = contacts
+            .into_iter()
+            .partition(|&i| self.engine.data.contacts[i].archived);
         let mut picked = None;
         let mut picked_group = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .max_height(ui.available_height() - 36.0)
             .show(ui, |ui| {
-                for (title, rows) in [("Requests", &requests), ("Contacts", &contacts)] {
-                    if rows.is_empty() && title == "Requests" {
+                for (title, rows) in [
+                    ("Requests", &requests),
+                    ("Contacts", &contacts),
+                    ("Archived", &archived),
+                ] {
+                    if rows.is_empty() && title != "Contacts" {
                         continue;
                     }
                     ui.label(RichText::new(format!("{title}  {}", rows.len())).color(p.dim));
@@ -547,8 +554,17 @@ impl Chat {
                 ui.horizontal(|ui| {
                     avatar(ui, p, &name, 32.0);
                     ui.vertical(|ui| {
-                        let colour = if c.blocked || c.left { p.dim } else { p.text };
-                        ui.label(RichText::new(&name).monospace().color(colour));
+                        let colour = if c.blocked || c.left || c.archived {
+                            p.dim
+                        } else {
+                            p.text
+                        };
+                        let pin = if c.pinned { "📌 " } else { "" };
+                        ui.label(
+                            RichText::new(format!("{pin}{name}"))
+                                .monospace()
+                                .color(colour),
+                        );
                         let (state, ok) = match self.engine.needs_invite(c) {
                             true => ("NEEDS A NEW INVITE", false),
                             false => list_state(c, self.engine.is_request(&c.key)),
@@ -911,6 +927,14 @@ impl Chat {
             Some(Menu::Search) => {
                 self.open_search();
             }
+            Some(Menu::Pin) => {
+                self.engine.edit(i, |c| c.pinned = !c.pinned);
+                self.engine.resort();
+            }
+            Some(Menu::Archive) => {
+                self.engine.edit(i, |c| c.archived = !c.archived);
+                self.engine.resort();
+            }
             Some(Menu::Mute) => {
                 self.engine.edit(i, |c| {
                     c.muted_until = termchat_engine::engine::next_mute(c.muted_until)
@@ -1205,6 +1229,8 @@ enum Menu {
     Open(Dialog),
     Search,
     Mute,
+    Pin,
+    Archive,
     Block,
     NoHistory,
     Report,
@@ -1230,6 +1256,8 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         {
             Menu::Mute
         }
+        _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
+        _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
         _ if pick(ui, "Rename…") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))

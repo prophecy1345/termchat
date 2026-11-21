@@ -48,6 +48,10 @@ termchat.app never opens, previews or renders a file, and never overwrites one w
 - **Disappearing messages** (**Ctrl+T** in the terminal, the timer button next to the field in the apps): off → 5 minutes → 1 hour → 1 day → 1 week. It applies to what you send from then on, and the message disappears on both sides when its time is up. The chat title shows `⏱`.
 - **No history** (**Ctrl+E** in the terminal, ⋮ → **No history** in the apps): this chat is never written to disk. It is gone when you lock or quit.
 
+## Pin and archive chats
+
+Pin a chat to keep it at the top of the list, archive one to move it to the bottom, under its own heading. An archived chat still receives messages and counts them as unread; mute it as well to keep it quiet. In the terminal: **Ctrl+P**, then **i** pin or **z** archive, or right-click the contact; in the desktop app and on Android, ⋮ in the chat → **Pin** or **Archive**. Groups keep their own place below the chats.
+
 ## Mute a chat or group
 
 **Ctrl+V** in the terminal, ⋮ → **Mute** in a chat or **Mute** in a group in the desktop app, ⋮ → **Mute** on Android: off → 1 hour → 1 day → always. A muted chat makes no sound and no notification; its unread count still grows, and a new contact request always alerts. On Android, a wake-up that arrives while the app is locked cannot tell which chat it is for, so it still says "New message".
