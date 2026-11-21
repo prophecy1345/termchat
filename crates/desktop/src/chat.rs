@@ -705,6 +705,9 @@ impl Chat {
                         if ui.button("Search").clicked() {
                             search = true;
                         }
+                        if ui.button("Export").clicked() {
+                            next = Some(Dialog::Export);
+                        }
                         let mute = termchat_engine::engine::mute_label(group.muted_until);
                         if ui.button(format!("Mute: {mute}")).clicked() {
                             mute_next = true;
@@ -1269,6 +1272,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         {
             Menu::Mute
         }
+        _ if pick(ui, "Export…") => Menu::Open(Dialog::Export),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
@@ -1778,6 +1782,7 @@ mod tests {
             (Dialog::Delete, "Delete the contact"),
             (Dialog::DeleteMessage(1), "Delete the message"),
             (Dialog::Forward(0), "Forward to"),
+            (Dialog::Export, "Export this chat"),
             (Dialog::Report("x".into()), "Report to the relay operator"),
             (Dialog::Settings, "Settings"),
             (Dialog::backup(), "Back up your identity"),

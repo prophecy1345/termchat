@@ -250,7 +250,11 @@ fun Chat(m: Model, index: UInt) {
             }
         }
     }
-    dialog?.let { ContactDialog(m, c, it) { dialog = null } }
+    when (val d = dialog) {
+        null -> {}
+        "export" -> ExportChat(m, Place.Chat(index)) { dialog = null }
+        else -> ContactDialog(m, c, d) { dialog = null }
+    }
     forwarding?.let { at -> ForwardTo(m, Place.Chat(index), at) { forwarding = null } }
     unsend?.let { at ->
         AlertDialog(
@@ -327,6 +331,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
                 item("Search") { ask("search") }
+                item("Export…") { ask("export") }
                 item("Safety number") { ask("verify") }
                 item("Rename") { ask("rename") }
                 item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
@@ -542,5 +547,31 @@ internal fun ForwardTo(m: Model, from: Place, at: UInt, done: () -> Unit) {
             }
         },
         confirmButton = { Flat("Cancel", color = Tc.dim) { done() } },
+    )
+}
+
+/** The chat as a plain text file, after a warning that it is not encrypted. */
+@Composable
+internal fun ExportChat(m: Model, place: Place, done: () -> Unit) {
+    val a = m.account ?: return done()
+    val context = LocalContext.current
+    val export = remember(place) { runCatching { a.export(place) }.getOrNull() } ?: return done()
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(export.text.toByteArray()) } }
+                .onSuccess { m.note = "Exported. The file is not encrypted: delete it when done." }
+                .onFailure { m.note = it.message ?: "$it" }
+            m.changed()
+        }
+        done()
+    }
+    AlertDialog(
+        onDismissRequest = done,
+        containerColor = Tc.surface,
+        shape = corner,
+        title = { Text("Export this chat", style = Tc.name) },
+        text = { Text("A plain text file, with times in UTC. It is not encrypted: anyone who can open it reads the chat, disappearing messages included. Delete it when you are done.", style = Tc.mono) },
+        confirmButton = { Flat("Choose where…", color = Tc.lime) { save.launch(export.name) } },
+        dismissButton = { Flat("Cancel", color = Tc.dim) { done() } },
     )
 }

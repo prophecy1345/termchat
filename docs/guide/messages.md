@@ -64,6 +64,16 @@ Pin a chat to keep it at the top of the list, archive one to move it to the bott
 
 **Ctrl+V** in the terminal, ⋮ → **Mute** in a chat or **Mute** in a group in the desktop app, ⋮ → **Mute** on Android: off → 1 hour → 1 day → always. A muted chat makes no sound and no notification; its unread count still grows, and a new contact request always alerts. On Android, a wake-up that arrives while the app is locked cannot tell which chat it is for, so it still says "New message".
 
+## Export a chat
+
+Save a chat or group as a plain text file: each message with its time in UTC and who wrote it, documents as their names. **The file is not encrypted.** Anyone who can read it reads the chat, disappearing messages included, so keep it somewhere safe and delete it when you are done.
+
+- **Terminal:** **Ctrl+P**, then **e**, and the folder (`~/Downloads` by default).
+- **Desktop:** ⋮ → **Export…** in a chat, or **Export** in a group, then the folder.
+- **Android:** ⋮ → **Export…**, then where to save it.
+
+An existing file is never overwritten.
+
 ## Search
 
 **Ctrl+S** in the terminal, ⋮ → **Search** on Android, and **Ctrl+F** (**Cmd+F** on a Mac), ⋮ → **Search** or **Search** in a group in the desktop app. Results show as you type. The desktop app also finds documents by name; **Esc** or **×** closes the search. Search runs on your device only.

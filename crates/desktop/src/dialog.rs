@@ -46,6 +46,8 @@ pub enum Dialog {
     DeleteMessage(usize),
     /// Message `m` of the open chat or group, to another chat or group.
     Forward(usize),
+    /// The open chat or group as a plain text file, after a warning.
+    Export,
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
     Settings,
@@ -380,6 +382,36 @@ impl Chat {
                     return false;
                 }
                 stay
+            }
+            Dialog::Export => {
+                let export = match self.open_group() {
+                    Some(g) => self.engine.export_group(g),
+                    None => open.and_then(|i| self.engine.export_chat(i)),
+                };
+                let Some((name, text)) = export else {
+                    return false;
+                };
+                ui.heading("Export this chat");
+                ui.label(
+                    "The chat as a plain text file, with times in UTC. The file is not encrypted: \
+                     anyone who can read it reads the chat, disappearing messages included. \
+                     Delete it when you are done.",
+                );
+                let (go, stay) = buttons(ui, p, "Choose where…");
+                if !go {
+                    return stay;
+                }
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    self.status =
+                        match termchat_engine::data::save_new(&dir, &name, text.as_bytes()) {
+                            Ok(path) => format!(
+                                "Exported to {}: not encrypted, delete it when done",
+                                path.display()
+                            ),
+                            Err(e) => format!("cannot save: {e}"),
+                        };
+                }
+                false
             }
             Dialog::Forward(m) => {
                 let from = match self.open_group() {

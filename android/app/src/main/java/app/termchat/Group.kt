@@ -130,6 +130,7 @@ fun Group(m: Model, index: UInt) {
         null -> {}
         "members" -> Members(m, g, { dialog = it }) { dialog = null }
         "invite" -> InviteToGroup(m, g) { dialog = null }
+        "export" -> ExportChat(m, app.termchat.engine.Place.Group(index)) { dialog = null }
         "leave" -> Confirm(m, "Leave the group?", "The others are told. The chat stays here, read-only.", "Leave", { dialog = null }) {
             runCatching { a.leaveGroup(index) }.onFailure(fail)
         }
@@ -166,6 +167,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
                 item("Members") { ask("members") }
+                item("Export…") { ask("export") }
                 if (g.admin) {
                     item("Invite") { ask("invite") }
                     item("Disappearing: ${span(g.expiresIn)}") {

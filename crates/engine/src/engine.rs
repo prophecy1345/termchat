@@ -117,6 +117,48 @@ pub fn age(at: u64) -> String {
 }
 
 /// A duration, short and rounded down: "59m", "2h", "3d".
+/// `2026-11-21 14:03 UTC` for Unix seconds, with no calendar library: the
+/// days-to-civil-date arithmetic of Howard Hinnant's `civil_from_days`.
+pub fn utc_minute(at: u64) -> String {
+    let days = i64::try_from(at / 86_400).unwrap_or(i64::MAX / 2) + 719_468;
+    let (era, doe) = (days.div_euclid(146_097), days.rem_euclid(146_097));
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let secs = at % 86_400;
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        secs / 3600,
+        secs / 60 % 60
+    )
+}
+
+/// Plain text of a chat for an export the person asked for: a title, a
+/// warning, then each message with its time and who wrote it.
+fn export_text(title: &str, msgs: &[Msg], who: impl Fn(&Msg) -> String) -> String {
+    let mut out = format!(
+        "{title}, exported {}\nThis file is not encrypted: keep it somewhere safe, or delete it.\n\n",
+        utc_minute(now())
+    );
+    for m in msgs.iter().filter(|m| m.status != Status::System) {
+        let body = match (&m.file, m.deleted) {
+            (_, true) => "(deleted)".to_string(),
+            (Some(f), _) => format!("[document {}]", clean(&f.label())),
+            (None, _) => clean_text(&m.text).replace('\n', "\n  "),
+        };
+        let edited = if m.edited { " (edited)" } else { "" };
+        out.push_str(&format!(
+            "{}  {}: {body}{edited}\n",
+            utc_minute(m.at),
+            who(m)
+        ));
+    }
+    out
+}
+
 /// Whether a chat muted until `until` (Unix seconds, `u64::MAX` for always) is quiet now.
 pub fn muted(until: Option<u64>) -> bool {
     until.is_some_and(|t| t > now())
@@ -2678,6 +2720,30 @@ impl Engine {
 
     /// Queues a document to contact `i` (ADR-017); its chunks go out at the
     /// pace `send_chunks` allows.
+    /// File name and plain text of chat `i`, for an export the person asked for.
+    pub fn export_chat(&self, i: usize) -> Option<(String, String)> {
+        let c = self.data.contacts.get(i)?;
+        let them = clean(&self.name(c));
+        let who = |m: &Msg| if m.mine { "you".into() } else { them.clone() };
+        let title = format!("termchat.app chat with {them}");
+        let name = safe_name(&format!("termchat-{them}-{}.txt", &utc_minute(now())[..10]));
+        Some((name, export_text(&title, &c.messages, who)))
+    }
+
+    /// The same for group `g`, with each author's name.
+    pub fn export_group(&self, g: usize) -> Option<(String, String)> {
+        let group = self.data.groups.get(g)?;
+        let who = |m: &Msg| match (m.mine, m.author) {
+            (true, _) => "you".into(),
+            (false, Some(k)) => clean(group.name_of(&k).unwrap_or("someone")),
+            (false, None) => "someone".into(),
+        };
+        let name = clean(group.name());
+        let title = format!("termchat.app group {name}");
+        let file = safe_name(&format!("termchat-{name}-{}.txt", &utc_minute(now())[..10]));
+        Some((file, export_text(&title, &group.messages, who)))
+    }
+
     /// Sends what `forwardable` gave into chat `i`, as a new message of ours:
     /// no mark of where it came from.
     pub fn forward(&mut self, i: usize, what: data::Forward) -> Result<(), String> {
@@ -3612,6 +3678,50 @@ mod tests {
         };
         assert!(e.take_group_texts(g, 1).unwrap().0.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn utc_dates_without_a_calendar_library() {
+        assert_eq!(utc_minute(0), "1970-01-01 00:00 UTC");
+        assert_eq!(utc_minute(951_782_400), "2000-02-29 00:00 UTC");
+        assert_eq!(utc_minute(1_794_913_363), "2026-11-17 11:02 UTC");
+    }
+
+    #[tokio::test]
+    async fn exports_are_plain_text_with_a_warning() {
+        let (mut e, dir) = offline("export");
+        let mut c = contact(1, "bob");
+        let line = |mine, text: &str, at| {
+            let mut m = Msg::default();
+            m.mine = mine;
+            m.text = text.into();
+            m.at = at;
+            m
+        };
+        c.messages.push(line(false, "hello\nsecond line", 0));
+        c.messages.push(line(true, "hi \u{1b}[31mthere", 60));
+        let mut gone = line(false, "secret", 120);
+        gone.wipe();
+        c.messages.push(gone);
+        let mut notice = line(false, "⚠ 1 message missing", 180);
+        notice.status = Status::System;
+        c.messages.push(notice);
+        e.data.contacts.push(c);
+        let (name, text) = e.export_chat(0).unwrap();
+        assert!(
+            name.starts_with("termchat-bob-") && name.ends_with(".txt"),
+            "{name}"
+        );
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with("termchat.app chat with bob, exported "));
+        assert!(lines[1].contains("not encrypted"));
+        assert_eq!(lines[3], "1970-01-01 00:00 UTC  bob: hello");
+        assert_eq!(lines[4], "  second line");
+        assert!(lines[5].starts_with("1970-01-01 00:01 UTC  you: hi "));
+        assert!(!text.contains('\u{1b}'), "no control characters");
+        assert_eq!(lines[6], "1970-01-01 00:02 UTC  bob: (deleted)");
+        assert_eq!(lines.len(), 7, "notices stay out");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

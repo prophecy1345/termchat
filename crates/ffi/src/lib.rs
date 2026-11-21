@@ -106,6 +106,13 @@ pub struct ContactView {
     pub archived: bool,
 }
 
+/// A chat as a plain text file: its suggested name and the text.
+#[derive(uniffi::Record)]
+pub struct ExportView {
+    pub name: String,
+    pub text: String,
+}
+
 /// A chat or a group, for `forward`.
 #[derive(uniffi::Enum)]
 pub enum Place {
@@ -1006,6 +1013,19 @@ impl Account {
         let name = name.trim();
         let name = (!name.is_empty()).then(|| name.chars().take(64).collect());
         self.with(index, |e, i| e.edit(i, |c| c.petname = name))
+    }
+
+    /// The chat or group as plain text, for an export the person asked for.
+    pub fn export(&self, place: Place) -> Result<ExportView> {
+        let e = self.lock();
+        let at = |n: u32| usize::try_from(n).unwrap_or(usize::MAX);
+        let export = match place {
+            Place::Chat { index } if at(index) < e.data.people() => e.export_chat(at(index)),
+            Place::Group { index } => e.export_group(at(index)),
+            Place::Chat { .. } => None,
+        };
+        let (name, text) = export.ok_or_else(|| String::from("no such chat"))?;
+        Ok(ExportView { name, text })
     }
 
     /// Message `msg` of one chat or group into another, as a new message of ours.

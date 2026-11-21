@@ -16,6 +16,7 @@ pub enum Kind {
     Wipe,
     SendFile,
     SaveFile,
+    Export,
 }
 
 pub use termchat_engine::engine::{DEFAULT_ONION, DEFAULT_RELAY};
@@ -46,6 +47,7 @@ impl Kind {
             Self::Wipe => " wipe everything ",
             Self::SendFile => " send a file ",
             Self::SaveFile => " save a file ",
+            Self::Export => " export this chat ",
         }
     }
 
@@ -79,6 +81,7 @@ impl Kind {
             Self::Wipe => &[("Type WIPE or MOVED", false)],
             Self::SendFile => &[("File", false)],
             Self::SaveFile => &[("Save into folder, or type DISCARD", false)],
+            Self::Export => &[("Save into folder", false)],
         }
     }
 
@@ -105,6 +108,9 @@ impl Kind {
             Self::SaveFile => {
                 "The newest unsaved file in this chat. Files from contacts can be\nharmful: termchat never opens them, check before you do.\nAn existing file is never overwritten. Esc: keep it for later."
             }
+            Self::Export => {
+                "The open chat as a plain text file, with times in UTC.\nTHE FILE IS NOT ENCRYPTED: anyone who reads the folder reads the\nchat, disappearing messages included. Delete it when done."
+            }
             Self::Wipe => {
                 "Erases keys, contacts and history from this device. No undo.\nWIPE deletes the account: contacts are told you left and the\nrelay deletes your queues. MOVED (restored on another device):\nerases only this device and tells nobody."
             }
@@ -116,7 +122,7 @@ impl Kind {
         match self {
             Self::Setup => Some(4),
             Self::Backup | Self::Duress | Self::Password => Some(1),
-            Self::Restore | Self::Wipe | Self::SendFile | Self::SaveFile => None,
+            Self::Restore | Self::Wipe | Self::SendFile | Self::SaveFile | Self::Export => None,
         }
     }
 }
@@ -129,7 +135,7 @@ impl Form {
             fields[1] = DEFAULT_ONION.into();
             fields[2] = "y".into();
         }
-        if kind == Kind::SaveFile {
+        if matches!(kind, Kind::SaveFile | Kind::Export) {
             fields[0] = "~/Downloads".into();
         }
         Self {

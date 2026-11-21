@@ -1109,6 +1109,9 @@ impl Main {
             rows.push(('v', "devices".into()));
         }
         rows.extend(self.place_rows());
+        if self.current().is_some() || self.group_index().is_some() {
+            rows.push(('e', "export this chat to a text file".into()));
+        }
         rows
     }
 
@@ -1388,6 +1391,7 @@ impl Main {
                     self.place(c);
                     None
                 }
+                Ok(Some('e')) => Some(Popup::Form(Form::new(Kind::Export))),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1766,6 +1770,20 @@ impl Main {
                 self.engine
                     .change_password(&f.fields[0], f.new_password(1)?)?;
                 Ok("Password changed.".into())
+            }
+            Kind::Export => {
+                let export = match self.group_index() {
+                    Some(g) => self.engine.export_group(g),
+                    None => self.current().and(self.engine.export_chat(self.selected)),
+                };
+                let (name, text) = export.ok_or("open a chat first")?;
+                let dir = form::expand(&f.fields[0]);
+                let path = crate::data::save_new(&dir, &name, text.as_bytes())
+                    .map_err(|e| format!("cannot save: {e}"))?;
+                Ok(format!(
+                    "Exported to {}. It is not encrypted: delete it when done.",
+                    path.display()
+                ))
             }
             Kind::SendFile => {
                 let (name, bytes) = data::read_document(&form::expand(&f.fields[0]))?;
