@@ -136,14 +136,20 @@ pub(super) fn matching_reply(
     let p = pending
         .iter()
         .find(|p| p.key == key && !p.reply.is_closed() && Instant::now() < p.until)?;
-    let (decision, code) = text.split_once(' ')?;
-    if code != p.code {
+    // ADR-034: case and surrounding whitespace from keyboards do not count.
+    let mut words = text.split_ascii_whitespace();
+    let (Some(decision), Some(code), None) = (words.next(), words.next(), words.next()) else {
+        return None;
+    };
+    if !code.eq_ignore_ascii_case(&p.code) {
         return None;
     }
-    match decision {
-        "yes" => Some((key, true)),
-        "no" => Some((key, false)),
-        _ => None,
+    if decision.eq_ignore_ascii_case("yes") {
+        Some((key, true))
+    } else if decision.eq_ignore_ascii_case("no") {
+        Some((key, false))
+    } else {
+        None
     }
 }
 
@@ -216,10 +222,31 @@ mod tests {
         );
         for text in [
             "YES 0123456789abcdef",
+            "Yes 0123456789ABCDEF ",
             "yes  0123456789abcdef",
             "yes\t0123456789abcdef",
+            " yes 0123456789abcdef\r\n",
         ] {
-            assert_eq!(matching_reply(&pending, key, text), None);
+            assert_eq!(
+                matching_reply(&pending, key, text),
+                Some((key, true)),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            matching_reply(&pending, key, "NO 0123456789abcdef\n"),
+            Some((key, false))
+        );
+        for text in [
+            "yes 0123456789abcdef now",
+            "y 0123456789abcdef",
+            "ok 0123456789abcdef",
+            "yes 0123456789abcdee",
+            "yes",
+            "yes\u{a0}0123456789abcdef",
+            "",
+        ] {
+            assert_eq!(matching_reply(&pending, key, text), None, "{text:?}");
         }
         drop(receiver);
         assert_eq!(matching_reply(&pending, key, yes), None);

@@ -176,7 +176,7 @@ termchat watch send watcher --every 300
 termchat watch monitor backup-box --notify alice --after 900
 ```
 
-The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options. Set `--after` to at least twice `--every` plus a minute for reconnects. A threshold at or below the send interval makes the watcher send an alert after nearly every heartbeat. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
+The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options: `--every` takes at least 10 and `--after` at least 30. Set `--after` to at least twice `--every` plus a minute for reconnects. A threshold at or below the send interval makes the watcher send an alert after nearly every heartbeat. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
 
 Keep the watcher awake and the clocks synchronized. A relay outage can cause an alert or prevent delivery. The daemon logs locally when it queues an alert and when it cannot confirm delivery. A fresh heartbeat lets the watcher report the next outage.
 
@@ -190,7 +190,7 @@ if termchat ask alice "Deploy build 42 to staging?" --timeout 10m; then
 fi
 ```
 
-On their primary device, Alice sees an ordinary chat message with two possible replies, for example `yes f4bc2801e9029d71` and `no f4bc2801e9029d71`. She sends one of those lines exactly. The server waits for a reply with the current code from her verified primary device. Only one request per contact can wait at a time. The timeout defaults to 10 minutes, and `600` and `10m` mean the same thing.
+On their primary device, Alice sees an ordinary chat message with two possible replies, for example `yes f4bc2801e9029d71` and `no f4bc2801e9029d71`. She sends one of those lines. Letter case and spaces at the ends do not matter, but extra words do. The server waits for a reply with the current code from her verified primary device. Only one request per contact can wait at a time. The timeout defaults to 10 minutes, and `600` and `10m` mean the same thing.
 
 If the question begins with `--`, put it after the `--` separator and put any options before that separator.
 

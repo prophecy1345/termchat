@@ -1,6 +1,6 @@
 # ADR-034 — Tolerant `ask` replies and minimum `watch` intervals
 
-Status — **proposed**, awaiting the maintainer. [Русская версия](034-ask-and-watch-input.ru.md).
+Status — **accepted by the maintainer**. [Русская версия](034-ask-and-watch-input.ru.md).
 
 Amends [ADR-032](032-ask.md) and [ADR-031](031-watch.md).
 
@@ -29,7 +29,7 @@ Everything else in ADR-032 stays: the reply must come from the pinned contact's 
 - `watch send --every` takes at least 10 seconds.
 - `watch monitor --after` takes at least 30 seconds.
 
-Smaller values exit with code 2. The guide already asks for `--after` of at least twice `--every` plus a minute. The two values live on different hosts, so the daemon cannot compare them.
+Smaller values exit with code 2. Debug builds keep a one-second minimum so the end-to-end test stays short; release builds enforce these values. The guide already asks for `--after` of at least twice `--every` plus a minute. The two values live on different hosts, so the daemon cannot compare them.
 
 ## Threat model
 

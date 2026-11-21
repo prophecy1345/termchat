@@ -224,7 +224,8 @@ async fn ask_accepts_only_the_current_reply_from_the_verified_contact() {
     ]);
     let (m, code) = question(&mut alice, alice_chat, "--Deploy build 42?").await;
     let yes = format!("yes {code}");
-    let malformed = format!("{yes}\n");
+    // ADR-034: case and edge whitespace are fine, an extra word is not.
+    let malformed = format!("{yes} please");
     assert_eq!(
         text(&termchat(&mut alice, &home, &["ask", "missing", "Hi"]).await).0,
         Some(3)

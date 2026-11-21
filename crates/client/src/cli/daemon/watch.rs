@@ -12,6 +12,9 @@ use super::{Fail, Mark, err, last_mark, status_of};
 
 const CLOCK_SKEW: u64 = 60;
 const ALERT_WAIT: Duration = Duration::from_secs(60);
+// ADR-034 minimums; debug builds keep one second so the end-to-end test stays fast.
+const MIN_EVERY: u64 = if cfg!(debug_assertions) { 1 } else { 10 };
+const MIN_AFTER: u64 = if cfg!(debug_assertions) { 1 } else { 30 };
 
 struct Deadline {
     after: Duration,
@@ -87,10 +90,20 @@ pub(super) fn register(
         };
         let peer = contact("peer")?;
         let now = Instant::now();
-        let bad_interval = || Fail(2, "watch needs a positive interval in whole seconds".into());
+        let least = if request["cmd"] == "watch_send" {
+            MIN_EVERY
+        } else {
+            MIN_AFTER
+        };
+        let bad_interval = || {
+            Fail(
+                2,
+                format!("watch needs an interval of at least {least} whole seconds"),
+            )
+        };
         let seconds = request["seconds"]
             .as_u64()
-            .filter(|&s| s > 0)
+            .filter(|&s| s >= least)
             .ok_or_else(bad_interval)?;
         let interval = Duration::from_secs(seconds);
         let at = now.checked_add(interval).ok_or_else(bad_interval)?;
