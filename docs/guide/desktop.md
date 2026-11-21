@@ -14,7 +14,7 @@ The terminal client and the desktop app open the same account (`~/.termchat`), b
 ## The window
 
 - **Left:** your contacts, with **+ Add**, **Invite**, **Settings** and **Lock** below.
-- **Right:** the chat. ⋮ at the top holds **Safety number**, **Rename…**, **No history**, **Block**, **Report…** and **Delete…** (**Reject request…** for a request).
+- **Right:** the chat. ⋮ at the top holds **Search**, **Safety number**, **Rename…**, **No history**, **Block**, **Report…** and **Delete…** (**Reject request…** for a request).
 - **Bottom:** the field, **SEND**, **File** and the disappearing-messages timer (**timer off**, then 5m, 1h, 1d, 1w with each click). **Enter** sends, **Shift+Enter** starts a new line.
 - **Status bar:** online or connecting, your nickname, warnings.
 

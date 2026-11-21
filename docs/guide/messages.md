@@ -48,7 +48,7 @@ termchat.app never opens, previews or renders a file, and never overwrites one w
 
 ## Search
 
-**Ctrl+S** in the terminal, ⋮ → **Search** on Android. Results show as you type, newest first. Search runs on your device only. The desktop app has no search yet.
+**Ctrl+S** in the terminal, ⋮ → **Search** on Android, and **Ctrl+F** (**Cmd+F** on a Mac), ⋮ → **Search** or **Search** in a group in the desktop app. Results show as you type. The desktop app also finds documents by name; **Esc** or **×** closes the search. Search runs on your device only.
 
 ## Warnings in a chat
 

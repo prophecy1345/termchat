@@ -14,7 +14,7 @@ English version: [desktop.md](desktop.md).
 ## Окно
 
 - **Слева:** контакты, под ними **+ Add**, **Invite**, **Settings** и **Lock**.
-- **Справа:** чат. В меню ⋮ сверху — **Safety number**, **Rename…**, **No history**, **Block**, **Report…** и **Delete…** (у запроса — **Reject request…**).
+- **Справа:** чат. В меню ⋮ сверху — **Search**, **Safety number**, **Rename…**, **No history**, **Block**, **Report…** и **Delete…** (у запроса — **Reject request…**).
 - **Внизу:** поле ввода, **SEND**, **File** и таймер исчезающих сообщений (**timer off**, затем 5m, 1h, 1d, 1w по каждому щелчку). **Enter** отправляет, **Shift+Enter** начинает новую строку.
 - **Строка состояния:** в сети или подключается, ваш ник, предупреждения.
 

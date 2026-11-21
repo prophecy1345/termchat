@@ -177,6 +177,9 @@ pub struct Chat {
     focus_input: bool,
     /// Set up only to be linked: show the link code once the relay is reached.
     pub(crate) linking: bool,
+    /// Searching the open chat's history, on this device only: the query.
+    search: Option<String>,
+    focus_search: bool,
 }
 
 /// What SEND does with the typed text (ADR-025).
@@ -214,6 +217,8 @@ impl Chat {
             compose: Compose::New,
             focus_input: false,
             linking: false,
+            search: None,
+            focus_search: false,
         };
         chat.engine.resort();
         chat
@@ -345,6 +350,7 @@ impl Chat {
         self.group = None;
         self.input.clear();
         self.compose = Compose::New;
+        self.search = None;
     }
 
     pub(crate) fn select_group(&mut self, g: usize) {
@@ -352,6 +358,7 @@ impl Chat {
         self.open = None;
         self.input.clear();
         self.compose = Compose::New;
+        self.search = None;
     }
 
     pub(crate) fn open_group(&self) -> Option<usize> {
@@ -379,6 +386,10 @@ impl Chat {
                 path: path.display().to_string(),
                 error: String::new(),
             });
+        }
+        let find = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
+        if find && (self.open.is_some() || self.open_group().is_some()) {
+            self.open_search();
         }
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(p.surface).inner_margin(6))
@@ -567,6 +578,7 @@ impl Chat {
 
     fn group_chat(&mut self, ui: &mut egui::Ui, p: &Pal, g: usize) {
         self.group_header(ui, p, g);
+        self.search_bar(ui, p);
         egui::Panel::bottom("input")
             .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
             .show(ui, |ui| self.input_row(ui, p, Open::Group(g)));
@@ -586,6 +598,7 @@ impl Chat {
                             group: Some(group),
                             me,
                             rich: true,
+                            query: self.search.as_deref().unwrap_or_default(),
                         };
                         if let Some(act) = messages(ui, p, view) {
                             self.act(Open::Group(g), act);
@@ -599,6 +612,7 @@ impl Chat {
         let name = termchat_engine::clean(group.name());
         let admin = group.is_admin();
         let mut next = None;
+        let mut search = false;
         egui::Panel::top("chat-header")
             .frame(
                 egui::Frame::new()
@@ -628,11 +642,52 @@ impl Chat {
                         if ui.button("Members").clicked() {
                             next = Some(Dialog::Members);
                         }
+                        if ui.button("Search").clicked() {
+                            search = true;
+                        }
                     });
                 });
             });
         if let Some(d) = next {
             self.dialog = Some(d);
+        }
+        if search {
+            self.open_search();
+        }
+    }
+
+    fn open_search(&mut self) {
+        if self.search.is_none() {
+            self.search = Some(String::new());
+            self.focus_search = true;
+        }
+    }
+
+    /// The search field over the history, while a search is open.
+    fn search_bar(&mut self, ui: &mut egui::Ui, p: &Pal) {
+        let Some(query) = self.search.as_mut() else {
+            return;
+        };
+        let mut focus = std::mem::take(&mut self.focus_search);
+        let mut close = false;
+        egui::Panel::top("search")
+            .frame(egui::Frame::new().fill(p.bg).inner_margin(8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(query)
+                            .hint_text("Search this chat")
+                            .desired_width(ui.available_width() - 40.0),
+                    );
+                    if std::mem::take(&mut focus) {
+                        field.request_focus();
+                    }
+                    close =
+                        ui.button("×").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                });
+            });
+        if close {
+            self.search = None;
         }
     }
 
@@ -649,6 +704,7 @@ impl Chat {
         };
         let request = self.engine.is_request(&self.engine.data.contacts[i].key);
         self.header(ui, p, i, request);
+        self.search_bar(ui, p);
         egui::Panel::bottom("input")
             .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
             .show(ui, |ui| self.input_row(ui, p, Open::Chat(i)));
@@ -666,6 +722,7 @@ impl Chat {
                             group: None,
                             me: self.engine.me(),
                             rich: self.engine.rich(i),
+                            query: self.search.as_deref().unwrap_or_default(),
                         };
                         if let Some(act) = messages(ui, p, view) {
                             self.act(Open::Chat(i), act);
@@ -810,6 +867,9 @@ impl Chat {
         }
         match next {
             Some(Menu::Open(d)) => self.dialog = Some(d),
+            Some(Menu::Search) => {
+                self.open_search();
+            }
             Some(Menu::Block) => {
                 let on = !self.engine.data.contacts[i].blocked;
                 self.engine.block(i, on);
@@ -1092,6 +1152,7 @@ impl Chat {
 /// What the chat menu asked for.
 enum Menu {
     Open(Dialog),
+    Search,
     Block,
     NoHistory,
     Report,
@@ -1106,6 +1167,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
     };
     let pick = |ui: &mut egui::Ui, label: &str| ui.button(label).clicked();
     let next = match () {
+        _ if pick(ui, "Search") => Menu::Search,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
         _ if pick(ui, "Rename…") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
@@ -1147,6 +1209,8 @@ struct View<'a> {
     me: Key,
     /// The other side reads answers and reactions (ADR-025); always in a group.
     rich: bool,
+    /// Only messages holding this text, any case; empty shows all.
+    query: &'a str,
 }
 
 /// Our reaction to `m` in group `g`.
@@ -1160,11 +1224,19 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
     let width = ui.available_width();
     let mut act = None;
     let mut last_author = None;
+    let query = v.query.trim().to_lowercase();
+    let mut found = 0;
     for (n, m) in v.msgs.iter().enumerate() {
         let text = match &m.file {
             Some(f) => clean_text(f.label().trim_start_matches("📄 ")),
             None => clean_text(&m.text),
         };
+        if !query.is_empty() {
+            if m.status == Status::System || !text.to_lowercase().contains(&query) {
+                continue;
+            }
+            found += 1;
+        }
         if m.status == Status::System {
             ui.vertical_centered(|ui| {
                 egui::Frame::new()
@@ -1329,6 +1401,9 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
             }
         });
         ui.add_space(4.0);
+    }
+    if !query.is_empty() && found == 0 {
+        ui.vertical_centered(|ui| ui.label(RichText::new("Nothing found.").color(p.dim)));
     }
     act
 }
