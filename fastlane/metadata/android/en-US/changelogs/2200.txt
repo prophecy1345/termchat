@@ -1,0 +1,1 @@
+A queued message keeps the disappearing timer it was written with. Servers can send a single message that disappears with termchat send --expires.

@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.22.0
+
+- `termchat send CONTACT --expires 5m` sends one direct message with a timer
+  of its own, from 10 seconds to 7 days, for a secret that should not stay
+  in either chat.
+- A queued message now keeps the timer it was written with, even if the
+  chat's timer changes before it goes out.
+
 ## 0.21.0
 
 - `termchat run -- COMMAND` runs a command and then sends one report to a
