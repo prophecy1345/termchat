@@ -3,6 +3,12 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.21.0
+
+- `termchat run -- COMMAND` runs a command and then sends one report to a
+  contact or private group: exit status, duration, host and the last lines
+  of output, with `--failures-only` for quiet successes (ADR-035).
+
 ## 0.20.2
 
 - The `termchat watch` alert counts in whole minutes when it can, as in

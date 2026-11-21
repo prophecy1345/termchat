@@ -1,0 +1,1 @@
+termchat run on servers reports how a command ended: exit status, duration and the last lines of output.
