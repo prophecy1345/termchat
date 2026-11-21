@@ -246,6 +246,64 @@ rsync: write failed on "/mnt/backup/db.tar": No space left on device (28)
 
 The output can contain secrets: a token, a password, a private path. The report lands in the chat history and notifications, and on every device of a group. For such commands, use `--lines 0` or `--failures-only`.
 
+## From GitHub Actions or another CI
+
+Keep no termchat identity in CI secrets (ADR-036). A secret is a fixed copy of the identity, so every run would start from the same encryption state and reuse message keys. Instead, CI connects over SSH to a server that runs a CI identity, with a key that can only send to one contact.
+
+```sh
+# on the server, as root: a user with a shell, because sshd runs the forced command through it
+useradd --system --create-home --home-dir /var/lib/termchat-ci --shell /bin/sh termchat-ci
+usermod -p '*' termchat-ci          # no password login, but not a locked account
+chmod 700 /var/lib/termchat-ci
+install -d -o termchat-ci -g termchat-ci -m 700 /etc/termchat-ci /var/lib/termchat-ci/.ssh
+head -c 30 /dev/urandom | base64 | sudo -u termchat-ci sh -c 'umask 077; cat > /etc/termchat-ci/pw'
+ci() { sudo -u termchat-ci env TERMCHAT_HOME=/var/lib/termchat-ci termchat "$@" --password-file /etc/termchat-ci/pw; }
+ci init --nickname ci-example
+ci add 'termchat:...'               # your invite; accept the request in your app
+
+# on your computer: a key for this repository only
+ssh-keygen -t ed25519 -N '' -f termchat-ci -C 'ci example/repo'
+
+# on the server: the key may only send to alice
+printf 'command="TERMCHAT_HOME=/var/lib/termchat-ci /usr/local/bin/termchat send alice",restrict %s\n' \
+  "$(cat termchat-ci.pub)" >> /var/lib/termchat-ci/.ssh/authorized_keys
+chown termchat-ci: /var/lib/termchat-ci/.ssh/authorized_keys; chmod 600 /var/lib/termchat-ci/.ssh/authorized_keys
+```
+
+Run `termchat daemon` for this user as under “A daemon, for a bot that answers”, with `User=termchat-ci` and its paths. Check that `ci contacts` shows `alice` as `ok`. If the server has `AllowUsers` in `sshd_config`, add `termchat-ci` there.
+
+In the repository settings, store the private key `termchat-ci` as the secret `TERMCHAT_SSH_KEY`. Store the server's host key as the variable `TERMCHAT_HOST_KEY`, as one line such as `ci.example.org ssh-ed25519 AAAA…`. Take it from `/etc/ssh/ssh_host_ed25519_key.pub` on the server itself, not from the network. Then add this step at the end of a job:
+
+```yaml
+      - name: Report to termchat
+        if: always()
+        env:
+          KEY: ${{ secrets.TERMCHAT_SSH_KEY }}
+          HOST_KEY: ${{ vars.TERMCHAT_HOST_KEY }}
+          TEXT: "${{ github.repository }} ${{ github.workflow }} #${{ github.run_number }}: ${{ job.status }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/termchat-key"
+          printf '%s\n' "$HOST_KEY" > "$RUNNER_TEMP/termchat-host"
+          printf '%s\n' "$TEXT" | ssh -T -i "$RUNNER_TEMP/termchat-key" -o IdentitiesOnly=yes \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/termchat-host" termchat-ci@ci.example.org
+```
+
+- sshd runs only the forced command, whatever the client asks for. The text arrives on stdin, and the recipient is fixed on the server.
+- The step fails with the `send` exit code, for example `4` when the message is still queued.
+- `restrict` turns off port, agent and X11 forwarding and the terminal. A leaked key can only send texts to `alice` as `ci-example`. Replace its line in `authorized_keys` to revoke it.
+- Values from `github` go through `env`, never straight into `run`: a branch name or commit message is text anyone with push access can choose.
+
+**An approval before a deploy.** Generate a second key and bind it to a fixed question. Mark `alice` as verified for the CI identity first, as in “Ask for approval before a script step”.
+
+```sh
+printf 'command="TERMCHAT_HOME=/var/lib/termchat-ci /usr/local/bin/termchat ask alice \\"Deploy example/repo to production?\\" --timeout 30m",restrict %s\n' \
+  "$(cat termchat-deploy.pub)" >> /var/lib/termchat-ci/.ssh/authorized_keys
+```
+
+Use the same step with that key, `< /dev/null` instead of the text, and `timeout-minutes: 35`. ssh returns the remote exit status, so the job continues only after `yes`: `1` means she declined and `4` that time ran out.
+
 ## More examples
 
 ```sh

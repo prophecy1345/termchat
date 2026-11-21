@@ -135,6 +135,11 @@ that (ADR-023).
   only acts on membership changes it has learned. A successful send
   confirms relay acceptance. Read markers are saved before output, so a
   crash, broken pipe or slow subscriber can lose script output.
+- **CI notifications** (ADR-036). CI keeps no identity: it reaches a
+  server's CI identity over SSH with a key bound to one forced command and
+  recipient. A leaked key sends texts to that recipient, or starts the
+  fixed `ask`, but reads nothing. An identity restored from CI secrets on
+  every run would reuse Olm message keys, so the guide rules it out.
 - **Command reports** (ADR-035). `run` sends the last lines of a command's
   output, so a token or password the command prints ends up in the chat
   history, notifications and, for a group, on every member's device. The

@@ -99,6 +99,10 @@ contact. [Set up script approvals](docs/guide/scripts.md#ask-for-approval-before
 Wrap a cron job in `termchat run` to get its exit status, duration and last
 lines of output when it ends. [Report how a command ended](docs/guide/scripts.md#report-how-a-command-ended)
 
+Notify yourself from GitHub Actions or another CI, or wait for your approval
+before a deploy, without keeping an identity in CI secrets.
+[CI over SSH](docs/guide/scripts.md#from-github-actions-or-another-ci)
+
 Send reports to a private group and read replies as JSON from your script.
 [Use groups from scripts](docs/guide/scripts.md#private-groups)
 

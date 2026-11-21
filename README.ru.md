@@ -101,6 +101,10 @@ irm https://raw.githubusercontent.com/prophecy1345/termchat/main/scripts/install
 Оберните задачу cron в `termchat run`, чтобы по её окончании получить код
 выхода, длительность и последние строки вывода. [Сообщить, чем закончилась команда](docs/guide/scripts.ru.md#сообщить-чем-закончилась-команда)
 
+Получайте уведомления из GitHub Actions или другого CI и подтверждайте
+выкладку, не храня личность в секретах CI.
+[CI через SSH](docs/guide/scripts.ru.md#из-github-actions-или-другого-ci)
+
 Отправляйте отчёты в приватную группу и читайте ответы в JSON из скрипта.
 [Как использовать группы в скриптах](docs/guide/scripts.ru.md#приватные-группы)
 

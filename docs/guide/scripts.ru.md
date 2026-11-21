@@ -246,6 +246,64 @@ rsync: write failed on "/mnt/backup/db.tar": No space left on device (28)
 
 В выводе могут оказаться секреты: токен, пароль, закрытый путь. Отчёт остаётся в истории чата и уведомлениях, а в группе — на каждом устройстве. Для таких команд используйте `--lines 0` или `--failures-only`.
 
+## Из GitHub Actions или другого CI
+
+Не храните личность termchat в секретах CI (ADR-036). Секрет — неизменная копия личности, и каждый запуск начинал бы с того же состояния шифрования и повторял бы ключи сообщений. Вместо этого CI подключается по SSH к серверу, где работает личность для CI, ключом, который может только писать одному контакту.
+
+```sh
+# на сервере от root: пользователь с оболочкой, потому что sshd запускает принудительную команду через неё
+useradd --system --create-home --home-dir /var/lib/termchat-ci --shell /bin/sh termchat-ci
+usermod -p '*' termchat-ci          # без входа по паролю, но не заблокированная учётная запись
+chmod 700 /var/lib/termchat-ci
+install -d -o termchat-ci -g termchat-ci -m 700 /etc/termchat-ci /var/lib/termchat-ci/.ssh
+head -c 30 /dev/urandom | base64 | sudo -u termchat-ci sh -c 'umask 077; cat > /etc/termchat-ci/pw'
+ci() { sudo -u termchat-ci env TERMCHAT_HOME=/var/lib/termchat-ci termchat "$@" --password-file /etc/termchat-ci/pw; }
+ci init --nickname ci-example
+ci add 'termchat:...'               # ваше приглашение; примите запрос в приложении
+
+# на вашем компьютере: ключ только для этого репозитория
+ssh-keygen -t ed25519 -N '' -f termchat-ci -C 'ci example/repo'
+
+# на сервере: этот ключ может только писать alice
+printf 'command="TERMCHAT_HOME=/var/lib/termchat-ci /usr/local/bin/termchat send alice",restrict %s\n' \
+  "$(cat termchat-ci.pub)" >> /var/lib/termchat-ci/.ssh/authorized_keys
+chown termchat-ci: /var/lib/termchat-ci/.ssh/authorized_keys; chmod 600 /var/lib/termchat-ci/.ssh/authorized_keys
+```
+
+Запустите `termchat daemon` для этого пользователя, как в разделе «Служба для бота, который отвечает», с `User=termchat-ci` и его путями. Проверьте, что `ci contacts` показывает `alice` в состоянии `ok`. Если в `sshd_config` есть `AllowUsers`, добавьте туда `termchat-ci`.
+
+В настройках репозитория сохраните закрытый ключ `termchat-ci` как секрет `TERMCHAT_SSH_KEY`. Ключ хоста сервера сохраните как переменную `TERMCHAT_HOST_KEY` одной строкой, например `ci.example.org ssh-ed25519 AAAA…`. Берите его из `/etc/ssh/ssh_host_ed25519_key.pub` на самом сервере, а не из сети. Затем добавьте этот шаг в конец задачи:
+
+```yaml
+      - name: Report to termchat
+        if: always()
+        env:
+          KEY: ${{ secrets.TERMCHAT_SSH_KEY }}
+          HOST_KEY: ${{ vars.TERMCHAT_HOST_KEY }}
+          TEXT: "${{ github.repository }} ${{ github.workflow }} #${{ github.run_number }}: ${{ job.status }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: |
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/termchat-key"
+          printf '%s\n' "$HOST_KEY" > "$RUNNER_TEMP/termchat-host"
+          printf '%s\n' "$TEXT" | ssh -T -i "$RUNNER_TEMP/termchat-key" -o IdentitiesOnly=yes \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/termchat-host" termchat-ci@ci.example.org
+```
+
+- sshd запускает только принудительную команду, что бы ни просил клиент. Текст приходит через stdin, получатель задан на сервере.
+- Шаг завершается с кодом `send`, например `4`, если сообщение ещё в очереди.
+- `restrict` запрещает проброс портов, агента и X11 и терминал. Утёкший ключ может только слать тексты `alice` от имени `ci-example`. Чтобы отозвать его, замените его строку в `authorized_keys`.
+- Значения из `github` идут через `env`, а не прямо в `run`: имя ветки или сообщение коммита может выбрать любой, у кого есть право push.
+
+**Подтверждение перед выкладкой.** Создайте второй ключ и привяжите его к заданному вопросу. Сначала отметьте `alice` проверенной для личности CI, как в разделе «Запросить подтверждение перед шагом скрипта».
+
+```sh
+printf 'command="TERMCHAT_HOME=/var/lib/termchat-ci /usr/local/bin/termchat ask alice \\"Deploy example/repo to production?\\" --timeout 30m",restrict %s\n' \
+  "$(cat termchat-deploy.pub)" >> /var/lib/termchat-ci/.ssh/authorized_keys
+```
+
+Используйте тот же шаг с этим ключом, `< /dev/null` вместо текста и `timeout-minutes: 35`. ssh возвращает код выхода удалённой команды, поэтому задача продолжается только после `yes`: `1` значит отказ, `4` — время вышло.
+
 ## Ещё примеры
 
 ```sh
