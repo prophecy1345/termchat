@@ -24,7 +24,7 @@ The security settings (backup, passwords, Tor, bridges, connections, lock time, 
 termchat.app never puts a name or a text where the operating system keeps them.
 
 - **Terminal:** a card with the sender's name (never the text) shows in the corner for 5 seconds when a message arrives in a chat you are not looking at; click it to open the chat. **sound for new messages** plays the system sound (macOS: Glass; Linux: `canberra-gtk-play` or `paplay`; otherwise the terminal bell). **system notification** (off by default) asks the terminal for a desktop notification that always says just "termchat: new message". The window title shows only the unread count: `termchat (3)`.
-- **Desktop:** the system sound for new messages, in **Appearance**.
+- **Desktop:** the system sound for new messages and, on macOS and Linux, a system notification that only says "New message" while the window is not in front, both in **Appearance**. Linux needs `notify-send` (package `libnotify-bin` or `libnotify`). Windows has no notification yet.
 - **Android:** see [Android](android.md): "termchat: New message", with no name and no text.
 
 ## Mouse (terminal)

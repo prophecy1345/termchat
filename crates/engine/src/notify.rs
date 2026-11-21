@@ -46,3 +46,37 @@ pub fn sound() -> bool {
     }
     false
 }
+
+/// A system notification that always says "New message": no name, no text.
+/// macOS and Linux (`notify-send`); false where none could be started.
+pub fn system() -> bool {
+    let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
+        (
+            "osascript",
+            &[
+                "-e",
+                "display notification \"New message\" with title \"termchat.app\"",
+            ],
+        )
+    } else if cfg!(windows) {
+        return false;
+    } else {
+        (
+            "notify-send",
+            &["--app-name=termchat.app", "termchat.app", "New message"],
+        )
+    };
+    let child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match child {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+            true
+        }
+        Err(_) => false,
+    }
+}

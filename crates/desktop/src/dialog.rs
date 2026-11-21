@@ -918,6 +918,14 @@ impl Chat {
                         ui.label("New messages");
                         ui.checkbox(&mut s.sound, "Play the system sound");
                         ui.end_row();
+                        if !cfg!(windows) {
+                            ui.label("");
+                            ui.checkbox(
+                                &mut s.notify,
+                                "Show a system notification: \"New message\", no name or text",
+                            );
+                            ui.end_row();
+                        }
                         ui.label("Lock after");
                         egui::ComboBox::from_id_salt("lock")
                             .width(220.0)

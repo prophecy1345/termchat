@@ -180,6 +180,8 @@ pub struct Chat {
     /// Searching the open chat's history, on this device only: the query.
     search: Option<String>,
     focus_search: bool,
+    /// The setting: a system notification while the window is not in front.
+    pub(crate) notify: bool,
 }
 
 /// What SEND does with the typed text (ADR-025).
@@ -220,6 +222,7 @@ impl Chat {
             linking: false,
             search: None,
             focus_search: false,
+            notify: false,
         };
         chat.engine.resort();
         chat
@@ -315,11 +318,7 @@ impl Chat {
             text: format!("{what} · {}", self.engine.name(c)),
             until: Instant::now() + TOAST_FOR,
         });
-        let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
-        if sound && !quiet {
-            self.last_sound = Some(Instant::now());
-            notify::sound();
-        }
+        self.ring(focused, sound);
     }
 
     /// A card and a sound for a group, with its name, never the text.
@@ -339,10 +338,22 @@ impl Chat {
             text: format!("new message · # {}", termchat_engine::clean(g.name())),
             until: Instant::now() + TOAST_FOR,
         });
-        let quiet = self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP);
-        if sound && !quiet {
-            self.last_sound = Some(Instant::now());
+        self.ring(focused, sound);
+    }
+
+    /// The sound and, when the window is not in front, the system
+    /// notification; at most once per `SOUND_GAP`.
+    fn ring(&mut self, focused: bool, sound: bool) {
+        let shout = self.notify && !focused;
+        if self.last_sound.is_some_and(|t| t.elapsed() < SOUND_GAP) || !(sound || shout) {
+            return;
+        }
+        self.last_sound = Some(Instant::now());
+        if sound {
             notify::sound();
+        }
+        if shout {
+            notify::system();
         }
     }
 
