@@ -21,6 +21,8 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `send CONTACT [TEXT]` | sends TEXT, or stdin when TEXT is left out; waits until the relay has it |
 | `send-file CONTACT PATH` | a document of up to 1 MiB |
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
+| `watch send WATCHER --every SECS` | sends hidden heartbeats to a watcher host (requires a daemon) |
+| `watch monitor SERVER --notify OWNER --after SECS` | messages OWNER when SERVER's heartbeats stop (requires a daemon) |
 | `ask CONTACT QUESTION [--timeout SECS or Nm]` | waits for a verified contact to approve or decline (requires a daemon) |
 | `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
@@ -48,7 +50,7 @@ Use the exact displayed name with `--group` or the full 32-digit hexadecimal ID 
 
 Group `send` takes one text argument or reads stdin. It returns `0` when the relay accepts that text, `1` for an internal or state error, `2` for invalid arguments, `3` for a missing or ambiguous group, `4` on timeout and `5` for a final refusal or loss of access. A queued text may arrive after a timeout. An in-flight send may reach the relay before a membership change reaches the sender.
 
-Group `recv` takes either `--wait SECS` or `--follow`. An empty timed read exits with `0`. Loss of access ends a wait with `5`. Plain `recv` reads direct chats. Group reads reject `--from` and `--save-dir`.
+Group `recv` takes either `--wait SECS` or `--follow`. Without either, it prints the texts that have already arrived and exits. An empty timed read exits with `0`. Loss of access ends a wait with `5`. Plain `recv` reads direct chats. Group reads reject `--from` and `--save-dir`.
 
 JSON lists contain `id` and `name`. JSON message records contain `group_id`, `group`, `from`, `fingerprint`, `at` (Unix seconds when received), `id`, `text` and `reply_to` when present. Both message IDs are strings. Group reads include incoming texts and replies received after the upgrade. A text edited before handoff appears in its current form. The app shows earlier history, documents and subsequent changes. Own, deleted and expired texts are excluded.
 
@@ -110,7 +112,7 @@ One identity runs one command at a time: a second one at the same moment ends wi
 
 ## A daemon, for a bot that answers
 
-Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time. When no daemon runs, they work as before.
+Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time. When no daemon runs, they work as before. `watch` and `ask` work only through a daemon.
 
 ```ini
 # /etc/systemd/system/termchat-daemon.service
@@ -176,13 +178,35 @@ termchat watch send watcher --every 300
 termchat watch monitor backup-box --notify alice --after 900
 ```
 
-The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options: `--every` takes at least 10 and `--after` at least 30. Set `--after` to at least twice `--every` plus a minute for reconnects. A threshold at or below the send interval makes the watcher send an alert after nearly every heartbeat. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message.
+The example sends a heartbeat every five minutes and alerts after 15 minutes of silence. Use seconds for both options: `--every` takes at least 10 and `--after` at least 30. Set `--after` to at least twice `--every` plus a minute for reconnects. A threshold at or below the send interval makes the watcher send an alert after nearly every heartbeat. Both commands run in the foreground, so use your service manager to restart them when the daemon stops or the socket closes. The heartbeats stay out of chat history and `recv`. The alert is an ordinary direct message, such as “backup-box has been silent for 15 minutes”.
+
+A unit for the sender, next to the daemon unit from the section above. The unit for `watch monitor` on the watcher host differs only in `ExecStart`.
+
+```ini
+# /etc/systemd/system/termchat-watch.service
+[Unit]
+Description=termchat heartbeat to the watcher
+After=termchat-daemon.service
+BindsTo=termchat-daemon.service
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/usr/local/bin/termchat watch send watcher --every 300
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=termchat-daemon.service
+```
+
+Enable it with `systemctl enable --now termchat-watch`. It starts and stops with the daemon. Until the daemon's socket appears, the command exits and systemd starts it again after 10 seconds.
 
 Keep the watcher awake and the clocks synchronized. A relay outage can cause an alert or prevent delivery. The daemon logs locally when it queues an alert and when it cannot confirm delivery. A fresh heartbeat lets the watcher report the next outage.
 
 ## Ask for approval before a script step
 
-Set up a server identity, add the approver and [compare safety numbers](contacts.md). Mark the approver as verified on the server, then run `termchat daemon`. Run `ask` as the same user with the same `TERMCHAT_HOME` on Linux or macOS.
+Set up a server identity and add the approver as under “Setting up a server”. Mark the approver as verified on the server with steps 2 and 3 of the previous section: stop the daemon, open `termchat` as the service user, press **Ctrl+F** on the contact, [compare safety numbers](contacts.md) and press **v**. Then start `termchat daemon` again. Run `ask` as the same user with the same `TERMCHAT_HOME` on Linux or macOS.
 
 ```sh
 if termchat ask alice "Deploy build 42 to staging?" --timeout 10m; then
@@ -190,7 +214,7 @@ if termchat ask alice "Deploy build 42 to staging?" --timeout 10m; then
 fi
 ```
 
-On their primary device, Alice sees an ordinary chat message with two possible replies, for example `yes f4bc2801e9029d71` and `no f4bc2801e9029d71`. She sends one of those lines. Letter case and spaces at the ends do not matter, but extra words do. The server waits for a reply with the current code from her verified primary device. Only one request per contact can wait at a time. The timeout defaults to 10 minutes, and `600` and `10m` mean the same thing.
+On their primary device, Alice sees an ordinary chat message with two possible replies, for example `yes f4bc2801e9029d71` and `no f4bc2801e9029d71`. She sends one of those lines. Letter case and spaces at the ends do not matter, but extra words do. The server waits for a reply with the current code from her verified primary device. A reply from her linked desktop or laptop does not count. Only one request per contact can wait at a time. The timeout defaults to 10 minutes, and `600` and `10m` mean the same thing.
 
 If the question begins with `--`, put it after the `--` separator and put any options before that separator.
 

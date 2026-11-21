@@ -201,6 +201,14 @@ Body =
   | QueueOffer { relay_url: String, onion_url: Option<String>, send_id: [u8; 16] }  // ADR-023: write to me here
 ```
 
+Later kinds follow in this order, each specified in its ADR: `Message`,
+`Edit`, `Delete`, `React`, `Understands` (ADR-025); `GroupInvite`,
+`GroupJoin`, `GroupKey`, `GroupRoster`, `GroupLeave`, `GroupMove` (ADR-027);
+the device kinds of section 9 (ADR-028); `Copy` (ADR-030); and
+`Heartbeat { sent_at: u64 }` (ADR-031), which travels only directly between
+primary devices, never inside a group or a `Copy`, and never shows in a chat.
+A kind a client does not know is counted in `seq` and skipped.
+
 Limits: `text` up to 16000 bytes, `nickname` up to 64 bytes, `note` up to 256
 bytes.
 
