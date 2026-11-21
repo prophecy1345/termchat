@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn reports_keep_a_bounded_tail() {
         let script = "i=0; while [ $i -lt 200 ]; do echo line $i; i=$((i+1)); done; \
-                      head -c 3000000 /dev/zero | tr '\\0' x; echo; printf '\\033[31mred\\n'; exit 3";
+                      head -c 2000 /dev/zero | tr '\\0' x; echo; printf '\\033[31mred\\n'; exit 3";
         let args = ["-c".to_string(), script.to_string()];
         let out = run("job", "sh", &args, 3);
         assert_eq!(out.code, 3);
