@@ -23,6 +23,7 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `recv [--from C] [--wait S] [--follow] [--json] [--save-dir DIR]` | prints new messages and changes, each once; files are saved only into `--save-dir` |
 | `watch send WATCHER --every SECS` | sends hidden heartbeats to a watcher host (requires a daemon) |
 | `watch monitor SERVER --notify OWNER --after SECS` | messages OWNER when SERVER's heartbeats stop (requires a daemon) |
+| `run (--to C \| --group NAME \| --group-id ID) [--name L] [--lines N] [--failures-only] -- COMMAND` | runs COMMAND, then reports how it ended |
 | `ask CONTACT QUESTION [--timeout SECS or Nm]` | waits for a verified contact to approve or decline (requires a daemon) |
 | `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
@@ -112,7 +113,7 @@ One identity runs one command at a time: a second one at the same moment ends wi
 
 ## A daemon, for a bot that answers
 
-Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time. When no daemon runs, they work as before. `watch` and `ask` work only through a daemon.
+Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time, and `run` checks and reports through it. When no daemon runs, they work as before. `watch` and `ask` work only through a daemon.
 
 ```ini
 # /etc/systemd/system/termchat-daemon.service
@@ -221,6 +222,29 @@ If the question begins with `--`, put it after the `--` separator and put any op
 The command writes nothing to stdout. It returns `0` for approval, `1` for refusal and `4` for timeout. Other errors use `2` for invalid input, `3` for an unknown or ambiguous contact, `5` for an ineligible contact, a pending request or failed send, and `6` for an unavailable daemon or internal error. A delayed question may still arrive after the request closes. A reply to it has no effect.
 
 Anyone who can send as Alice's primary device, including someone with her unlocked phone, can approve a pending request. The question and reply may appear in chat history and notifications, and the question may appear in shell history or CI logs. Keep secrets out of the question.
+
+## Report how a command ended
+
+`termchat run` wraps a command. When the command ends, it sends one message with the result, how long it took, the host and the last lines of output (ADR-035).
+
+```sh
+termchat run --to alice --name nightly-backup --failures-only -- /usr/local/bin/backup.sh --full
+```
+
+```
+nightly-backup failed with exit 1 after 42m 10s on backup-box
+rsync: write failed on "/mnt/backup/db.tar": No space left on device (28)
+```
+
+- Pick one recipient: `--to CONTACT`, `--group NAME` or `--group-id ID`. termchat checks it before the command starts. A wrong password, an unknown contact or a group the server cannot use stops `run`, and the command does not start.
+- Everything after `--` is the command. termchat starts it without a shell. For a pipeline, write `sh -c '…'` yourself.
+- The report names the job with `--name`, or with the program's file name. Arguments and environment never go into it.
+- `--lines N` keeps 0 to 50 lines, 10 by default. Each line is cut at 500 bytes. `--failures-only` sends nothing when the command exits with `0`.
+- The command's output still reaches your terminal or log unchanged. It keeps stdin and the environment.
+- Without a daemon, `run` needs `--password-file` and opens the identity only to check and to send, not while the command runs. `--password-stdin` is not accepted, because stdin belongs to the command.
+- `run` exits with the command's status: its code, `128 + N` when signal N ended it, or `127` when it could not start. Ctrl+C and SIGTERM go to the command, and `run` still reports. When the command succeeded but the report was not sent, `run` returns the send code (`1`, `4` or `5`). It always explains a send problem on stderr.
+
+The output can contain secrets: a token, a password, a private path. The report lands in the chat history and notifications, and on every device of a group. For such commands, use `--lines 0` or `--failures-only`.
 
 ## More examples
 

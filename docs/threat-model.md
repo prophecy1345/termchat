@@ -135,6 +135,12 @@ that (ADR-023).
   only acts on membership changes it has learned. A successful send
   confirms relay acceptance. Read markers are saved before output, so a
   crash, broken pipe or slow subscriber can lose script output.
+- **Command reports** (ADR-035). `run` sends the last lines of a command's
+  output, so a token or password the command prints ends up in the chat
+  history, notifications and, for a group, on every member's device. The
+  report leaves out arguments and the environment; it does not look for
+  secrets in the output. Use `--lines 0` or `--failures-only` for such
+  commands.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the

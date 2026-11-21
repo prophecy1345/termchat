@@ -96,6 +96,9 @@ goes quiet. [Set up server monitoring](docs/guide/scripts.md#get-a-message-when-
 Use `termchat ask` to pause a script or CI job for approval from a verified
 contact. [Set up script approvals](docs/guide/scripts.md#ask-for-approval-before-a-script-step)
 
+Wrap a cron job in `termchat run` to get its exit status, duration and last
+lines of output when it ends. [Report how a command ended](docs/guide/scripts.md#report-how-a-command-ended)
+
 Send reports to a private group and read replies as JSON from your script.
 [Use groups from scripts](docs/guide/scripts.md#private-groups)
 
