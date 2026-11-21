@@ -135,6 +135,10 @@ that (ADR-023).
   only acts on membership changes it has learned. A successful send
   confirms relay acceptance. Read markers are saved before output, so a
   crash, broken pipe or slow subscriber can lose script output.
+- **Safety-number QR codes** (ADR-037). A scan verifies the contact only on
+  the scanning phone and only on an exact match; a mismatch changes nothing.
+  It proves as much as comparing the digits by eye, and only for a code shown
+  on the other screen in front of you, never one sent over a chat.
 - **CI notifications** (ADR-036). CI keeps no identity: it reaches a
   server's CI identity over SSH with a key bound to one forced command and
   recipient. A leaked key sends texts to that recipient, or starts the

@@ -58,7 +58,7 @@ fun copy(context: Context, text: String) {
     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
 }
 
-private fun qr(text: String): Bitmap {
+internal fun qr(text: String): Bitmap {
     val bits = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0)
     val bmp = Bitmap.createBitmap(bits.width, bits.height, Bitmap.Config.ARGB_8888)
     for (x in 0 until bits.width) for (y in 0 until bits.height) {

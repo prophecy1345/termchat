@@ -1095,6 +1095,17 @@ impl Account {
         self.with(index, |e, i| e.edit(i, |c| c.no_history = on))
     }
 
+    /// ADR-037: what the safety-number QR code holds.
+    pub fn safety_code(&self, index: u32) -> Result<String> {
+        self.with(index, |e, i| e.safety_code(i).unwrap_or_default())
+    }
+
+    /// ADR-037: a code scanned from their screen. True: it matched and the
+    /// contact is verified; false: nothing changed.
+    pub fn verify_by_code(&self, index: u32, scanned: String) -> Result<bool> {
+        self.with(index, |e, i| e.verify_by_code(i, &scanned))
+    }
+
     pub fn safety_number(&self, index: u32) -> Result<String> {
         self.with(index, |e, i| {
             let c = &e.data.contacts[i];

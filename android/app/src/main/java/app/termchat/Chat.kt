@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.asImageBitmap
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
 import app.termchat.engine.Place
@@ -474,6 +476,18 @@ private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> 
     // ADR-006: exactly the text shown is what goes to the operator, even if
     // more arrives while the dialog is open.
     val reportText = remember { if (which == "report") runCatching { a.reportText(c.index) }.getOrNull() else null }
+    // ADR-037: their screen's code, scanned here; the camera only after this tap.
+    val code = remember { if (which == "verify") runCatching { a.safetyCode(c.index) }.getOrNull() else null }
+    val scan = rememberLauncherForActivityResult(com.journeyapps.barcodescanner.ScanContract()) { r ->
+        val scanned = r.contents ?: return@rememberLauncherForActivityResult
+        m.note = if (runCatching { a.verifyByCode(c.index, scanned) }.getOrDefault(false)) {
+            "The codes match: ${c.name} is verified on this phone."
+        } else {
+            "This code does NOT match ${c.name}. Nothing changed; do not trust this chat until you find out why."
+        }
+        m.changed()
+        close()
+    }
     val (title, body, confirm) = when (which) {
         "verify" -> Triple(
             "Safety number",
@@ -497,9 +511,26 @@ private fun ContactDialog(m: Model, c: ContactView, which: String, close: () -> 
         shape = corner,
         title = { Text(title, style = Tc.name) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(body, style = Tc.mono)
                 if (which == "rename") Field(input, { input = it }, c.name, Modifier.fillMaxWidth())
+                if (code != null && code.isNotEmpty()) {
+                    Text("Or scan the code on their screen, in front of you. One they send you proves nothing.", style = Tc.small)
+                    androidx.compose.foundation.Image(
+                        qr(code).asImageBitmap(), "safety number QR code",
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.None,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f).background(Tc.text).padding(12.dp),
+                    )
+                    Flat("Scan their code", color = Tc.lime) {
+                        scan.launch(
+                            com.journeyapps.barcodescanner.ScanOptions().setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                                .setBeepEnabled(false).setPrompt("").setOrientationLocked(false)
+                        )
+                    }
+                }
             }
         },
         confirmButton = {

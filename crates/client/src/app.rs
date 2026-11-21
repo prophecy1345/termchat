@@ -116,6 +116,8 @@ pub enum Popup {
         error: String,
     },
     Verify,
+    /// ADR-037: the safety number as a QR code, for their phone to scan.
+    VerifyCode,
     Rename(Input),
     Delete,
     /// The exact text that would be disclosed to the relay operator.
@@ -1501,12 +1503,18 @@ impl Main {
                 }
                 false => Some(Popup::Incognito(s)),
             },
-            Popup::Verify => {
-                if k.code == KeyCode::Char('v') {
+            Popup::Verify => match k.code {
+                KeyCode::Char('v') => {
                     self.engine.edit(i, |c| c.verified = !c.verified);
+                    None
                 }
-                None
-            }
+                KeyCode::Char('q') => Some(Popup::VerifyCode),
+                _ => None,
+            },
+            Popup::VerifyCode => match k.code {
+                KeyCode::Esc => None,
+                _ => Some(Popup::Verify),
+            },
             Popup::Report(text) => {
                 if k.code == KeyCode::Char('y') {
                     self.engine.report(i, text);

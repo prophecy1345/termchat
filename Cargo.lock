@@ -6851,6 +6851,7 @@ dependencies = [
  "crossterm",
  "futures-util",
  "getrandom 0.4.3",
+ "qrcode",
  "ratatui",
  "rustix 1.1.6",
  "serde",

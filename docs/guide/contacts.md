@@ -51,6 +51,8 @@ The relay cannot read messages, but someone who controls the network could try t
 2. Compare the numbers in person, on a video call or by phone, not over termchat.app.
 3. If they match, mark the contact verified: **v** in the terminal, the button on that screen in the apps.
 
+**Or with a QR code**, when one of you has the Android app (ADR-037). The safety-number screen shows the number as a QR code too: in the terminal press **q** there, in the desktop app and on Android it is under the digits. On Android, tap **Scan their code** and point the camera at the other screen. If the codes match, the contact is verified on that phone; the other side verifies on its own, by scanning back or with **v** after comparing. A code that does not match changes nothing and says so. Scan only a code shown on their screen in front of you: one sent over a chat, a screenshot or a photo proves nothing.
+
 If the numbers differ, do not trust the contact. Delete it and exchange invites again some other way.
 
 Until a contact is verified, its name shows the start of its fingerprint, like `alice·36335`. Names are chosen by people themselves; the digits are what tells two "alice"s apart. They also show whenever two names look the same.

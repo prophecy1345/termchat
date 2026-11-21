@@ -35,7 +35,7 @@ Enter        send message
 Up / Down    choose contact
 Ctrl+A       add contact (paste their invite)
 Ctrl+O       show your invite
-Ctrl+F       safety number: verify the contact
+Ctrl+F       safety number: verify the contact (q shows it as a QR code)
 Ctrl+Y       accept contact request
 Ctrl+D       delete contact
 Ctrl+B       block / unblock contact
@@ -1518,9 +1518,23 @@ fn popup_pane(
             });
             let buttons = [
                 ("v toggle verified", true, key(KeyCode::Char('v'))),
+                ("q show as QR code", false, key(KeyCode::Char('q'))),
                 ("esc close", false, esc),
             ];
             window(f, t, h, "safety number", lines, &buttons, 64, false);
+        }
+        Popup::VerifyCode => {
+            let code = m.current().and(m.engine.safety_code(m.selected));
+            let mut lines = code.as_deref().map(qr_lines).unwrap_or_default();
+            lines.push(Line::from(""));
+            lines.push(Line::from(
+                "Their phone: safety number, Scan their code. Only from this screen.",
+            ));
+            let buttons = [
+                ("↵ digits", true, key(KeyCode::Enter)),
+                ("esc close", false, esc),
+            ];
+            window(f, t, h, "safety number", lines, &buttons, 72, false);
         }
         Popup::NewGroup(s) => {
             let lines = vec![
@@ -1835,5 +1849,74 @@ mod tests {
         assert_eq!(fit("alice", 10), "alice");
         assert_eq!(fit("alexandra", 5), "alex…");
         assert_eq!(fit("日本語です", 5), "日本…");
+    }
+}
+
+/// ADR-037: a QR code in half blocks, two rows of modules per line, dark on
+/// white whatever the terminal's theme, with a two-module margin.
+fn qr_lines(text: &str) -> Vec<Line<'static>> {
+    let Ok(code) = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::L) else {
+        return Vec::new();
+    };
+    let width = code.width();
+    let dark = code.to_colors();
+    let margin = 2;
+    let side = width + 2 * margin;
+    let at = |x: usize, y: usize| {
+        let inside = (margin..margin + width).contains(&x) && (margin..margin + width).contains(&y);
+        inside && dark[(y - margin) * width + (x - margin)] == qrcode::Color::Dark
+    };
+    let ink = Style::new().fg(Color::Black).bg(Color::White);
+    (0..side)
+        .step_by(2)
+        .map(|y| {
+            let row: String = (0..side)
+                .map(|x| match (at(x, y), at(x, y + 1)) {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    (false, false) => ' ',
+                })
+                .collect();
+            Line::from(Span::styled(row, ink))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod qr_tests {
+    use super::*;
+
+    /// The half blocks give back exactly the code's modules, with the margin.
+    #[test]
+    fn qr_lines_draw_every_module() {
+        let text = "TERMCHAT-SAFETY:123456789012345678901234567890123456789012345678901234567890";
+        let code = qrcode::QrCode::with_error_correction_level(text, qrcode::EcLevel::L).unwrap();
+        let (width, dark) = (code.width(), code.to_colors());
+        let lines = qr_lines(text);
+        let side = width + 4;
+        assert_eq!(lines.len(), side.div_ceil(2));
+        assert!(
+            side <= 40 && lines.len() <= 20,
+            "fits a 80x24 terminal: {side}"
+        );
+        for (row, line) in lines.iter().enumerate() {
+            let chars: Vec<char> = line.spans[0].content.chars().collect();
+            assert_eq!(chars.len(), side);
+            for (x, ch) in chars.iter().enumerate() {
+                let (top, bottom) = match ch {
+                    '█' => (true, true),
+                    '▀' => (true, false),
+                    '▄' => (false, true),
+                    _ => (false, false),
+                };
+                for (y, got) in [(2 * row, top), (2 * row + 1, bottom)] {
+                    let want = (2..2 + width).contains(&x)
+                        && (2..2 + width).contains(&y)
+                        && dark[(y - 2) * width + (x - 2)] == qrcode::Color::Dark;
+                    assert_eq!(got, want, "module {x},{y}");
+                }
+            }
+        }
     }
 }
