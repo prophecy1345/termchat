@@ -52,7 +52,7 @@ const en = {
     ]],
     ["Contacts on your terms", [
       ["Invites, not a directory", "Nobody can find you: people join with an invite you give them, one-time or public, and wait as a request until you accept. Block, reject or report."],
-      ["Safety numbers", "Compare 60 digits with a friend once and rule out anyone in the middle."],
+      ["Safety numbers", "Compare 60 digits with a friend once, or scan the QR code on their screen, and rule out anyone in the middle."],
       ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Your contacts cannot link you to each other."],
       ["Small private groups", "Up to 32 devices (32 people with one each), by the admin's invitation only, and nobody can find the group. Megolm from the same vodozemac; new members do not read the old history, removed ones not the new. Documents go there as in a chat."],
       ["Phone and laptop, one identity", "Link up to four devices with a code and a fingerprint check on both screens. Contacts write to each of them; each device has keys of its own, and a lost one is removed from the main device. Groups, documents and what you send reach all of them."],
@@ -68,6 +68,7 @@ const en = {
       ["Private groups in scripts", "Send backup reports from cron or CI to a private group. List your groups with termchat groups and use termchat recv --group to read new messages and replies as JSON.", ["Use groups from scripts", "/docs/scripts/#private-groups"]],
       ["Answers, edits and reactions", "Answer a particular message, edit or delete your own for both of you, react with one of seven pixel sprites. All inside the encryption; the relay sees an ordinary message."],
       ["Documents, offline, searchable", "Files up to 1 MiB in chats and groups, never opened by the app; on the desktop pick one in the system dialog or drop it on the window. Messages wait on the relay for up to 14 days. Search runs on your device only."],
+      ["A tidy chat list", "Drafts stay with their chat, encrypted. Mute a chat for an hour, a day or always, pin the ones you need, archive the rest. Forward a message with no mark of where it came from, or export a chat to a text file when you ask for it."],
     ]],
   ] as [string, Item[]][],
   desktopTitle: "termchat.app in a window",
@@ -200,7 +201,7 @@ const ru: typeof en = {
     ]],
     ["Контакты на ваших условиях", [
       ["Приглашения вместо каталога", "Найти вас нельзя: люди приходят по приглашению, которое вы дали, одноразовому или публичному, и ждут как запрос, пока вы не примете. Блокировка, отказ, жалоба."],
-      ["Номер безопасности", "Один раз сверьте 60 цифр с другом и исключите посредника."],
+      ["Номер безопасности", "Один раз сверьте 60 цифр с другом или отсканируйте QR-код на его экране и исключите посредника."],
       ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут связать вас между собой."],
       ["Маленькие приватные группы", "До 32 устройств (32 человека с одним устройством), только по приглашению администратора, найти группу нельзя. Megolm из той же vodozemac; новые участники не читают старую историю, исключённые — новую. Документы отправляются туда, как в чат."],
       ["Телефон и ноутбук, одна личность", "Привяжите до четырёх устройств кодом со сверкой отпечатка на обоих экранах. Контакты пишут на каждое; у каждого устройства свои ключи, а потерянное удаляется с основного. Группы, документы и отправленное вами доходят до всех."],
@@ -216,6 +217,7 @@ const ru: typeof en = {
       ["Приватные группы в скриптах", "Отправляйте отчёты о резервных копиях из cron или CI в приватную группу. Команда termchat groups показывает список групп, а termchat recv --group читает новые сообщения и ответы в JSON.", ["Использовать группы в скриптах", "/ru/docs/scripts/#приватные-группы"]],
       ["Ответы, правка и реакции", "Ответ на конкретное сообщение, правка и удаление своих у обоих, реакция одним из семи пиксельных спрайтов. Всё внутри шифрования; relay видит обычное сообщение."],
       ["Документы, офлайн, поиск", "Файлы до 1 МиБ в чатах и группах, приложение их не открывает; на компьютере выберите файл в системном окне или перетащите в окно. Сообщения ждут на relay до 14 дней. Поиск работает только на вашем устройстве."],
+      ["Порядок в чатах", "Черновики остаются у своего чата, зашифрованными. Заглушите чат на час, на день или навсегда, закрепите нужные, остальные уберите в архив. Пересылайте сообщение без пометки, откуда оно, или выгрузите чат в текстовый файл по вашей команде."],
     ]],
   ],
   desktopTitle: "termchat.app в окне",
