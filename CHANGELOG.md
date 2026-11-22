@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.24.1
+
+- Tor (Arti) 2.8.0, with fixes for several low-severity security issues;
+  the Tor Project asks every arti-client user to update.
+
 ## 0.24.0
 
 - Without Tor, chats connect at once after you unlock, instead of one by

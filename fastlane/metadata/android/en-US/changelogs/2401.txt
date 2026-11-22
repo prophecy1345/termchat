@@ -1,0 +1,1 @@
+Tor (Arti) 2.8.0, with fixes for several low-severity security issues; the Tor Project asks every arti-client user to update.
