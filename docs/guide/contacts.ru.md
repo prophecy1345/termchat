@@ -31,7 +31,7 @@ English version: [contacts.md](contacts.md).
 Возьмите его приглашение и:
 
 - **Терминал:** **Ctrl+A**, вставить, **Enter**. **Ctrl+N** вместо Enter добавляет его от новой инкогнито-личности.
-- **Компьютер:** **+ Add**, вставить, **Add**; для инкогнито отметьте «Answer from a new incognito identity».
+- **Компьютер:** **Add**, вставить, **Add**; для инкогнито отметьте «Answer from a new incognito identity».
 - **Android:** **+** или ⋮ → **Add contact**, затем **Scan QR code** или вставить; **Add** или **Add incognito**.
 
 ## Запросы

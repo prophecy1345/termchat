@@ -37,6 +37,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Canvas
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.termchat.engine.icons
 
 val corner = RoundedCornerShape(6.dp)
 
@@ -122,11 +129,56 @@ fun Line() = HorizontalDivider(color = Tc.line, thickness = 1.dp)
 
 /** A row in a menu or the settings list. */
 @Composable
-fun MenuRow(label: String, detail: String = "", color: Color = Tc.text, onClick: () -> Unit) {
+fun MenuRow(label: String, detail: String = "", color: Color = Tc.text, dot: Boolean = false, onClick: () -> Unit) {
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text(label, style = Tc.mono.copy(color = color))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(label, style = Tc.mono.copy(color = color))
+            if (dot) PixelIcon("dot", Tc.lime, 12.dp)
+        }
         if (detail.isNotEmpty()) Text(detail, style = Tc.small)
     }
+}
+
+/** The shared icons (engine icons.rs): one-pixel line art in an 11×11 square. */
+internal val ICONS: Map<String, ByteArray> = icons().associate { it.name to it.pixels }
+
+/** Icon `name` in `color`; its pixels are whole screen pixels, so lines stay fine and sharp. */
+@Composable
+internal fun PixelIcon(name: String, color: Color, size: Dp = 14.dp, modifier: Modifier = Modifier) {
+    val p = ICONS[name] ?: return
+    Canvas(modifier.size(size)) {
+        val px = kotlin.math.floor(this.size.width / 11f).coerceAtLeast(1f)
+        val off = kotlin.math.floor((this.size.width - px * 11f) / 2f)
+        for (k in 0 until p.size / 2) {
+            drawRect(color, Offset(off + p[2 * k].toInt() * px, off + p[2 * k + 1].toInt() * px), Size(px, px))
+        }
+    }
+}
+
+/** An icon that is a button, named for TalkBack. */
+@Composable
+internal fun IconTap(name: String, hint: String, color: Color = Tc.text, onClick: () -> Unit) {
+    Box(Modifier.semantics { contentDescription = hint }.clickable(onClick = onClick).padding(10.dp)) {
+        PixelIcon(name, color, 16.dp)
+    }
+}
+
+/** An icon, then a line of text. */
+@Composable
+internal fun IconText(name: String, text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier, size: Dp = 14.dp) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PixelIcon(name, color, size)
+        Text(text, style = style.copy(color = color), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+}
+
+/** A dropdown entry, with a dot when something waits behind it. */
+@Composable
+internal fun MenuItem(label: String, dot: Boolean = false, go: () -> Unit) {
+    DropdownMenuItem(
+        { Text(label, style = Tc.mono) }, go,
+        trailingIcon = if (dot) ({ PixelIcon("dot", Tc.lime, 12.dp) }) else null,
+    )
 }
 
 fun age(at: ULong): String {

@@ -53,7 +53,7 @@ fun notification(context: Context, channel: String, text: String, silent: Boolea
     )
     return Notification.Builder(context, channel)
         .setSmallIcon(R.drawable.ic_notification)
-        .setContentTitle("termchat")
+        .setContentTitle("termchat.app")
         .setContentText(text)
         .setContentIntent(open)
         .setAutoCancel(!silent)

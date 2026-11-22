@@ -98,16 +98,16 @@ fun Group(m: Model, index: UInt) {
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
         compose?.let { (_, edit, label) ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (edit) "✎ Editing your message" else "↳ Answering: $label",
-                    style = Tc.mono.copy(color = Tc.lime), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                IconText(
+                    if (edit) "edit" else "reply",
+                    if (edit) "Editing your message" else "Answering: $label",
+                    Tc.mono, Tc.lime, Modifier.weight(1f),
                 )
-                Text("×", style = Tc.name, modifier = Modifier.clickable { if (edit) text = ""; compose = null }.padding(horizontal = 12.dp))
+                IconTap("close", "Cancel") { if (edit) text = ""; compose = null }
             }
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (g.expiresIn != null) Text("⏱ ${span(g.expiresIn)}", style = Tc.small.copy(color = Tc.lime))
+            if (g.expiresIn != null) IconText("timer", span(g.expiresIn), Tc.small, Tc.lime)
             Box(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
@@ -154,14 +154,14 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
     val a = m.account ?: return
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("‹", style = Tc.name, modifier = Modifier.clickable { m.screen = Screen.Chats }.padding(end = 12.dp))
+        IconTap("back", "Back to chats") { m.screen = Screen.Chats }
         Avatar("# ${g.name}")
         Column(Modifier.weight(1f).padding(start = 12.dp).clickable { ask("members") }) {
             Text(g.name, style = Tc.name)
             Text(groupState(g) + if (g.admin) " · ADMIN" else "", style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
         }
         Box {
-            Text("⋮", style = Tc.name, modifier = Modifier.clickable { menu = true }.padding(8.dp))
+            IconTap("menu", "Group menu") { menu = true }
             DropdownMenu(menu, { menu = false }) {
                 val item = @Composable { label: String, go: () -> Unit ->
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
@@ -242,7 +242,7 @@ private fun InviteToGroup(m: Model, g: GroupView, close: () -> Unit) {
                         Avatar(c.name, 32.dp)
                         Text(c.name, style = Tc.mono, modifier = Modifier.weight(1f).padding(start = 10.dp))
                         if (c.invited) {
-                            Text("✓ Invited", style = Tc.small.copy(color = Tc.lime), modifier = Modifier.padding(6.dp))
+                            IconText("check", "Invited", Tc.small, Tc.lime, Modifier.padding(6.dp))
                         } else {
                             Flat("Invite") {
                                 error = runCatching { a.inviteToGroup(g.index, c.index) }.exceptionOrNull()?.message ?: ""

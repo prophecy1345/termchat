@@ -13,7 +13,7 @@ The terminal client and the desktop app open the same account (`~/.termchat`), b
 
 ## The window
 
-- **Left:** your contacts, with **+ Add**, **Invite**, **Settings** and **Lock** below.
+- **Left:** archived chats, your contacts and your groups, each under a heading that folds on a click (**+** beside Groups makes a new one), with **Add**, **Invite**, **Settings** and **Lock** below.
 - **Right:** the chat. ⋮ at the top holds **Search**, **Safety number**, **Rename…**, **No history**, **Block**, **Report…** and **Delete…** (**Reject request…** for a request).
 - **Bottom:** the field, **SEND**, **File** and the disappearing-messages timer (**timer off**, then 5m, 1h, 1d, 1w with each click). **Enter** sends, **Shift+Enter** starts a new line.
 - **Status bar:** online or connecting, your nickname, warnings.
@@ -24,8 +24,8 @@ Double-click a message to answer it. Right-click it to answer, react, and edit o
 
 A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only. Nobody can find it.
 
-- **Create:** **+ New** above the list of groups, then a name. You are its admin.
-- **Invite:** **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **✓ Invited**.
+- **Create:** **+** beside the Groups heading, then a name. You are its admin.
+- **Invite:** **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **Invited** with a check mark.
 - **Join:** the invite comes in your chat with the admin, with **Join** and **Decline**.
 - **In the group:** each run of messages shows who wrote it, each name in a colour of its own; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer.
 - **Members:** **Members** lists everyone with their fingerprints; the admin removes people there (**Remove…**). The group moves to a new queue; they read nothing from then on.

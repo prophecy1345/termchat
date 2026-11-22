@@ -12,6 +12,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -22,7 +23,7 @@ import app.termchat.engine.ContactView
 fun Chats(m: Model) {
     val a = m.account ?: return
     @Suppress("UNUSED_EXPRESSION") m.version
-    // Pinned on top, archived at the bottom under their own heading.
+    // Archived first under their own heading, then pinned on top of the rest (owner, 2026-11-22).
     val (archived, contacts) = a.contacts()
         .sortedWith(compareBy<ContactView> { !it.pinned }.thenByDescending { it.lastAt })
         .partition { it.archived }
@@ -31,6 +32,9 @@ fun Chats(m: Model) {
     var newGroup by remember { mutableStateOf(false) }
     val update = a.update()
     var menu by remember { mutableStateOf(false) }
+    var foldArchived by rememberSaveable { mutableStateOf(false) }
+    var foldContacts by rememberSaveable { mutableStateOf(false) }
+    var foldGroups by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -38,9 +42,9 @@ fun Chats(m: Model) {
                 val link = if (a.connected()) "ONLINE" else "CONNECTING"
                 Text("$link · ${a.nickname()} · ${a.fingerprint().take(5)}", style = Tc.caps.copy(color = if (a.connected()) Tc.lime else Tc.warn))
             }
-            Text("+", style = Tc.name.copy(color = Tc.lime), modifier = Modifier.clickable { m.screen = Screen.Add }.padding(10.dp))
+            IconTap("plus", "Add contact", Tc.lime) { m.screen = Screen.Add }
             Box {
-                Text("⋮", style = Tc.name, modifier = Modifier.clickable { menu = true }.padding(10.dp))
+                IconTap("menu", "Menu") { menu = true }
                 DropdownMenu(menu, { menu = false }) {
                     val item = @Composable { label: String, go: () -> Unit ->
                         DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
@@ -50,8 +54,8 @@ fun Chats(m: Model) {
                     if (a.isPrimary()) item("New group") { newGroup = true }
                     if (a.canLink()) item("Link to my main device") { m.screen = Screen.LinkCode }
                     if (a.isPrimary() || a.devices().size > 1) item("Devices") { m.screen = Screen.Devices }
-                    item("Settings" + if (a.backedUp()) "" else "  ●") { m.screen = Screen.Settings }
-                    item("What's new" + if (update != null) "  ●" else "") { m.screen = Screen.News }
+                    MenuItem("Settings", dot = !a.backedUp()) { menu = false; m.screen = Screen.Settings }
+                    MenuItem("What's new", dot = update != null) { menu = false; m.screen = Screen.News }
                     item("Lock") { m.lock() }
                 }
             }
@@ -61,7 +65,7 @@ fun Chats(m: Model) {
         if (!a.backedUp()) Banner("No backup yet: a lost phone means a lost identity") { m.screen = Screen.Settings }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 16.dp))
         Line()
-        if (contacts.isEmpty()) {
+        if (contacts.isEmpty() && archived.isEmpty()) {
             Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("No contacts yet.", style = Tc.mono)
                 Text("Show your invite to a friend, or add theirs with +.", style = Tc.small)
@@ -75,7 +79,10 @@ fun Chats(m: Model) {
                 ) {
                     Avatar(c.name)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text((if (c.pinned) "📌 " else "") + c.name, style = Tc.mono.copy(color = if (c.blocked || c.archived) Tc.dim else Tc.text))
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (c.pinned) PixelIcon("pin", Tc.lime)
+                            Text(c.name, style = Tc.mono.copy(color = if (c.blocked || c.archived) Tc.dim else Tc.text))
+                        }
                         val state = when {
                             c.request -> "CONTACT REQUEST"
                             c.left -> "LEFT"
@@ -99,18 +106,31 @@ fun Chats(m: Model) {
                 }
                 Line()
             }
-            items(contacts, key = { it.fingerprint }) { row(it) }
-            if (archived.isNotEmpty()) item {
-                Text("ARCHIVED", style = Tc.caps.copy(color = Tc.dim), modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
-                Line()
+            // Each heading folds its section.
+            val heading: (String, Int, Boolean, () -> Unit) -> Unit = { title, n, folded, flip ->
+                item(key = "h$title") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable(onClick = flip).padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        PixelIcon(if (folded) "folded" else "unfolded", Tc.dim, 10.dp)
+                        Text("$title  $n", style = Tc.caps.copy(color = Tc.dim))
+                    }
+                    Line()
+                }
             }
-            items(archived, key = { it.fingerprint }) { row(it) }
+            if (archived.isNotEmpty()) {
+                heading("ARCHIVED", archived.size, foldArchived) { foldArchived = !foldArchived }
+                if (!foldArchived) items(archived, key = { it.fingerprint }) { row(it) }
+            }
+            if (contacts.isNotEmpty()) {
+                heading("CONTACTS", contacts.size, foldContacts) { foldContacts = !foldContacts }
+                if (!foldContacts) items(contacts, key = { it.fingerprint }) { row(it) }
+            }
             // ADR-027: small private groups, after the contacts.
-            if (groups.isNotEmpty()) item {
-                Text("GROUPS", style = Tc.caps.copy(color = Tc.dim), modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp))
-                Line()
-            }
-            items(groups, key = { "g${it.index}" }) { g ->
+            if (groups.isNotEmpty()) heading("GROUPS", groups.size, foldGroups) { foldGroups = !foldGroups }
+            if (!foldGroups) items(groups, key = { "g${it.index}" }) { g ->
                 Row(
                     Modifier.fillMaxWidth().clickable { m.screen = Screen.Group(g.index) }.padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,

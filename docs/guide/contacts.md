@@ -31,7 +31,7 @@ Where to find it:
 Take their invite and:
 
 - **Terminal:** **Ctrl+A**, paste, **Enter**. **Ctrl+N** instead of Enter adds them from a new incognito identity.
-- **Desktop:** **+ Add**, paste, **Add**; tick "Answer from a new incognito identity" for incognito.
+- **Desktop:** **Add**, paste, **Add**; tick "Answer from a new incognito identity" for incognito.
 - **Android:** **+** or ⋮ → **Add contact**, then **Scan QR code** or paste; **Add** or **Add incognito**.
 
 ## Requests

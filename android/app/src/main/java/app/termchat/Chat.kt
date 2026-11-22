@@ -124,7 +124,7 @@ fun Chat(m: Model, index: UInt) {
         query?.let { q ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Field(q, { query = it }, "Search this chat", Modifier.weight(1f))
-                Text("×", style = Tc.name, modifier = Modifier.clickable { query = null }.padding(12.dp))
+                IconTap("close", "Close the search") { query = null }
             }
         }
         val all = messages.withIndex().toList()
@@ -190,17 +190,15 @@ fun Chat(m: Model, index: UInt) {
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
         compose?.let { cm ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (cm.edit) "✎ Editing your message" else "↳ Answering: ${cm.label}",
-                    style = Tc.mono.copy(color = Tc.lime),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                IconText(
+                    if (cm.edit) "edit" else "reply",
+                    if (cm.edit) "Editing your message" else "Answering: ${cm.label}",
+                    Tc.mono, Tc.lime, Modifier.weight(1f),
                 )
-                Text("×", style = Tc.name, modifier = Modifier.clickable {
+                IconTap("close", "Cancel") {
                     if (cm.edit) text = ""
                     compose = null
-                }.padding(horizontal = 12.dp))
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -312,7 +310,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
     val a = m.account ?: return
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("‹", style = Tc.name, modifier = Modifier.clickable { m.screen = Screen.Chats }.padding(end = 12.dp))
+        IconTap("back", "Back to chats") { m.screen = Screen.Chats }
         Avatar(c.name)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(c.name, style = Tc.name)
@@ -327,7 +325,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
             c.incognito?.let { Text("INCOGNITO AS ${it.uppercase()}", style = Tc.caps.copy(color = Tc.dim)) }
         }
         Box {
-            Text("⋮", style = Tc.name, modifier = Modifier.clickable { menu = true }.padding(8.dp))
+            IconTap("menu", "Chat menu") { menu = true }
             DropdownMenu(menu, { menu = false }) {
                 val item = @Composable { label: String, go: () -> Unit ->
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
@@ -353,11 +351,14 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text(
-                msg.text,
-                style = Tc.small,
-                modifier = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+            val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
+            when (val rest = msg.text.removePrefix("⚠ ").takeIf { msg.text.startsWith("⚠ ") }) {
+                null -> Text(msg.text, style = Tc.small, modifier = box)
+                else -> Row(box, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PixelIcon("warning", Tc.warn)
+                    Text(rest, style = Tc.small.copy(color = Tc.warn))
+                }
+            }
         }
         return
     }
@@ -375,8 +376,15 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     .pointerInput(msg.pointable) { detectTapGestures(onLongPress = { if (!msg.deleted && msg.fileName == null) menu = true }) }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                msg.quote?.let { Text("↳ $it", style = gone, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                if (msg.deleted) Text("message deleted", style = gone) else Text(msg.text, style = Tc.mono)
+                msg.quote?.let { IconText("reply", it, gone, Tc.dim) }
+                when {
+                    msg.deleted -> Text("message deleted", style = gone)
+                    msg.fileName != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PixelIcon("document", Tc.lime, 14.dp)
+                        Text(msg.text, style = Tc.mono)
+                    }
+                    else -> Text(msg.text, style = Tc.mono)
+                }
             }
             DropdownMenu(menu, { menu = false }, containerColor = Tc.surface) {
                 val item = @Composable { label: String, what: String ->

@@ -39,7 +39,7 @@ import java.io.File
 private fun Panel(m: Model, title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("‹", style = Tc.name, modifier = Modifier.clickable { m.screen = Screen.Chats }.padding(end = 12.dp))
+            IconTap("back", "Back to chats") { m.screen = Screen.Chats }
             Text(title, style = Tc.name)
         }
         Line()
@@ -259,10 +259,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
                 for (i in listOf(1, 3, 0)) {
                     Box(Modifier.size(18.dp).background(androidx.compose.ui.graphics.Color(0xFF000000 or t.colors[i].toLong())))
                 }
+                Box(Modifier.padding(start = 12.dp).size(12.dp)) { if (t.name == Tc.theme) PixelIcon("check", Tc.lime) }
                 Text(
-                    (if (t.name == Tc.theme) "● " else "  ") + t.name,
+                    t.name,
                     style = Tc.mono.copy(color = if (t.name == Tc.theme) Tc.lime else Tc.text),
-                    modifier = Modifier.padding(start = 12.dp),
+                    modifier = Modifier.padding(start = 8.dp),
                 )
             }
         }
@@ -271,7 +272,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     Text("NOTIFICATIONS", style = Tc.caps)
     MenuRow(
         "New messages: ${if (m.notify) "on" else "off"}",
-        "\"termchat: New message\", with no name and no text",
+        "\"termchat.app: New message\", with no name and no text",
     ) {
         if (m.notify) m.notifyOn(false)
         else if (android.os.Build.VERSION.SDK_INT >= 33) allow.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -316,7 +317,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
     Line()
     Text("SECURITY", style = Tc.caps)
-    MenuRow("Back up your identity" + if (a.backedUp()) "" else "  ●", "Identity and contacts, no messages. Keep it off this phone.") { open("backup") }
+    MenuRow("Back up your identity", "Identity and contacts, no messages. Keep it off this phone.", dot = !a.backedUp()) { open("backup") }
     MenuRow("Change password") { open("password") }
     MenuRow("Duress password", "Typing it at unlock erases everything") { open("duress") }
     MenuRow("Wipe everything from this phone", color = Tc.danger) { open("wipe") }

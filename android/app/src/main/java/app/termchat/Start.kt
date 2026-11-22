@@ -65,7 +65,7 @@ fun Start(m: Model) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Spacer(Modifier.height(24.dp))
-        Text("termchat", style = Tc.name)
+        Text("termchat.app", style = Tc.name)
         Text(if (exists) "LOCKED" else "NEW IDENTITY", style = Tc.caps)
         if (!exists) {
             Text("No names, phones or emails: just a nickname. Keep the relay below or type your own.", style = Tc.small)
