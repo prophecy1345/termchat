@@ -329,21 +329,36 @@ An acknowledgement only stops the reminders. It authorizes nothing on the server
 
 ## Your own AI bot
 
-termchat has no AI inside, and nothing you write reaches a model unless you send it there. If you want one, run it as a contact of its own: [`deploy/ai-bot/termchat-ai-bot`](https://github.com/prophecy1345/termchat/blob/main/deploy/ai-bot/termchat-ai-bot) answers each message with a language model, next to a [daemon](#a-daemon-for-a-bot-that-answers) on a machine of yours.
+termchat has no AI inside, and nothing you write reaches a model unless you send it there. If you want one, run it as a contact of its own: [`deploy/ai-bot/termchat-ai-bot`](https://github.com/prophecy1345/termchat/blob/main/deploy/ai-bot/termchat-ai-bot) answers each message with a language model, next to a [daemon](#a-daemon-for-a-bot-that-answers) on a machine of yours. It needs only Python 3.
 
-It talks to any OpenAI-compatible chat API. By default that is [Ollama](https://ollama.com) on the same machine, so the whole path stays yours:
+By default it talks to [Ollama](https://ollama.com) on the same machine, so the whole path stays yours:
 
 ```sh
 ollama pull llama3.2
 AI_ALLOW="12345 67890 11121 31415 16171 81920" termchat-ai-bot
 ```
 
-- `AI_ALLOW` lists the fingerprints that may use the bot, comma-separated; it ignores everyone else.
-- `AI_URL` (default `http://127.0.0.1:11434/v1`), `AI_MODEL` (default `llama3.2`), `AI_KEY_FILE` (a `0600` file) or `AI_KEY` for an API that needs a key, `AI_SYSTEM` for the system prompt.
-- Each message is answered on its own: the bot keeps no conversation history.
-- It needs `jq` and `curl`, and answers through `termchat send`, so the daemon must run.
+| Variable | What it does |
+|---|---|
+| `AI_ALLOW` | fingerprints that may use the bot, comma-separated; it ignores everyone else (required) |
+| `AI_API` | `openai` (chat completions: Ollama, DeepSeek, Perplexity, OpenRouter, OpenAI), `responses` (OpenAI Responses API), `anthropic` or `gemini` |
+| `AI_URL`, `AI_MODEL` | the API's address and the model; each `AI_API` has a default |
+| `AI_KEY_FILE` | a `0600` file with the API key (or `AI_KEY` with the key itself) |
+| `AI_SEARCH=1` | turns on the provider's own web search: `responses`, `anthropic`, `gemini` |
+| `AI_EXTRA` | a JSON object added to every request, for anything else the provider offers |
+| `AI_HISTORY` | earlier exchanges the bot remembers per contact, in memory (default 6); `/reset` forgets them |
+| `AI_SYSTEM` | the system prompt |
 
-A unit next to the daemon's:
+Long answers come as several messages. When the API fails, the bot says so in the chat, with the provider's error.
+
+**Web search.** A model reached through an API does not look anything up by itself, whatever its own app does. It answers from what it was trained on. For fresh information, use one of these:
+
+- `AI_API=openai` with a model that searches by itself: Perplexity (`AI_URL=https://api.perplexity.ai`, `AI_MODEL=sonar`), OpenRouter with an `:online` model (`AI_URL=https://openrouter.ai/api/v1`, `AI_MODEL=deepseek/deepseek-chat:online`), or OpenAI's search models.
+- `AI_SEARCH=1` with `AI_API=responses` (OpenAI), `anthropic` or `gemini`.
+
+Model names and options change often: check your provider's documentation. Searching costs extra with most of them.
+
+A unit next to the daemon's, here for DeepSeek:
 
 ```ini
 [Unit]
@@ -354,9 +369,12 @@ Requires=termchat-daemon.service
 [Service]
 User=termchat-bot
 Environment=TERMCHAT_HOME=/var/lib/termchat-bot
-Environment=AI_ALLOW=12345 67890 11121 31415 16171 81920
+Environment="AI_ALLOW=12345 67890 11121 31415 16171 81920"
+Environment=AI_URL=https://api.deepseek.com/v1
+Environment=AI_MODEL=deepseek-chat
+Environment=AI_KEY_FILE=/etc/termchat-bot/ai-key
 ExecStart=/usr/local/bin/termchat-ai-bot
-# Always: it may start before the daemon's socket is up, and then ends cleanly.
+# Always: it may start before the daemon's socket is up, and then ends.
 Restart=always
 RestartSec=10
 
@@ -364,7 +382,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-With a remote API instead of a local model, everything you write to the bot goes to that provider, in the clear for them: the encryption ends at your server. Do not add the bot to a group: it would pass on everything the group says. Keep the API key in a `0600` file, not in the unit.
+With a remote API instead of a local model, everything you write to the bot goes to that provider, in the clear for them: the encryption ends at your server. With search on, your questions also reach a search engine. Do not add the bot to a group: it would pass on everything the group says.
 
 ## From GitHub Actions or another CI
 

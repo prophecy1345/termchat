@@ -1,53 +1,211 @@
-#!/bin/sh
-# termchat-ai-bot: answers your messages with a language model, as a contact
-# of its own. It runs next to `termchat daemon` on a machine of yours and
-# talks to any OpenAI-compatible chat API: Ollama on this machine by default,
-# so nothing leaves it. With a remote API, everything you write to the bot
-# goes to that provider. Docs: https://termchat.app/docs/scripts/#your-own-ai-bot
-#
-#   AI_ALLOW   fingerprints allowed to use the bot, comma-separated (required)
-#   AI_URL     chat API base URL (default http://127.0.0.1:11434/v1, Ollama)
-#   AI_MODEL   model name (default llama3.2)
-#   AI_KEY_FILE  a 0600 file with the API key, if the API needs one
-#   AI_KEY     the key itself, if not from a file
-#   AI_SYSTEM  system prompt (optional)
-set -eu
+#!/usr/bin/env python3
+"""termchat-ai-bot: answers your messages with a language model, as a contact
+of its own. It runs next to `termchat daemon` on a machine of yours. With a
+local model (Ollama) nothing leaves the machine; with a remote API,
+everything you write to the bot goes to that provider.
+Docs: https://termchat.app/docs/scripts/#your-own-ai-bot
 
-: "${AI_ALLOW:?set AI_ALLOW to the fingerprints allowed to use the bot}"
-AI_URL=${AI_URL:-http://127.0.0.1:11434/v1}
-AI_MODEL=${AI_MODEL:-llama3.2}
-AI_SYSTEM=${AI_SYSTEM:-"You are a helpful assistant. Answer briefly, in plain text."}
-if [ -n "${AI_KEY_FILE:-}" ]; then
-    AI_KEY=$(tr -d ' \n' < "$AI_KEY_FILE")
-fi
+Environment:
+  AI_ALLOW     fingerprints allowed to use the bot, comma-separated (required)
+  AI_API       openai (chat completions, default), responses (OpenAI
+               Responses API), anthropic (Messages API) or gemini
+  AI_URL       API base URL (a default per AI_API; openai: local Ollama)
+  AI_MODEL     model name
+  AI_KEY_FILE  a 0600 file with the API key; or AI_KEY with the key itself
+  AI_SYSTEM    system prompt
+  AI_SEARCH    1: turn on the provider's web search (responses, anthropic,
+               gemini); for openai pick a model that searches by itself
+  AI_EXTRA     a JSON object merged into every request body
+  AI_HISTORY   earlier exchanges kept per contact, in memory (default 6)
 
-# The fingerprints without spaces, between commas, for an exact match below.
-allow=",$(printf '%s' "$AI_ALLOW" | tr -d ' '),"
+Needs only Python 3 and the termchat command. "/reset" clears the history.
+"""
 
-ask() {
-    body=$(jq -n --arg m "$AI_MODEL" --arg s "$AI_SYSTEM" --arg t "$1" \
-        '{model: $m, messages: [{role: "system", content: $s}, {role: "user", content: $t}]}')
-    if [ -n "${AI_KEY:-}" ]; then
-        printf '%s' "$body" | curl -sS -m 120 -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $AI_KEY" --data-binary @- "$AI_URL/chat/completions"
-    else
-        printf '%s' "$body" | curl -sS -m 120 -H "Content-Type: application/json" \
-            --data-binary @- "$AI_URL/chat/completions"
-    fi
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+DEFAULTS = {
+    "openai": ("http://127.0.0.1:11434/v1", "llama3.2"),
+    "responses": ("https://api.openai.com/v1", "gpt-4.1-mini"),
+    "anthropic": ("https://api.anthropic.com/v1", "claude-haiku-4-5"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-flash"),
 }
+# One termchat text holds 16 000 bytes; parts this long stay well under it.
+PART = 4000
+TIMEOUT = 180
 
-termchat recv --follow --json | while IFS= read -r line; do
-    kind=$(printf '%s' "$line" | jq -r .kind)
-    [ "$kind" = message ] || continue
-    who=$(printf '%s' "$line" | jq -r .fingerprint)
-    case "$allow" in
-        *",$(printf '%s' "$who" | tr -d ' '),"*) ;;
-        *) continue ;;
-    esac
-    text=$(printf '%s' "$line" | jq -r '.text // empty')
-    [ -n "$text" ] || continue
-    # Texts have a size limit: a long answer is cut, by characters, not bytes.
-    answer=$(ask "$text" | jq -r '.choices[0].message.content // empty | .[0:5000]' 2>/dev/null) || answer=""
-    [ -n "$answer" ] || answer="The model did not answer. Try again in a moment."
-    printf '%s' "$answer" | termchat send "$who" || echo "termchat-ai-bot: could not send" >&2
-done
+
+def env(name, default=None):
+    value = os.environ.get(name, "").strip()
+    return value or default
+
+
+def config():
+    api = env("AI_API", "openai")
+    if api not in DEFAULTS:
+        sys.exit(f"termchat-ai-bot: AI_API must be one of {', '.join(DEFAULTS)}")
+    allow = {f.replace(" ", "") for f in env("AI_ALLOW", "").split(",") if f.strip()}
+    if not allow:
+        sys.exit("termchat-ai-bot: set AI_ALLOW to the fingerprints allowed to use the bot")
+    key = env("AI_KEY")
+    if env("AI_KEY_FILE"):
+        with open(env("AI_KEY_FILE"), encoding="utf-8") as f:
+            key = f.read().strip()
+    extra = json.loads(env("AI_EXTRA", "{}"))
+    if not isinstance(extra, dict):
+        sys.exit("termchat-ai-bot: AI_EXTRA must be a JSON object")
+    url, model = DEFAULTS[api]
+    return {
+        "api": api,
+        "allow": allow,
+        "url": env("AI_URL", url).rstrip("/"),
+        "model": env("AI_MODEL", model),
+        "key": key,
+        "system": env("AI_SYSTEM", "You are a helpful assistant. Answer in plain text, no Markdown."),
+        "search": env("AI_SEARCH") == "1",
+        "extra": extra,
+        "history": int(env("AI_HISTORY", "6")),
+    }
+
+
+def request(c, turns):
+    """The URL, headers and body for `turns`: [(role, text)], last one the user's."""
+    headers = {"Content-Type": "application/json"}
+    if c["api"] == "openai":
+        if c["key"]:
+            headers["Authorization"] = f"Bearer {c['key']}"
+        messages = [{"role": "system", "content": c["system"]}]
+        messages += [{"role": r, "content": t} for r, t in turns]
+        body = {"model": c["model"], "messages": messages}
+        url = f"{c['url']}/chat/completions"
+    elif c["api"] == "responses":
+        headers["Authorization"] = f"Bearer {c['key']}"
+        body = {
+            "model": c["model"],
+            "instructions": c["system"],
+            "input": [{"role": r, "content": t} for r, t in turns],
+        }
+        if c["search"]:
+            body["tools"] = [{"type": "web_search"}]
+        url = f"{c['url']}/responses"
+    elif c["api"] == "anthropic":
+        headers["x-api-key"] = c["key"] or ""
+        headers["anthropic-version"] = "2023-06-01"
+        body = {
+            "model": c["model"],
+            "max_tokens": 2048,
+            "system": c["system"],
+            "messages": [{"role": r, "content": t} for r, t in turns],
+        }
+        if c["search"]:
+            body["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+        url = f"{c['url']}/messages"
+    else:  # gemini
+        headers["x-goog-api-key"] = c["key"] or ""
+        body = {
+            "systemInstruction": {"parts": [{"text": c["system"]}]},
+            "contents": [
+                {"role": "model" if r == "assistant" else "user", "parts": [{"text": t}]}
+                for r, t in turns
+            ],
+        }
+        if c["search"]:
+            body["tools"] = [{"google_search": {}}]
+        url = f"{c['url']}/models/{c['model']}:generateContent"
+    body.update(c["extra"])
+    return url, headers, body
+
+
+def answer_text(api, reply):
+    """The model's text from a reply body, or an empty string."""
+    if api == "openai":
+        return (reply.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    if api == "responses":
+        if isinstance(reply.get("output_text"), str):
+            return reply["output_text"]
+        return "".join(
+            part.get("text", "")
+            for item in reply.get("output", [])
+            if item.get("type") == "message"
+            for part in item.get("content", [])
+            if part.get("type") == "output_text"
+        )
+    if api == "anthropic":
+        return "".join(b.get("text", "") for b in reply.get("content", []) if b.get("type") == "text")
+    parts = ((reply.get("candidates") or [{}])[0].get("content") or {}).get("parts", [])
+    return "".join(p.get("text", "") for p in parts)
+
+
+def ask(c, turns):
+    url, headers, body = request(c, turns)
+    data = json.dumps(body).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data, headers), timeout=TIMEOUT) as r:
+            text = answer_text(c["api"], json.load(r)).strip()
+    except urllib.error.HTTPError as e:
+        # The provider's own message, short; never the request, which holds the key.
+        try:
+            why = json.load(e).get("error", {})
+            why = why.get("message", "") if isinstance(why, dict) else str(why)
+        except (ValueError, AttributeError):
+            why = ""
+        return f"The model did not answer: HTTP {e.code} {why[:200]}".strip()
+    except (urllib.error.URLError, TimeoutError, ValueError) as e:
+        return f"The model did not answer: {str(e)[:200]}"
+    return text or "The model sent an empty answer."
+
+
+def parts(text):
+    """`text` in pieces of at most PART characters, split at a paragraph or line."""
+    out = []
+    while len(text) > PART:
+        cut = text.rfind("\n\n", 0, PART)
+        if cut < PART // 2:
+            cut = text.rfind("\n", 0, PART)
+        if cut < PART // 2:
+            cut = PART
+        out.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    out.append(text)
+    return [p for p in out if p]
+
+
+def send(who, text):
+    for part in parts(text):
+        done = subprocess.run(["termchat", "send", who], input=part.encode(), check=False)
+        if done.returncode != 0:
+            print("termchat-ai-bot: could not send", file=sys.stderr, flush=True)
+            return
+
+
+def main():
+    c = config()
+    history = {}
+    recv = subprocess.Popen(["termchat", "recv", "--follow", "--json"], stdout=subprocess.PIPE)
+    for line in recv.stdout:
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        who = m.get("fingerprint", "")
+        text = (m.get("text") or "").strip()
+        if m.get("kind") != "message" or who.replace(" ", "") not in c["allow"] or not text:
+            continue
+        if text == "/reset":
+            history.pop(who, None)
+            send(who, "Forgot our conversation.")
+            continue
+        turns = history.get(who, []) + [("user", text)]
+        answer = ask(c, turns)
+        if not answer.startswith("The model did not answer"):
+            history[who] = (turns + [("assistant", answer)])[-2 * c["history"]:]
+        send(who, answer)
+    sys.exit(recv.wait() or 1)
+
+
+if __name__ == "__main__":
+    main()

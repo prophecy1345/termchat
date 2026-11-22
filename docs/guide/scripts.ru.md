@@ -329,21 +329,36 @@ termchat page --to alice --then bob --every 5m --escalate 15m --key disk-web1 \
 
 ## Свой ИИ-бот
 
-Внутри termchat нет ИИ, и ничего из написанного вами не попадает в модель, если вы сами её туда не отправите. Если ИИ нужен, запустите его как отдельный контакт: [`deploy/ai-bot/termchat-ai-bot`](https://github.com/prophecy1345/termchat/blob/main/deploy/ai-bot/termchat-ai-bot) отвечает на каждое сообщение языковой моделью, рядом со [службой](#служба-для-бота-который-отвечает) на вашей машине.
+Внутри termchat нет ИИ, и ничего из написанного вами не попадает в модель, если вы сами её туда не отправите. Если ИИ нужен, запустите его как отдельный контакт: [`deploy/ai-bot/termchat-ai-bot`](https://github.com/prophecy1345/termchat/blob/main/deploy/ai-bot/termchat-ai-bot) отвечает на каждое сообщение языковой моделью, рядом со [службой](#служба-для-бота-который-отвечает) на вашей машине. Нужен только Python 3.
 
-Он работает с любым API чата, совместимым с OpenAI. По умолчанию это [Ollama](https://ollama.com) на той же машине, так что весь путь остаётся вашим:
+По умолчанию он работает с [Ollama](https://ollama.com) на той же машине, так что весь путь остаётся вашим:
 
 ```sh
 ollama pull llama3.2
 AI_ALLOW="12345 67890 11121 31415 16171 81920" termchat-ai-bot
 ```
 
-- `AI_ALLOW` — отпечатки тех, кому можно пользоваться ботом, через запятую; остальных он не замечает.
-- `AI_URL` (по умолчанию `http://127.0.0.1:11434/v1`), `AI_MODEL` (по умолчанию `llama3.2`), `AI_KEY_FILE` (файл с правами `0600`) или `AI_KEY` для API с ключом, `AI_SYSTEM` для системной подсказки.
-- Каждое сообщение отвечается отдельно: историю разговора бот не хранит.
-- Нужны `jq` и `curl`; ответ уходит через `termchat send`, поэтому служба должна работать.
+| Переменная | Что делает |
+|---|---|
+| `AI_ALLOW` | отпечатки тех, кому можно пользоваться ботом, через запятую; остальных он не замечает (обязательна) |
+| `AI_API` | `openai` (chat completions: Ollama, DeepSeek, Perplexity, OpenRouter, OpenAI), `responses` (OpenAI Responses API), `anthropic` или `gemini` |
+| `AI_URL`, `AI_MODEL` | адрес API и модель; у каждого `AI_API` есть значение по умолчанию |
+| `AI_KEY_FILE` | файл с правами `0600` с ключом API (или `AI_KEY` с самим ключом) |
+| `AI_SEARCH=1` | включает собственный поиск провайдера: `responses`, `anthropic`, `gemini` |
+| `AI_EXTRA` | JSON-объект, который добавляется к каждому запросу, для всего остального, что умеет провайдер |
+| `AI_HISTORY` | сколько прошлых обменов бот помнит для каждого контакта, в памяти (по умолчанию 6); `/reset` их забывает |
+| `AI_SYSTEM` | системная подсказка |
 
-Юнит рядом с юнитом службы:
+Длинный ответ приходит несколькими сообщениями. Если API не ответил, бот скажет об этом в чате, с ошибкой провайдера.
+
+**Поиск в интернете.** Модель через API сама ничего не ищет, что бы ни умело её собственное приложение: она отвечает по тому, на чём обучена. Для свежих данных выберите одно из двух:
+
+- `AI_API=openai` с моделью, которая ищет сама: Perplexity (`AI_URL=https://api.perplexity.ai`, `AI_MODEL=sonar`), OpenRouter с моделью `:online` (`AI_URL=https://openrouter.ai/api/v1`, `AI_MODEL=deepseek/deepseek-chat:online`) или поисковые модели OpenAI.
+- `AI_SEARCH=1` с `AI_API=responses` (OpenAI), `anthropic` или `gemini`.
+
+Названия моделей и параметры часто меняются: сверяйтесь с документацией провайдера. Поиск у большинства из них стоит дополнительно.
+
+Юнит рядом с юнитом службы, здесь для DeepSeek:
 
 ```ini
 [Unit]
@@ -354,9 +369,12 @@ Requires=termchat-daemon.service
 [Service]
 User=termchat-bot
 Environment=TERMCHAT_HOME=/var/lib/termchat-bot
-Environment=AI_ALLOW=12345 67890 11121 31415 16171 81920
+Environment="AI_ALLOW=12345 67890 11121 31415 16171 81920"
+Environment=AI_URL=https://api.deepseek.com/v1
+Environment=AI_MODEL=deepseek-chat
+Environment=AI_KEY_FILE=/etc/termchat-bot/ai-key
 ExecStart=/usr/local/bin/termchat-ai-bot
-# Always: it may start before the daemon's socket is up, and then ends cleanly.
+# Always: it may start before the daemon's socket is up, and then ends.
 Restart=always
 RestartSec=10
 
@@ -364,7 +382,7 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-С удалённым API вместо локальной модели всё, что вы пишете боту, уходит этому провайдеру, и для него это открытый текст: шифрование кончается на вашем сервере. Не добавляйте бота в группу: он передал бы всё, что говорят в группе. Ключ API держите в файле с правами `0600`, а не в юните.
+С удалённым API вместо локальной модели всё, что вы пишете боту, уходит этому провайдеру, и для него это открытый текст: шифрование кончается на вашем сервере. С поиском ваши вопросы попадают ещё и в поисковик. Не добавляйте бота в группу: он передал бы всё, что говорят в группе.
 
 ## Из GitHub Actions или другого CI
 
