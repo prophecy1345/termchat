@@ -156,6 +156,10 @@ that (ADR-023).
   can connect but gets `401` without the token. Off loopback the token
   crosses the network in the clear unless a TLS proxy stands in front.
   Alert annotations land in the chat history in full.
+- **Paging** (ADR-040). Whoever holds a paged contact's unlocked main
+  device can acknowledge a page; that only stops the reminders and
+  authorizes nothing on the server. The relay sees the rhythm of reminders,
+  not their text. Pages live in the daemon's memory and a restart drops them.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the

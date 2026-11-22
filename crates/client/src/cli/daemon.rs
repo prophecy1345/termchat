@@ -23,6 +23,7 @@ use super::{
 
 mod approval;
 mod groups;
+pub(super) mod paging;
 mod watch;
 
 pub const SOCKET: &str = "daemon.sock";
@@ -95,9 +96,11 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
     let mut group_readers = Vec::new();
     let mut watches = Vec::new();
     let mut approvals = Vec::new();
+    let mut pages = Vec::new();
     eprintln!("termchat: daemon ready on {}", path.display());
     loop {
         let mut answer = None;
+        let mut ack = None;
         tokio::select! {
             Ok((stream, _)) = listener.accept() => {
                 // Only our own user; anyone else is closed without a word.
@@ -123,6 +126,9 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
                     Job::Command(request, reply) if request["cmd"] == "ask" => {
                         approval::register(e, &request, reply, &mut approvals);
                     }
+                    Job::Command(request, reply) if paging::is_request(&request) => {
+                        paging::register(e, &request, reply, &mut pages);
+                    }
                     Job::Command(request, reply) => {
                         handle(e, request, reply, &mut pending, &mut readers);
                     }
@@ -131,6 +137,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
             Some(ev) = e.events.recv() => {
                 e.on_relay_observing_direct_text(ev, &mut |key, text| {
                     answer = approval::matching_reply(&approvals, key, text);
+                    ack = ack.take().or_else(|| paging::matching_ack(&pages, key, text));
                 });
             }
             () = tokio::time::sleep(Duration::from_millis(200)) => {}
@@ -138,6 +145,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
             _ = int.recv() => break,
         }
         approval::progress(e, &mut approvals, answer);
+        paging::progress(e, &mut pages, ack);
         e.tick();
         watch::progress(e, &mut watches);
         e.happened.clear();
@@ -145,6 +153,7 @@ pub(super) async fn serve(e: &mut Engine, home: &Path) -> Result<(), Fail> {
         groups::progress(e, &mut group_readers);
     }
     drop(approvals);
+    drop(pages);
     drop(group_readers);
     // No new commands; what they sent must still reach the relay, as at the
     // end of a one-shot command. systemd waits 90 s before it kills.
@@ -202,7 +211,8 @@ async fn connection(stream: UnixStream, jobs: mpsc::Sender<Job>) {
             return;
         }
         let (reply, mut answers) = mpsc::unbounded_channel();
-        let dedicated = watch::is_request(&request) || request["cmd"] == "ask";
+        let dedicated =
+            watch::is_request(&request) || request["cmd"] == "ask" || request["cmd"] == "page";
         if jobs.send(Job::Command(request, reply)).await.is_err() {
             return;
         }
@@ -451,7 +461,7 @@ pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
 
 async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
     let request = request(a)?;
-    let approval = a.command == "ask";
+    let approval = a.command == "ask" || a.command == "page";
     if (approval || a.group.is_some() || a.command == "groups")
         && !stream
             .peer_cred()
@@ -480,6 +490,9 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
             .map_err(|_| closed())?;
         if !line.ends_with('\n') {
             return Err(closed());
+        }
+        if a.command == "page" {
+            return paging::result(&line);
         }
         return approval::result(&line);
     }
@@ -546,6 +559,18 @@ fn request(a: &Args) -> Result<Value, Fail> {
     let timeout = a.timeout.unwrap_or(60);
     Ok(match (a.command.as_str(), a.positional.as_slice()) {
         ("contacts", _) => json!({ "cmd": "contacts" }),
+        // ADR-040: the chain, then the same limits the daemon checks.
+        ("page", [text]) => json!({
+            "cmd": "page",
+            "to": a.to.iter().chain(&a.then).collect::<Vec<_>>(),
+            "text": text,
+            "key": a.key,
+            "every": a.every,
+            "escalate": a.escalate,
+            "give_up": a.give_up,
+            "wait": true,
+        }),
+        ("resolve", []) => json!({ "cmd": "resolve", "key": a.key }),
         ("invite", _) => json!({ "cmd": "invite" }),
         ("add", [invite]) => json!({ "cmd": "add", "invite": invite, "timeout": timeout }),
         ("send", [to, text]) => {

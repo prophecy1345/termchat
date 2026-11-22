@@ -47,6 +47,11 @@ const MIN_TOKEN: usize = 43;
 enum Target {
     Contact(String),
     Group(Selector),
+    /// ADR-040: a firing alert pages the chain, a resolved one resolves it.
+    Page {
+        chain: Vec<String>,
+        escalate: Option<u64>,
+    },
 }
 
 struct Route {
@@ -160,6 +165,11 @@ fn parse_route(spec: &str) -> Result<(String, Route), Fail> {
         Some((who, f)) if Format::parse(f).is_some() => (who, Format::parse(f).ok_or_else(bad)?),
         _ => (rest, Format::Auto),
     };
+    // `page:alice,bob:15m`: the escalation time after the chain.
+    let (who, escalate) = match who.rsplit_once(':') {
+        Some((chain, time)) if kind == "page" => (chain, Some(super::span(time, "escalation")?)),
+        _ => (who, None),
+    };
     if who.trim().is_empty() {
         return Err(bad());
     }
@@ -167,6 +177,13 @@ fn parse_route(spec: &str) -> Result<(String, Route), Fail> {
         "contact" => Target::Contact(who.to_string()),
         "group" => Target::Group(Selector::Name(who.to_string())),
         "group-id" => Target::Group(Selector::Id(parse_id(who)?)),
+        "page" => {
+            let chain: Vec<String> = who.split(',').map(|c| c.trim().to_string()).collect();
+            if chain.iter().any(String::is_empty) {
+                return Err(bad());
+            }
+            Target::Page { chain, escalate }
+        }
         _ => return Err(bad()),
     };
     Ok((name.to_string(), Route { target, format }))
@@ -218,27 +235,12 @@ async fn check_route(home: &Path, name: &str, target: &Target) -> Result<(), Fai
         )
     };
     match target {
-        Target::Contact(who) => {
-            let v = call(home, &json!({ "cmd": "contacts" }))
-                .await
-                .ok_or_else(nodaemon)??;
-            let rows = v["contacts"].as_array().cloned().unwrap_or_default();
-            let matches: Vec<&Value> = rows
-                .iter()
-                .filter(|c| c["name"] == who.as_str() || c["fingerprint"] == who.as_str())
-                .collect();
-            let [c] = matches.as_slice() else {
-                return fail(3, format!("route {name}: no single contact named {who}"));
-            };
-            if c["state"] != "ok" || c["verified"] != true {
-                return fail(
-                    5,
-                    format!(
-                        "route {name}: {who} must be an accepted contact with a verified safety number"
-                    ),
-                );
+        Target::Page { chain, .. } => {
+            for who in chain {
+                check_contact(home, name, who).await?;
             }
         }
+        Target::Contact(who) => check_contact(home, name, who).await?,
         Target::Group(group) => {
             let check = GroupRequest::GroupCheck {
                 group: group.clone(),
@@ -249,6 +251,35 @@ async fn check_route(home: &Path, name: &str, target: &Target) -> Result<(), Fai
                 .ok_or_else(nodaemon)?
                 .map_err(|Fail(code, why)| Fail(code, format!("route {name}: {why}")))?;
         }
+    }
+    Ok(())
+}
+
+/// A route's contact is accepted and has a verified safety number.
+async fn check_contact(home: &Path, name: &str, who: &str) -> Result<(), Fail> {
+    let v = call(home, &json!({ "cmd": "contacts" }))
+        .await
+        .ok_or_else(|| {
+            Fail(
+                6,
+                "hook needs a running termchat daemon for this identity".into(),
+            )
+        })??;
+    let rows = v["contacts"].as_array().cloned().unwrap_or_default();
+    let matches: Vec<&Value> = rows
+        .iter()
+        .filter(|c| c["name"] == who || c["fingerprint"] == who)
+        .collect();
+    let [c] = matches.as_slice() else {
+        return fail(3, format!("route {name}: no single contact named {who}"));
+    };
+    if c["state"] != "ok" || c["verified"] != true {
+        return fail(
+            5,
+            format!(
+                "route {name}: {who} must be an accepted contact with a verified safety number"
+            ),
+        );
     }
     Ok(())
 }
@@ -373,6 +404,9 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
         }
         _ => return answer(StatusCode::BAD_REQUEST, "could not read the body\n"),
     };
+    if let Target::Page { chain, escalate } = &route.target {
+        return page(hook, path, route.format, chain, *escalate, &body).await;
+    }
     let Some(text) = alert::render(route.format, &body, &hook.labels) else {
         return answer(StatusCode::BAD_REQUEST, "not this route's format\n");
     };
@@ -397,6 +431,10 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
                 Err(_) => return answer(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n"),
             }
         }
+        // Handled above, before the body became one message.
+        Target::Page { .. } => {
+            return answer(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n");
+        }
     };
     match call(&hook.home, &request).await {
         Some(Ok(_)) => answer(StatusCode::OK, "sent\n"),
@@ -409,6 +447,55 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
             StatusCode::INTERNAL_SERVER_ERROR,
             "not sent: check the route\n",
         ),
+    }
+}
+
+/// ADR-040: each firing incident opens or adds to a page, each resolved one
+/// resolves it.
+async fn page(
+    hook: &Hook,
+    path: &str,
+    format: Format,
+    chain: &[String],
+    escalate: Option<u64>,
+    body: &[u8],
+) -> Response<Full<Bytes>> {
+    let Some(incidents) = alert::incidents(format, body, &hook.labels, path) else {
+        return answer(StatusCode::BAD_REQUEST, "not this route's format\n");
+    };
+    if !hook.take_slot(path) {
+        return answer(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many alerts: try again later\n",
+        );
+    }
+    let mut worst = StatusCode::OK;
+    for incident in incidents {
+        let request = match incident.firing {
+            true => json!({
+                "cmd": "page", "to": chain, "text": incident.text, "key": incident.key,
+                "escalate": escalate, "wait": false,
+            }),
+            false => json!({ "cmd": "resolve", "key": incident.key }),
+        };
+        let status = match call(&hook.home, &request).await {
+            // A resolution for a page this daemon never opened, or already closed.
+            Some(Ok(_)) | Some(Err(Fail(3, _))) if !incident.firing => StatusCode::OK,
+            Some(Ok(v)) if v["page"] == "opened" => StatusCode::OK,
+            None | Some(Err(Fail(1 | 4 | 6, _))) => StatusCode::SERVICE_UNAVAILABLE,
+            Some(Ok(v)) if matches!(v["page"].as_str(), Some("unavailable" | "send_failed")) => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        if status != StatusCode::OK && worst != StatusCode::SERVICE_UNAVAILABLE {
+            worst = status;
+        }
+    }
+    match worst {
+        StatusCode::OK => answer(StatusCode::OK, "paged\n"),
+        StatusCode::SERVICE_UNAVAILABLE => answer(worst, "not paged: try again later\n"),
+        _ => answer(worst, "not paged: check the route\n"),
     }
 }
 

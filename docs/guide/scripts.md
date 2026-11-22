@@ -26,6 +26,8 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `run (--to C \| --group NAME \| --group-id ID) [--name L] [--lines N] [--failures-only] -- COMMAND` | runs COMMAND, then reports how it ended |
 | `ask CONTACT QUESTION [--timeout SECS or Nm]` | waits for a verified contact to approve or decline (requires a daemon) |
 | `hook --token-file PATH --route NAME=contact:C \| group:G [...]` | takes monitoring webhooks and passes them on (requires a daemon; see below) |
+| `page --to C [--then C ...] [--key K] [--every 5m] [--escalate 15m] [--give-up 2h] TEXT` | pages a verified contact until someone answers `ack CODE`, then the next one (requires a daemon) |
+| `resolve --key K` | ends a page and tells everyone paged that it is resolved |
 | `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
 Commands that open the identity take `--password-file PATH` or `--password-stdin` and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
@@ -265,7 +267,7 @@ termchat hook --token-file /etc/termchat/hook-token \
     --route oncall=contact:alice --route ops=group:Ops --labels job,severity
 ```
 
-- A route is `NAME=contact:CONTACT`, `NAME=group:GROUP` or `NAME=group-id:ID`, with an optional format at the end: `:alertmanager`, `:kuma`, `:text`, or `:auto` (the default, which tells them apart). `POST /oncall` then goes to alice, `POST /ops` to the group. A request cannot pick a recipient.
+- A route is `NAME=contact:CONTACT`, `NAME=group:GROUP`, `NAME=group-id:ID` or `NAME=page:CONTACT,CONTACT[:15m]` (see [On-call paging](#on-call-paging)), with an optional format at the end: `:alertmanager`, `:kuma`, `:text`, or `:auto` (the default, which tells them apart). `POST /oncall` then goes to alice, `POST /ops` to the group. A request cannot pick a recipient.
 - A contact must be accepted and have a verified safety number; `hook` checks every route when it starts and refuses to run otherwise.
 - Every request needs `Authorization: Bearer <token>`. Without it: `401`.
 - It listens on `127.0.0.1:9099`. `--listen ADDR` takes another address; anything other than loopback sends the token in the clear, so put a TLS proxy (Caddy, nginx) in front.
@@ -305,6 +307,25 @@ WantedBy=multi-user.target
 ```
 
 What an alert says lands in the chat history on every device that gets it. Keep secrets out of annotations. Whoever holds the token can write to the routes and nothing more: no reading, no other recipients, no commands to the server. To change it, replace the file and restart `hook`.
+
+## On-call paging
+
+`termchat page` keeps paging until a person answers, then tells everyone (ADR-040). It needs the daemon.
+
+```sh
+termchat page --to alice --then bob --every 5m --escalate 15m --key disk-web1 \
+    "Disk 95% full on web-1"
+```
+
+- alice gets the text with a line `Reply "ack 3f9c2e81a07d6b54" to acknowledge.` She answers with exactly that, from her main device, in the app or with `termchat send`.
+- Until then she gets a reminder every `--every` (default 5m, at least 1m). After `--escalate` (default 15m) bob is paged too, with a code of his own, and alice hears "Passed to bob". Either of them can acknowledge; the others then hear who did.
+- `page` exits `0` when acknowledged, `4` when nobody answered before `--give-up` (default 2h, at most 7d) or the page was resolved first, `3` for an unknown contact, `5` when a contact is not verified, `6` without a daemon.
+- `--key` names the incident. A second `page` with an open key pages nobody again: it sends "Still firing (2)". `termchat resolve --key disk-web1` ends it and sends "Resolved after 14m".
+- Every contact in the chain must be accepted and verified. Pages go to contacts only, never to groups. They live in the daemon's memory: a daemon restart drops them.
+
+From the webhook receiver, a route pages instead of sending: `--route oncall=page:alice,bob:15m`. A firing Alertmanager alert opens a page keyed by its fingerprint, the same alert resolved resolves it; an Uptime Kuma monitor going down pages, coming up resolves.
+
+An acknowledgement only stops the reminders. It authorizes nothing on the server, and nothing a contact sends can run a command there.
 
 ## From GitHub Actions or another CI
 

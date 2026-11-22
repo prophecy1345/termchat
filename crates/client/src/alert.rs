@@ -111,6 +111,89 @@ fn line(alert: &Value, group_status: &str, labels: &[String]) -> String {
     out.replace('\n', " ")
 }
 
+/// One incident in a webhook, for a route that pages (ADR-040).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Incident {
+    /// The same problem keeps the same key, so a repeat merges and a
+    /// resolution finds its page.
+    pub key: String,
+    pub text: String,
+    pub firing: bool,
+}
+
+/// The incidents in `body`, or `None` if it is not in `format`. Alertmanager
+/// gives one per alert (keyed by its fingerprint), Kuma one per monitor
+/// (down pages, up resolves), plain text one keyed by `fallback`.
+pub fn incidents(
+    format: Format,
+    body: &[u8],
+    labels: &[String],
+    fallback: &str,
+) -> Option<Vec<Incident>> {
+    let json = serde_json::from_slice::<Value>(body).ok();
+    let kind = match (format, &json) {
+        (Format::Alertmanager, _) | (Format::Auto, Some(Value::Object(_)))
+            if json.as_ref().is_some_and(|v| v["alerts"].is_array()) =>
+        {
+            Format::Alertmanager
+        }
+        (Format::Kuma, _) | (Format::Auto, Some(_))
+            if json.as_ref().is_some_and(|v| v["msg"].is_string()) =>
+        {
+            Format::Kuma
+        }
+        (Format::Alertmanager | Format::Kuma, _) => return None,
+        _ => Format::Text,
+    };
+    let list = match (kind, json) {
+        (Format::Alertmanager, Some(v)) => {
+            let status = v["status"].as_str().unwrap_or("firing");
+            v["alerts"]
+                .as_array()?
+                .iter()
+                .take(MAX_ALERTS)
+                .map(|alert| {
+                    let firing = alert["status"].as_str().unwrap_or(status) != "resolved";
+                    let label = |k: &str| alert["labels"][k].as_str().unwrap_or_default();
+                    let key = alert["fingerprint"]
+                        .as_str()
+                        .filter(|f| !f.is_empty())
+                        .map_or_else(
+                            || format!("{}@{}", label("alertname"), label("instance")),
+                            String::from,
+                        );
+                    // Its own status is in the page's wording; leave it out of the line.
+                    let text = line(alert, alert["status"].as_str().unwrap_or(status), labels);
+                    Incident {
+                        key: format!("am:{}", clean_text(&key)),
+                        text: cut(&clean_text(text.trim_start_matches("- "))),
+                        firing,
+                    }
+                })
+                .collect()
+        }
+        (Format::Kuma, Some(v)) => {
+            let monitor = v["monitor"]["name"].as_str().unwrap_or(fallback);
+            vec![Incident {
+                key: format!("kuma:{}", clean_text(monitor)),
+                text: cut(&clean_text(v["msg"].as_str()?.trim())),
+                // Kuma: 0 down, 1 up, 2 pending, 3 maintenance.
+                firing: v["heartbeat"]["status"].as_i64() != Some(1),
+            }]
+        }
+        _ => vec![Incident {
+            key: format!("hook:{fallback}"),
+            text: cut(&clean_text(&plain(body)?)),
+            firing: true,
+        }],
+    };
+    let list: Vec<Incident> = list
+        .into_iter()
+        .filter(|i| !i.text.trim().is_empty())
+        .collect();
+    (!list.is_empty()).then_some(list)
+}
+
 /// At most `MAX_CHARS`, cut after the last whole line that fits.
 fn cut(text: &str) -> String {
     if text.chars().count() <= MAX_CHARS {
@@ -179,6 +262,49 @@ mod tests {
         let text = render(Format::Text, long.as_bytes(), &[]).unwrap();
         assert!(text.chars().count() <= MAX_CHARS);
         assert!(text.ends_with("text\n…"));
+    }
+
+    #[test]
+    fn incidents_key_by_fingerprint_monitor_or_route() {
+        let am = r#"{"status":"firing","alerts":[
+            {"status":"firing","fingerprint":"a1","labels":{"alertname":"DiskFull","instance":"web-1"},"annotations":{"summary":"95%"}},
+            {"status":"resolved","labels":{"alertname":"Load","instance":"db"}}]}"#;
+        let got = incidents(Format::Auto, am.as_bytes(), &[], "oncall").unwrap();
+        assert_eq!(
+            got[0],
+            Incident {
+                key: "am:a1".into(),
+                text: "DiskFull on web-1: 95%".into(),
+                firing: true
+            }
+        );
+        assert_eq!(
+            got[1],
+            Incident {
+                key: "am:Load@db".into(),
+                text: "Load on db".into(),
+                firing: false
+            }
+        );
+
+        let down = br#"{"msg":"[api] down","monitor":{"name":"api"},"heartbeat":{"status":0}}"#;
+        let up = br#"{"msg":"[api] up","monitor":{"name":"api"},"heartbeat":{"status":1}}"#;
+        let d = incidents(Format::Auto, down, &[], "r").unwrap();
+        let u = incidents(Format::Kuma, up, &[], "r").unwrap();
+        assert_eq!((d[0].key.as_str(), d[0].firing), ("kuma:api", true));
+        assert_eq!((u[0].key.as_str(), u[0].firing), ("kuma:api", false));
+
+        let t = incidents(Format::Text, b"gatus: api down", &[], "oncall").unwrap();
+        assert_eq!(
+            t,
+            vec![Incident {
+                key: "hook:oncall".into(),
+                text: "gatus: api down".into(),
+                firing: true
+            }]
+        );
+        assert_eq!(incidents(Format::Alertmanager, b"{}", &[], "r"), None);
+        assert_eq!(incidents(Format::Auto, b"  ", &[], "r"), None);
     }
 
     #[test]

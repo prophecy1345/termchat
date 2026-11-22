@@ -23,7 +23,7 @@ mod group;
 mod hook;
 mod run;
 
-pub const COMMANDS: [&str; 13] = [
+pub const COMMANDS: [&str; 15] = [
     "init",
     "daemon",
     "invite",
@@ -37,6 +37,8 @@ pub const COMMANDS: [&str; 13] = [
     "ask",
     "run",
     "hook",
+    "page",
+    "resolve",
 ];
 
 const USAGE: &str = "usage:
@@ -56,6 +58,9 @@ const USAGE: &str = "usage:
   termchat ask CONTACT QUESTION [--timeout SECS|Nm]   (default 10m)
   termchat run (--to CONTACT | --group NAME | --group-id ID) [--name LABEL]
                [--lines N] [--failures-only] -- COMMAND [ARGS...]
+  termchat page --to CONTACT [--then CONTACT ...] [--key KEY] [--every 5m]
+                [--escalate 15m] [--give-up 2h] TEXT   (repeats until ack CODE)
+  termchat resolve --key KEY
   termchat hook --token-file PATH --route NAME=contact:CONTACT|group:GROUP [...]
                                         (monitoring webhooks; termchat hook --help)
 identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
@@ -121,6 +126,29 @@ struct Args {
     lines: Option<usize>,
     failures_only: bool,
     expires: Option<u32>,
+    then: Vec<String>,
+    key: Option<String>,
+    escalate: Option<u64>,
+    give_up: Option<u64>,
+}
+
+/// ADR-040: `90`, `90s`, `5m`, `2h` or `1d`, in seconds.
+fn span(text: &str, flag: &str) -> Result<u64, Fail> {
+    let (count, scale) = match text.char_indices().last() {
+        Some((at, 's')) => (&text[..at], 1),
+        Some((at, 'm')) => (&text[..at], 60),
+        Some((at, 'h')) => (&text[..at], 3600),
+        Some((at, 'd')) => (&text[..at], 86_400),
+        _ => (text, 1),
+    };
+    count
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+        .then(|| count.parse::<u64>().ok())
+        .flatten()
+        .and_then(|n| n.checked_mul(scale))
+        .filter(|&n| n > 0)
+        .ok_or_else(|| Fail(2, format!("{flag} takes a time like 90s, 5m, 2h or 1d")))
 }
 
 fn parse(args: &[String]) -> Result<Args, Fail> {
@@ -184,7 +212,12 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
                     group::Selector::Id(group::parse_id(&query)?)
                 });
             }
+            "--every" if a.command == "page" => a.every = Some(span(&value(&mut it, arg)?, arg)?),
             "--every" => a.every = Some(secs(value(&mut it, arg)?, arg)?),
+            "--then" => a.then.push(value(&mut it, arg)?),
+            "--key" => a.key = Some(value(&mut it, arg)?),
+            "--escalate" => a.escalate = Some(span(&value(&mut it, arg)?, arg)?),
+            "--give-up" => a.give_up = Some(span(&value(&mut it, arg)?, arg)?),
             "--after" => a.after = Some(secs(value(&mut it, arg)?, arg)?),
             "--notify" => a.notify = Some(value(&mut it, arg)?),
             "--to" => a.to = Some(value(&mut it, arg)?),
@@ -244,6 +277,15 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
                 _ => false,
             }
         }
+        // ADR-040: one text and a chain; the daemon checks the limits.
+        "page" => {
+            n == 1
+                && !a.positional[0].trim().is_empty()
+                && a.to.is_some()
+                && a.group.is_none()
+                && a.key.as_ref().is_none_or(|k| !k.trim().is_empty())
+        }
+        "resolve" => n == 0 && a.key.as_ref().is_some_and(|k| !k.trim().is_empty()),
         // ADR-035: one recipient, a command, and no stdin taken from it.
         "run" => {
             n >= 1
@@ -261,10 +303,16 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
         }
         _ => false,
     };
-    let run_only = a.to.is_some() || a.name.is_some() || a.lines.is_some() || a.failures_only;
+    let run_only = a.name.is_some() || a.lines.is_some() || a.failures_only;
+    let page_only = !a.then.is_empty() || a.escalate.is_some() || a.give_up.is_some();
+    let paging = a.command == "page" || a.command == "resolve";
     if !ok
-        || (a.command != "watch" && (a.every.is_some() || a.after.is_some() || a.notify.is_some()))
+        || (!matches!(a.command.as_str(), "watch" | "page") && a.every.is_some())
+        || (a.command != "watch" && (a.after.is_some() || a.notify.is_some()))
         || (a.command != "run" && run_only)
+        || (!matches!(a.command.as_str(), "run" | "page") && a.to.is_some())
+        || (a.command != "page" && page_only)
+        || (!paging && a.key.is_some())
         || (a.command != "send" && a.expires.is_some())
     {
         return fail(2, format!("wrong arguments for {}\n{USAGE}", a.command));
@@ -360,6 +408,14 @@ async fn execute(a: &Args) -> Result<(), Fail> {
             .unwrap_or_else(|| fail(6, "ask needs a running termchat daemon for this identity"));
         #[cfg(not(unix))]
         return fail(2, "termchat ask needs Linux or macOS");
+    }
+    if a.command == "page" || a.command == "resolve" {
+        #[cfg(unix)]
+        return daemon::ask(a, &data::home())
+            .await
+            .unwrap_or_else(|| fail(6, "page needs a running termchat daemon for this identity"));
+        #[cfg(not(unix))]
+        return fail(2, "termchat page needs Linux or macOS");
     }
     if a.command == "watch" {
         #[cfg(unix)]
