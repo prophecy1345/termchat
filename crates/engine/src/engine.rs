@@ -461,10 +461,13 @@ fn start(
         (None, true) => return Err("Tor is on but the relay has no onion URL".into()),
         (_, false) => (link.relay.as_str(), Dial::Direct),
     };
-    let (relay, mut rx) = Relay::connect_after(url, dial, delay, true).map_err(|e| match e {
-        Error::NoTor => "this build has no Tor support".to_string(),
-        _ => format!("bad relay URL: {url}"),
-    })?;
+    // ADR-038: without Tor the relay ties the links together by IP anyway,
+    // so a spread before each reconnect would only delay messages.
+    let (relay, mut rx) =
+        Relay::connect_after(url, dial, delay, data.tor).map_err(|e| match e {
+            Error::NoTor => "this build has no Tor support".to_string(),
+            _ => format!("bad relay URL: {url}"),
+        })?;
     // Stops with the engine (its receiver) or with this `Live` (abort).
     let tx = tx.clone();
     let me = link.clone();
@@ -840,8 +843,9 @@ impl Engine {
                 continue;
             }
             let (data, path, tx) = (&self.data, &self.path, &self.events_tx);
-            // The main identity at once; the others spread out (ADR-014).
-            let delay = match spread_out && link.who != self.me() {
+            // The main identity at once; the others spread out (ADR-014),
+            // under Tor only: directly they share an IP anyway (ADR-038).
+            let delay = match spread_out && self.data.tor && link.who != self.me() {
                 true => spread(),
                 false => Duration::ZERO,
             };
@@ -2292,7 +2296,40 @@ impl Engine {
     pub fn woken(&self, who: &Ed25519Key) {
         if let Some(l) = self.live(who, &self.home()) {
             l.relay.check();
+            if self.data.hurry_open {
+                l.relay.hurry();
+            }
         }
+    }
+
+    /// ADR-038: the link of chat `key` has not reached the relay yet, so
+    /// what it carries waits (the spread after unlock, or a reconnect).
+    pub fn chat_connecting(&self, key: &Ed25519Key) -> bool {
+        self.live(key, &self.home()).is_some_and(|l| !l.connected)
+    }
+
+    /// ADR-038, a setting: the chat and group on screen skip the rest of
+    /// their spread. Called from `tick`.
+    fn hurry_open_links(&self) {
+        if !self.data.hurry_open {
+            return;
+        }
+        if let Some(l) = self.open.and_then(|k| self.live(&k, &self.home())) {
+            l.relay.hurry();
+        }
+        let open_group = self
+            .open_group
+            .and_then(|id| self.data.groups.iter().position(|g| g.id == id));
+        if let Some(l) = open_group.and_then(|g| self.group_live(g)) {
+            l.relay.hurry();
+        }
+    }
+
+    /// ADR-038: whether the open chat's link may skip its spread.
+    pub fn set_hurry_open(&mut self, on: bool) {
+        self.data.hurry_open = on;
+        self.persist();
+        self.hurry_open_links();
     }
 
     /// Who has a queue, and so a UnifiedPush instance of its own: our
@@ -2307,6 +2344,7 @@ impl Engine {
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
         self.retry_group_moves();
+        self.hurry_open_links();
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
             self.claiming.clear();

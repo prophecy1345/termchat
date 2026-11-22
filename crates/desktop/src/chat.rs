@@ -711,6 +711,10 @@ impl Chat {
                             state.push_str(" · YOU ARE ADMIN");
                         }
                         ui.label(caps(&state, if ok { p.accent } else { p.dim }));
+                        // ADR-038: say why its messages are not here yet.
+                        if self.engine.group_connecting(g) {
+                            ui.label(caps("CONNECTING…", p.warn));
+                        }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         // Right to left: the last one stands first.
@@ -908,6 +912,10 @@ impl Chat {
                             false => chat_state(c),
                         };
                         ui.label(caps(state, if ok { p.accent } else { p.warn }));
+                        // ADR-038: say why its messages are not here yet.
+                        if self.engine.chat_connecting(&c.key) {
+                            ui.label(caps("CONNECTING…", p.warn));
+                        }
                         if let Some(prof) = self.engine.profile_of(c) {
                             let as_ = termchat_engine::clean(&prof.nickname).to_uppercase();
                             ui.label(caps(&format!("INCOGNITO AS {as_}"), p.dim));

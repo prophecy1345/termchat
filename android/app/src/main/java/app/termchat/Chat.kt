@@ -322,6 +322,8 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 else -> "ENCRYPTED · NOT VERIFIED" to false
             }
             Text(state, style = Tc.caps.copy(color = if (ok) Tc.lime else Tc.warn))
+            // ADR-038: why its messages are not here yet.
+            if (c.connecting) Text("CONNECTING…", style = Tc.caps.copy(color = Tc.warn))
             c.incognito?.let { Text("INCOGNITO AS ${it.uppercase()}", style = Tc.caps.copy(color = Tc.dim)) }
         }
         Box {

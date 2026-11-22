@@ -334,6 +334,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         if (a.sharedLink()) "Less battery, but the relay sees which queues are yours"
         else "The relay cannot link your contacts' queues by connection; uses more battery",
     ) { result = runCatching { a.setSharedLink(!a.sharedLink()) }.getOrElse { it.message ?: "$it" }; m.changed() }
+    MenuRow(
+        "Connect the open chat at once: ${if (a.hurryOpen()) "on" else "off"}",
+        "With Tor, chats connect over 30 s after unlock so the relay cannot tie them together. " +
+            "On: the chat you open skips that wait, and the relay may see which chat you opened.",
+    ) { a.setHurryOpen(!a.hurryOpen()); m.changed() }
     Line()
     Text("ABOUT", style = Tc.caps)
     MenuRow("What's new") { m.screen = Screen.News }

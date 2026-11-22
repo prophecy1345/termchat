@@ -31,6 +31,12 @@ By default each contact gets a connection of its own, and with Tor a circuit of 
 
 **One connection for all contacts** uses less of both, but the relay then sees your queues together: it learns which queues belong to one person, though still not who that is. In settings: **one connection for all contacts** (terminal), **One connection for all contacts** (desktop), **Connections** (Android).
 
+## Right after unlocking
+
+With Tor, your contacts' connections come up one by one over the first 30 seconds after you unlock, so the relay cannot tie them together by the second they arrive. Until a chat's connection is up, its header says **connecting…**: messages to and from it wait, and nothing is lost. Without Tor the relay sees one IP address for all of them anyway, so they connect at once.
+
+**Connect the open chat at once** lets the chat you open skip that wait. The relay may then see which chat you opened right after unlocking. It is off by default. In settings: **connect the open chat at once** (terminal), **Connect the open chat at once** (desktop and Android).
+
 ## Bridges, where Tor is blocked
 
 Some countries and networks block Tor. Bridges are unlisted entry points behind a disguise:

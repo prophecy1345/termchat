@@ -42,7 +42,7 @@ English version: [desktop.md](desktop.md).
 **Settings** под списком контактов:
 
 - **Appearance:** тема (те же, что в терминале и на Android), системный звук новых сообщений и **Lock after** 1, 5, 15 или 30 минут.
-- **Contacts:** **One connection for all contacts** (см. [Tor и мосты](tor.ru.md)).
+- **Contacts:** **One connection for all contacts** и **Connect the open chat at once** (см. [Tor и мосты](tor.ru.md)).
 - **Devices:** **Devices…** — список ваших устройств; **Link to my main device** — на новом устройстве. См. [Устройства](devices.ru.md).
 - **Account and security:** **Turn Tor on/off**, **Back up your identity**, **Change password**, **Set a duress password**, **Tor bridges**, **What's new in this version**.
 - **Danger zone:** **Wipe everything**. См. [Копии, блокировка, стирание](safety.ru.md).

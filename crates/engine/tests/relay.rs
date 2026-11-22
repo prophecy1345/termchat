@@ -528,3 +528,28 @@ async fn unanswered_counts_a_send_until_the_relay_answers() {
     }
     assert_eq!(alice.relay.unanswered(), 0);
 }
+
+/// ADR-038: a link waiting out its spread connects as soon as the user
+/// waits on it, and not before.
+#[tokio::test]
+async fn a_hurried_link_skips_its_spread() {
+    let url = start_relay(Limits::default()).await;
+    let spread = Duration::from_secs(30);
+    let (relay, mut events) =
+        Relay::connect_after(&url, termchat_engine::Dial::Direct, spread, true).unwrap();
+    // Still waiting: nothing comes on its own within a second.
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), events.recv())
+            .await
+            .is_err()
+    );
+    relay.hurry();
+    let connected = async {
+        loop {
+            if events.recv().await == Some(Event::Connected) {
+                return;
+            }
+        }
+    };
+    tokio::time::timeout(WAIT, connected).await.unwrap();
+}

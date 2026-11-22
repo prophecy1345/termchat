@@ -92,6 +92,7 @@ pub fn bridge_transport(_line: &str) -> Option<String> {
 pub struct Relay {
     tx: mpsc::UnboundedSender<Outgoing>,
     wake: Arc<Notify>,
+    hurry: Arc<Notify>,
     pushed: Arc<AtomicBool>,
     /// `Send` frames the relay has not answered yet, queued ones included.
     unanswered: Arc<AtomicUsize>,
@@ -160,6 +161,7 @@ impl Relay {
         let (tx, rx) = mpsc::unbounded_channel();
         let (events_tx, events) = mpsc::channel(256);
         let wake = Arc::new(Notify::new());
+        let hurry = Arc::new(Notify::new());
         let pushed = Arc::new(AtomicBool::new(false));
         let unanswered = Arc::new(AtomicUsize::new(0));
         let link = Link {
@@ -179,6 +181,7 @@ impl Relay {
             delay,
             spread,
             wake: Arc::clone(&wake),
+            hurry: Arc::clone(&hurry),
             pushed: Arc::clone(&pushed),
             unanswered: Arc::clone(&unanswered),
             heard: SystemTime::now(),
@@ -188,6 +191,7 @@ impl Relay {
             Self {
                 tx,
                 wake,
+                hurry,
                 pushed,
                 unanswered,
             },
@@ -234,6 +238,12 @@ impl Relay {
         self.wake.notify_one();
     }
 
+    /// The user waits on this link (ADR-038, a setting): skip the rest of
+    /// its spread now. Only a wait in progress: nothing is kept for later.
+    pub fn hurry(&self) {
+        self.hurry.notify_waiters();
+    }
+
     /// A push for this identity (ADR-012, the sleeping link): the relay holds
     /// our connection but heard nothing from it, so the message may already
     /// sit in the socket. Read it, and check the link with a ping however
@@ -277,6 +287,7 @@ struct Link {
     /// Add 0-30 s to every reconnect.
     spread: bool,
     wake: Arc<Notify>,
+    hurry: Arc<Notify>,
     /// Set by `Relay::check`: a push came, check the connection held now.
     pushed: Arc<AtomicBool>,
     /// Shared with `Relay::unanswered`.
@@ -329,6 +340,7 @@ impl Link {
     async fn run(mut self, mut out: mpsc::UnboundedReceiver<Outgoing>) {
         tokio::select! {
             _ = tokio::time::sleep(self.delay) => {}
+            () = self.hurry.notified() => {}
             _ = self.events.closed() => return,
         }
         let mut delay = MIN_DELAY;
@@ -346,7 +358,8 @@ impl Link {
             }
             // Stop waiting as soon as the app is gone (e.g. locked).
             // A wake-up cuts the backoff short, never the spread: identities
-            // must not come back together (ADR-014).
+            // must not come back together (ADR-014). Only a user waiting on
+            // this link may cut it, if they chose to (ADR-038).
             tokio::select! {
                 _ = tokio::time::sleep(jitter(delay)) => {}
                 () = self.wake.notified() => {}
@@ -354,6 +367,7 @@ impl Link {
             }
             tokio::select! {
                 _ = tokio::time::sleep(self.spread_delay()) => {}
+                () = self.hurry.notified() => {}
                 _ = self.events.closed() => return,
             }
             delay = (delay * 2).min(MAX_DELAY);

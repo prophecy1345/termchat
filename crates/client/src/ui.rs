@@ -650,6 +650,11 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         if g.left {
             flag("you are no longer in this group".into(), t.overlay0);
         }
+        // ADR-038: why its messages are not here yet.
+        let at = m.engine.data.groups.iter().position(|x| x.id == g.id);
+        if at.is_some_and(|at| m.engine.group_connecting(at)) {
+            flag("connecting…".into(), t.yellow);
+        }
         flag("Ctrl+R members".into(), t.overlay0);
     }
     if let Some(c) = chat {
@@ -658,6 +663,10 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         }
         if m.engine.is_request(&c.key) {
             flag("request: Ctrl+Y accept, Ctrl+D reject".into(), t.peach);
+        }
+        // ADR-038: why its messages are not here yet.
+        if m.engine.chat_connecting(&c.key) {
+            flag("connecting…".into(), t.yellow);
         }
         if !c.verified {
             flag("! not verified (Ctrl+F)".into(), t.peach);

@@ -1003,6 +1003,20 @@ impl Chat {
                     "Uses less battery and network, but the relay then sees which queues are yours. \
                      Off: a connection per contact (ADR-023).",
                 );
+                let mut hurry = self.engine.data.hurry_open;
+                if ui
+                    .checkbox(&mut hurry, "Connect the open chat at once")
+                    .changed()
+                {
+                    self.engine.set_hurry_open(hurry);
+                }
+                hint(
+                    ui,
+                    p,
+                    "With Tor, chats connect over 30 seconds after unlock so the relay cannot tie \
+                     them together. On: the chat you open skips that wait, and the relay may see \
+                     which chat you opened (ADR-038).",
+                );
                 section(ui, p, "Devices");
                 let e = &self.engine;
                 let linkable = e.is_primary() && e.data.devices.is_none() && e.data.people() == 0;

@@ -102,8 +102,10 @@ pub struct ContactView {
     pub mute: String,
     /// At the top of the list.
     pub pinned: bool,
-    /// At the bottom of the list, under "Archived".
+    /// Above the others, under "Archived".
     pub archived: bool,
+    /// Its link has not reached the relay yet: its messages wait (ADR-038).
+    pub connecting: bool,
 }
 
 /// A chat as a plain text file: its suggested name and the text.
@@ -174,6 +176,8 @@ pub struct GroupView {
     pub last_at: u64,
     /// As for a chat: "off", "always" or the time left.
     pub mute: String,
+    /// Its link has not reached the relay yet (ADR-038).
+    pub connecting: bool,
 }
 
 /// One of our devices (ADR-028), the main one first.
@@ -572,6 +576,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         mute: engine::mute_label(c.muted_until),
         pinned: c.pinned,
         archived: c.archived,
+        connecting: e.chat_connecting(&c.key),
     }
 }
 
@@ -645,6 +650,16 @@ impl Account {
     pub fn set_shared_link(&self, on: bool) -> Result<String> {
         let _rt = runtime().enter();
         Ok(self.lock().set_shared_link(on)?)
+    }
+
+    /// The open chat connects at once instead of waiting out its spread (ADR-038).
+    pub fn hurry_open(&self) -> bool {
+        self.lock().data.hurry_open
+    }
+
+    pub fn set_hurry_open(&self, on: bool) {
+        let _rt = runtime().enter();
+        self.lock().set_hurry_open(on);
     }
 
     /// In a stable order: an index stays valid until a contact is deleted.
@@ -769,6 +784,7 @@ impl Account {
                 expires_in: x.timer(),
                 last_at: x.messages.last().map_or(0, |m| m.at),
                 mute: engine::mute_label(x.muted_until),
+                connecting: e.group_connecting(g),
             })
             .collect()
     }

@@ -159,6 +159,8 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
         Column(Modifier.weight(1f).padding(start = 12.dp).clickable { ask("members") }) {
             Text(g.name, style = Tc.name)
             Text(groupState(g) + if (g.admin) " · ADMIN" else "", style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
+            // ADR-038: why its messages are not here yet.
+            if (g.connecting) Text("CONNECTING…", style = Tc.caps.copy(color = Tc.warn))
         }
         Box {
             IconTap("menu", "Group menu") { menu = true }

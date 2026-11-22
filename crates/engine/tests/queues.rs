@@ -369,3 +369,27 @@ async fn no_gap_is_reported_when_the_asker_restarts_before_the_accept() {
     assert!(gaps.is_empty(), "{gaps:?}");
     let _ = std::fs::remove_dir_all(d);
 }
+
+/// ADR-038: without Tor the relay ties the links together by IP anyway, so
+/// after an unlock every link comes up at once, not over 0-30 s.
+#[tokio::test(flavor = "multi_thread")]
+async fn without_tor_links_come_up_at_once_after_unlock() {
+    let url = start_relay().await;
+    let (alice, mut bob, d) = meet(&url, "unlock-now").await;
+    let key = alice.data.contacts[0].key;
+    drop(alice);
+    let mut alice = match Engine::unlock(&d.join("alice"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(e) => e,
+        termchat_engine::Unlocked::Wiped => panic!("wiped"),
+    };
+    bob.send(0, "right after unlock").unwrap();
+    let start = Instant::now();
+    pump(&mut alice, &mut bob, |a, _| got("right after unlock")(a)).await;
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(!alice.chat_connecting(&key));
+    let _ = std::fs::remove_dir_all(d);
+}

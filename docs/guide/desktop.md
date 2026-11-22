@@ -42,7 +42,7 @@ A new member does not see what was said before they joined. Documents go to the 
 **Settings** under the contact list:
 
 - **Appearance:** the theme (the same as in the terminal and on Android), the system sound for new messages, and **Lock after** 1, 5, 15 or 30 minutes.
-- **Contacts:** **One connection for all contacts** (see [Tor and bridges](tor.md)).
+- **Contacts:** **One connection for all contacts** and **Connect the open chat at once** (see [Tor and bridges](tor.md)).
 - **Devices:** **Devices…** lists your devices; **Link to my main device** on a new one. See [Devices](devices.md).
 - **Account and security:** **Turn Tor on/off**, **Back up your identity**, **Change password**, **Set a duress password**, **Tor bridges**, **What's new in this version**.
 - **Danger zone:** **Wipe everything**. See [Backups, locking, wiping](safety.md).

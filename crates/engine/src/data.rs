@@ -60,6 +60,9 @@ pub struct Data {
     /// contact (ADR-023, section 7): less battery, but the relay sees which
     /// queues are one person's.
     pub shared_link: bool,
+    /// ADR-038: the open chat's link skips the rest of its spread. Off by
+    /// default: under Tor it shows the relay which queue the user opened.
+    pub hurry_open: bool,
     pub nickname: String,
     /// Where strangers write to the main identity (ADR-023).
     pub invite_queue: Option<Queue>,

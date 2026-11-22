@@ -239,7 +239,24 @@ impl Engine {
         };
         if let Some(l) = self.links.get(&link) {
             l.relay.check();
+            if self.data.hurry_open {
+                l.relay.hurry();
+            }
         }
+    }
+
+    /// Group `g`'s link, if it runs.
+    pub(super) fn group_live(&self, g: usize) -> Option<&super::Live> {
+        let group = &self.data.groups[g];
+        self.links.get(&Link {
+            who: link_who(&group.id),
+            relay: group.relay_url.clone(),
+        })
+    }
+
+    /// ADR-038: group `g`'s link has not reached the relay yet.
+    pub fn group_connecting(&self, g: usize) -> bool {
+        self.group_live(g).is_some_and(|l| !l.connected)
     }
 
     /// A new group with us as its admin and only member, on our relay.

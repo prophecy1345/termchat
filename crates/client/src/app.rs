@@ -1191,6 +1191,10 @@ impl Main {
                     self.engine.data.shared_link,
                 ),
                 row(
+                    "connect the open chat at once (with Tor the relay may see which chat you open)",
+                    self.engine.data.hurry_open,
+                ),
+                row(
                     &format!(
                         "lock after {} min idle (longer: riskier if left open)",
                         s.lock_minutes.clamp(1, 30)
@@ -1254,7 +1258,11 @@ impl Main {
                     Ok(done) | Err(done) => done,
                 }));
             }
-            (3, 6) => s.next_lock(),
+            (3, 6) => {
+                let on = !self.engine.data.hurry_open;
+                self.engine.set_hurry_open(on);
+            }
+            (3, 7) => s.next_lock(),
             (3, _) => return Some(Popup::Form(Form::new(Kind::Wipe))),
             (0, _) => {
                 s.theme = theme::THEMES
