@@ -148,7 +148,8 @@ termchat.app — для приватного общения. Он **не** пр�
 - [Руководство пользователя](docs/guide/) · [Модель угроз](docs/threat-model.ru.md) ·
   [Протокол](docs/protocol.ru.md) · [Свой relay](docs/self-host.ru.md)
 - [Решения (ADR)](docs/adr/): каждое решение по протоколу и безопасности и его цена.
-- [Как участвовать](CONTRIBUTING.md) · [Как сообщить об уязвимости](SECURITY.md) (на английском)
+- [Вопросы и идеи: GitHub Discussions](https://github.com/prophecy1345/termchat/discussions) ·
+  [Как участвовать](CONTRIBUTING.md) · [Как сообщить об уязвимости](SECURITY.md) (на английском)
 
 ## Поддержать проект
 

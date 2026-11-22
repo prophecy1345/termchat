@@ -146,7 +146,8 @@ send. Not message contents, not nicknames, not who talks to whom, not IP history
   [Protocol](docs/protocol.md) · [Running a relay](docs/self-host.md)
 - [Decisions (ADRs)](docs/adr/): every protocol and security choice, with what it
   costs.
-- [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
+- [Questions and ideas: GitHub Discussions](https://github.com/prophecy1345/termchat/discussions) ·
+  [Contributing](CONTRIBUTING.md) · [Security policy: how to report a vulnerability](SECURITY.md)
 
 ## Support the project
 

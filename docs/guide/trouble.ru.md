@@ -21,4 +21,4 @@ English version: [trouble.md](trouble.md).
 | Нет звука | macOS играет системный звук; в Linux нужен `canberra-gtk-play` или `paplay`; иначе звучит звонок терминала, который ваш терминал может глушить. |
 | `termchat add` из скрипта завершился с кодом 4 | Запрос уйдёт со следующей командой; запустите любую, например `termchat contacts`. |
 
-Что-то другое? Откройте issue на [github.com/prophecy1345/termchat/issues](https://github.com/prophecy1345/termchat/issues). Никогда не вставляйте туда пароль, копию или приглашение.
+Что-то другое? Откройте issue на [github.com/prophecy1345/termchat/issues](https://github.com/prophecy1345/termchat/issues); вопрос или идею обсудите в [Discussions](https://github.com/prophecy1345/termchat/discussions). Оба места публичные: никогда не вставляйте туда пароль, копию или приглашение, а об уязвимости сообщайте приватно, как написано в [SECURITY.md](https://github.com/prophecy1345/termchat/blob/main/SECURITY.md).

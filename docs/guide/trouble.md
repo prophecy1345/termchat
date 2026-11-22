@@ -21,4 +21,4 @@ description: "What to do when termchat.app is stuck connecting, says wrong passw
 | No sound | macOS plays a system sound; Linux needs `canberra-gtk-play` or `paplay`; otherwise the terminal bell is used, which your terminal may mute. |
 | `termchat add` from a script ends with code 4 | The request goes with the next command; run any command again, or `termchat contacts`. |
 
-Something else? Open an issue at [github.com/prophecy1345/termchat/issues](https://github.com/prophecy1345/termchat/issues). Never paste your password, backup or invite there.
+Something else? Open an issue at [github.com/prophecy1345/termchat/issues](https://github.com/prophecy1345/termchat/issues); for a question or an idea, start a thread in [Discussions](https://github.com/prophecy1345/termchat/discussions). Both are public: never paste your password, backup or invite there, and report a vulnerability privately as [SECURITY.md](https://github.com/prophecy1345/termchat/blob/main/SECURITY.md) says.

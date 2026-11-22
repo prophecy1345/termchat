@@ -33,6 +33,7 @@ const groups: [string, [string, string][]][] = [
   ]],
   [g.project, [
     [REPO, "GitHub"],
+    [`${REPO}/discussions`, t.footer.discussions],
     [url(`${p}/docs/`), t.nav.docs],
     [url(`${p}/docs/relay/`), t.relayLink],
     [blob("LICENSE"), t.footer.licence],
