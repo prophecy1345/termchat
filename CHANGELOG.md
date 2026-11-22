@@ -3,6 +3,21 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.25.0
+
+- `termchat hook` takes webhooks from Alertmanager, Grafana, Uptime Kuma,
+  Gatus or anything that can POST, and passes each alert on as an
+  encrypted message to a verified contact or a private group, with a
+  token, fixed routes and limits (ADR-039).
+- `termchat page` pages a verified contact until someone answers
+  `ack CODE`, passes the page to the next person after a while, and tells
+  everyone who acknowledged it or that it resolved; `termchat resolve`
+  closes it. A webhook route can page: a firing alert opens a page, the
+  resolved one closes it (ADR-040).
+- Android: share text or a file from another app into a chat.
+- Desktop: Cmd+K (Ctrl+K) goes to a chat by name, F1 lists the keys, and
+  the unread count shows on the Dock icon or in the window title.
+
 ## 0.24.1
 
 - Tor (Arti) 2.8.0, with fixes for several low-severity security issues;

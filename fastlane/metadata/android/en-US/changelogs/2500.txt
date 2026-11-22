@@ -1,0 +1,1 @@
+Share text or a file from another app into a chat. Servers: monitoring alerts from Alertmanager, Grafana or Uptime Kuma as encrypted messages, and on-call paging that repeats until acknowledged and passes to the next person.
