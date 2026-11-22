@@ -339,7 +339,7 @@ AI_ALLOW="12345 67890 11121 31415 16171 81920" termchat-ai-bot
 ```
 
 - `AI_ALLOW` lists the fingerprints that may use the bot, comma-separated; it ignores everyone else.
-- `AI_URL` (default `http://127.0.0.1:11434/v1`), `AI_MODEL` (default `llama3.2`), `AI_KEY` for an API that needs a key, `AI_SYSTEM` for the system prompt.
+- `AI_URL` (default `http://127.0.0.1:11434/v1`), `AI_MODEL` (default `llama3.2`), `AI_KEY_FILE` (a `0600` file) or `AI_KEY` for an API that needs a key, `AI_SYSTEM` for the system prompt.
 - Each message is answered on its own: the bot keeps no conversation history.
 - It needs `jq` and `curl`, and answers through `termchat send`, so the daemon must run.
 

@@ -8,7 +8,8 @@
 #   AI_ALLOW   fingerprints allowed to use the bot, comma-separated (required)
 #   AI_URL     chat API base URL (default http://127.0.0.1:11434/v1, Ollama)
 #   AI_MODEL   model name (default llama3.2)
-#   AI_KEY     API key, if the API needs one (read it from a 0600 file)
+#   AI_KEY_FILE  a 0600 file with the API key, if the API needs one
+#   AI_KEY     the key itself, if not from a file
 #   AI_SYSTEM  system prompt (optional)
 set -eu
 
@@ -16,6 +17,9 @@ set -eu
 AI_URL=${AI_URL:-http://127.0.0.1:11434/v1}
 AI_MODEL=${AI_MODEL:-llama3.2}
 AI_SYSTEM=${AI_SYSTEM:-"You are a helpful assistant. Answer briefly, in plain text."}
+if [ -n "${AI_KEY_FILE:-}" ]; then
+    AI_KEY=$(tr -d ' \n' < "$AI_KEY_FILE")
+fi
 
 # The fingerprints without spaces, between commas, for an exact match below.
 allow=",$(printf '%s' "$AI_ALLOW" | tr -d ' '),"
