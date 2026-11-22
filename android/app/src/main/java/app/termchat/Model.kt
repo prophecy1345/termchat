@@ -20,6 +20,9 @@ import kotlin.concurrent.thread
 /** Minutes without a touch before the app locks itself; no "never" (ADR-021). */
 val LOCK_CHOICES = listOf(1, 5, 15, 30)
 
+/** What another app shared: text, or one file read into memory (at most 1 MiB). */
+class Share(val text: String?, val name: String?, val bytes: ByteArray?)
+
 sealed interface Screen {
     data object Start : Screen
     data object Chats : Screen
@@ -48,6 +51,8 @@ class Model(private val context: Context) : Listener {
     var version by mutableIntStateOf(0)
         private set
     var note by mutableStateOf("")
+    /** Text or a file shared from another app, waiting for the user to pick a chat. */
+    var share by mutableStateOf<Share?>(null)
     var notice by mutableStateOf<String?>(null)
     var wipeAnyway by mutableStateOf<String?>(null)
     var leaving by mutableStateOf(false)

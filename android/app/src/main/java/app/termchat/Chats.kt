@@ -2,6 +2,8 @@ package app.termchat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -191,5 +193,60 @@ fun Banner(text: String, onClick: () -> Unit) {
         text,
         style = Tc.small.copy(color = Tc.lime),
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).background(Tc.surface).padding(horizontal = 16.dp, vertical = 10.dp),
+    )
+}
+
+/** Where a share from another app goes: text becomes the chat's draft, a file is sent. */
+@Composable
+internal fun ShareTo(m: Model) {
+    val a = m.account ?: return
+    val share = m.share ?: return
+    val chats = a.contacts().filter { !it.blocked && !it.left && !it.request && !it.needsInvite }
+    val groups = a.groups().filter { !it.left }
+    val what = share.name?.let { "$it (${(share.bytes?.size ?: 0) / 1024 + 1} KB)" }
+        ?: "Text, ${share.text?.length ?: 0} characters"
+    fun done(note: String, screen: Screen) {
+        m.share = null
+        m.note = note
+        m.screen = screen
+        m.changed()
+    }
+    AlertDialog(
+        onDismissRequest = { m.share = null },
+        containerColor = Tc.surface,
+        shape = corner,
+        title = { Text("Share to…", style = Tc.name) },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(what, style = Tc.small)
+                if (share.name != null) Text("It goes as soon as you pick a chat. termchat never opens files.", style = Tc.small)
+                else Text("It goes into the message field; you send it.", style = Tc.small)
+                if (chats.isEmpty() && groups.isEmpty()) Text("No chat to share to yet.", style = Tc.mono.copy(color = Tc.dim))
+                chats.forEach { c ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        runCatching {
+                            if (share.bytes != null) a.sendFile(c.index, share.name ?: "file", share.bytes) else a.setDraft(c.index, share.text ?: "")
+                        }.onSuccess { done(if (share.bytes != null) "Sent ${share.name}" else "", Screen.Chat(c.index)) }
+                            .onFailure { done(it.message ?: "$it", Screen.Chats) }
+                    }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(c.name, 32.dp)
+                        Text(c.name, style = Tc.mono, modifier = Modifier.padding(start = 10.dp))
+                    }
+                }
+                groups.forEach { g ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        runCatching {
+                            if (share.bytes != null) a.sendGroupFile(g.index, share.name ?: "file", share.bytes) else a.setGroupDraft(g.index, share.text ?: "")
+                        }.onSuccess { done(if (share.bytes != null) "Sent ${share.name}" else "", Screen.Group(g.index)) }
+                            .onFailure { done(it.message ?: "$it", Screen.Chats) }
+                    }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar("# ${g.name}", 32.dp)
+                        Text(g.name, style = Tc.mono, modifier = Modifier.padding(start = 10.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { Flat("Cancel", color = Tc.dim) { m.share = null } },
     )
 }

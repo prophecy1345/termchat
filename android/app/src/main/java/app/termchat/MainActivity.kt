@@ -1,5 +1,6 @@
 package app.termchat
 
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.view.WindowManager
@@ -27,7 +28,30 @@ class MainActivity : ComponentActivity() {
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         }
         model = (application as TermchatApp).model
+        takeShare(intent)
         setContent { TermchatTheme { NoLearning { Surface(Modifier.fillMaxSize()) { Root(model) } } } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeShare(intent)
+    }
+
+    /** Text or one file from another app's share sheet; nothing is sent until a chat is picked. */
+    private fun takeShare(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
+        @Suppress("DEPRECATION")
+        val uri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        model.share = when {
+            uri != null -> runCatching { readDocument(this, uri) }
+                .map { (name, bytes) -> Share(null, name, bytes) }
+                .getOrElse { model.note = it.message ?: "this file cannot be shared"; null }
+            text != null -> Share(text, null, null)
+            else -> null
+        }
+        // Handled once: a rotation must not bring the same share back.
+        intent.action = null
     }
 
     override fun onStop() {
@@ -71,6 +95,8 @@ private fun Root(m: Model) {
             Screen.LinkCode -> LinkCode(m)
         }
     }
+    // Shared from another app: pick where it goes once the identity is open.
+    if (m.share != null && m.account != null && m.screen != Screen.Start) ShareTo(m)
     // A note belongs to the screen it was said on: leaving it ends the note,
     // so one from a chat does not linger over the list.
     var noteScreen by remember { mutableStateOf(m.screen) }
