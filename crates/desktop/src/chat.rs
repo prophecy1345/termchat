@@ -483,7 +483,7 @@ impl Chat {
                     }
                     ui.add_space(10.0);
                 }
-                if contacts.is_empty() && requests.is_empty() {
+                if contacts.is_empty() && requests.is_empty() && archived.is_empty() {
                     ui.label(RichText::new("no contacts yet").color(p.dim));
                     ui.add_space(10.0);
                 }
@@ -1420,8 +1420,8 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 let r = bubble
                     .interact(egui::Sense::click())
                     .on_hover_text(match m.mine {
-                        true => "Double-click: answer. Right-click: react, edit, delete",
-                        false => "Double-click: answer. Right-click: react",
+                        true => "Double-click: answer. Right-click: react, forward, edit, delete",
+                        false => "Double-click: answer. Right-click: react, forward",
                     });
                 // As in most desktop messengers.
                 if r.double_clicked() {
