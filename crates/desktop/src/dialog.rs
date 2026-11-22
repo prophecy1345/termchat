@@ -4,6 +4,7 @@
 use eframe::egui::{self, RichText};
 use termchat_core::{fingerprint, safety_number};
 use termchat_engine::engine::{clean_text, news};
+use termchat_engine::icons::Icon;
 use termchat_engine::settings::{LOCK_CHOICES, Settings};
 use termchat_engine::{data, themes};
 use zeroize::Zeroizing;
@@ -611,12 +612,14 @@ impl Chat {
                         avatar_letter(ui, p, &name);
                         ui.label(RichText::new(&name).monospace());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let label = match invited {
-                                true => RichText::new("✓ Invited").color(p.accent),
-                                false => RichText::new("Invite"),
-                            };
-                            let b = egui::Button::new(label).min_size(egui::vec2(100.0, 28.0));
-                            if ui.add_enabled(!invited, b).clicked() {
+                            if invited {
+                                // Right to left: the mark sits before the word.
+                                ui.label(RichText::new("Invited").color(p.accent));
+                                crate::sprites::icon(ui, Icon::Check, 1.0, p.accent);
+                                return;
+                            }
+                            let b = egui::Button::new("Invite").min_size(egui::vec2(100.0, 28.0));
+                            if ui.add(b).clicked() {
                                 pick = Some(i);
                             }
                         });

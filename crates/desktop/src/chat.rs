@@ -9,11 +9,13 @@ use termchat_engine::data::{Contact, Group, Msg, Status};
 use termchat_engine::engine::{
     OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
 };
+use termchat_engine::icons::Icon;
 use termchat_engine::notify::{self, SOUND_GAP};
 use termchat_engine::settings::Settings;
 use termchat_engine::{Engine, Happened, reactions, themes};
 
 use crate::dialog::{Dialog, LINK_CONFIRMED};
+use crate::sprites;
 
 type Key = [u8; 32];
 
@@ -179,6 +181,8 @@ pub struct Chat {
     pub(crate) linking: bool,
     /// Searching the open chat's history, on this device only: the query.
     search: Option<String>,
+    /// Folded list sections: archived, contacts, groups.
+    folded: [bool; 3],
     focus_search: bool,
     /// The setting: a system notification while the window is not in front.
     pub(crate) notify: bool,
@@ -222,6 +226,7 @@ impl Chat {
             linking: false,
             search: None,
             focus_search: false,
+            folded: [false; 3],
             notify: false,
         };
         chat.engine.resort();
@@ -467,18 +472,30 @@ impl Chat {
             .auto_shrink(false)
             .max_height(ui.available_height() - 36.0)
             .show(ui, |ui| {
-                for (title, rows) in [
-                    ("Requests", &requests),
-                    ("Contacts", &contacts),
-                    ("Archived", &archived),
-                ] {
-                    if rows.is_empty() && title != "Contacts" {
-                        continue;
-                    }
-                    ui.label(RichText::new(format!("{title}  {}", rows.len())).color(p.dim));
-                    for &i in rows {
+                if !requests.is_empty() {
+                    let n = requests.len();
+                    ui.label(RichText::new(format!("Requests  {n}")).color(p.dim));
+                    for &i in &requests {
                         if let Some(k) = self.row(ui, p, i) {
                             picked = Some(k);
+                        }
+                    }
+                    ui.add_space(10.0);
+                }
+                // Archived over the contacts, each section folds (owner, 2026-11-22).
+                for (fold, title, rows) in [(0, "Archived", &archived), (1, "Contacts", &contacts)]
+                {
+                    if rows.is_empty() && fold == 0 {
+                        continue;
+                    }
+                    if heading(ui, p, title, rows.len(), self.folded[fold]) {
+                        self.folded[fold] = !self.folded[fold];
+                    }
+                    if !self.folded[fold] {
+                        for &i in rows {
+                            if let Some(k) = self.row(ui, p, i) {
+                                picked = Some(k);
+                            }
                         }
                     }
                     ui.add_space(10.0);
@@ -490,13 +507,11 @@ impl Chat {
                 // ADR-027: small private groups, after the contacts.
                 let groups = self.engine.data.groups.len();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("Groups  {groups}")).color(p.dim));
+                    if heading(ui, p, "Groups", groups, self.folded[2]) {
+                        self.folded[2] = !self.folded[2];
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui
-                            .small_button("+ New")
-                            .on_hover_text("A new private group")
-                            .clicked()
-                        {
+                        if sprites::button(ui, p, Icon::Plus, "A new private group").clicked() {
                             self.dialog = Some(Dialog::NewGroup {
                                 name: String::new(),
                                 error: String::new(),
@@ -504,6 +519,7 @@ impl Chat {
                         }
                     });
                 });
+                let groups = if self.folded[2] { 0 } else { groups };
                 for g in 0..groups {
                     if self.group_row(ui, p, g) {
                         picked_group = Some(g);
@@ -518,7 +534,11 @@ impl Chat {
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
             ui.horizontal(|ui| {
-                if ui.button("+ Add").clicked() {
+                if ui
+                    .button("Add")
+                    .on_hover_text("Add a contact from their invite")
+                    .clicked()
+                {
                     self.dialog = Some(Dialog::add());
                 }
                 if ui
@@ -571,12 +591,13 @@ impl Chat {
                         } else {
                             p.text
                         };
-                        let pin = if c.pinned { "📌 " } else { "" };
-                        ui.label(
-                            RichText::new(format!("{pin}{name}"))
-                                .monospace()
-                                .color(colour),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            if c.pinned {
+                                sprites::icon(ui, Icon::Pin, 1.0, p.accent).on_hover_text("pinned");
+                            }
+                            ui.label(RichText::new(name).monospace().color(colour));
+                        });
                         let (state, ok) = match self.engine.needs_invite(c) {
                             true => ("NEEDS A NEW INVITE", false),
                             false => list_state(c, self.engine.is_request(&c.key)),
@@ -754,8 +775,8 @@ impl Chat {
                     if std::mem::take(&mut focus) {
                         field.request_focus();
                     }
-                    close =
-                        ui.button("×").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    close = sprites::button(ui, p, Icon::Close, "Close the search").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape));
                 });
             });
         if close {
@@ -893,7 +914,8 @@ impl Chat {
                         }
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.menu_button("•••", |ui| next = chat_menu(ui, c, request));
+                        let more = sprites::button(ui, p, Icon::Menu, "Chat menu");
+                        egui::Popup::menu(&more).show(|ui| next = chat_menu(ui, c, request));
                         if request {
                             accept = ui.button("Accept").clicked();
                             ui.label(RichText::new("contact request").color(p.warn));
@@ -1011,15 +1033,16 @@ impl Chat {
                 Some(n) => {
                     let text = clean_text(&self.msgs(at)[n].text);
                     let first = text.lines().next().unwrap_or_default().to_string();
-                    format!("↳ Answering: {first}")
+                    (Icon::Reply, format!("Answering: {first}"))
                 }
-                None => "↳ Answering a message that is gone".into(),
+                None => (Icon::Reply, "Answering a message that is gone".into()),
             }),
-            Compose::Edit(_) => Some("Editing your message…".into()),
+            Compose::Edit(_) => Some((Icon::Edit, "Editing your message…".into())),
         };
-        if let Some(banner) = banner {
+        if let Some((icon, banner)) = banner {
             let esc = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             ui.horizontal(|ui| {
+                sprites::icon(ui, icon, 1.0, p.accent);
                 // The strip itself cancels: a click, or Esc.
                 let cancel = ui
                     .add(
@@ -1177,16 +1200,22 @@ impl Chat {
         let e = &self.engine;
         ui.horizontal(|ui| {
             let (text, ok) = match (e.connected, e.data.tor) {
-                (true, true) => ("● online via Tor", true),
-                (false, true) => ("○ connecting via Tor…", false),
-                (true, false) => ("● online", true),
-                (false, false) => ("○ connecting…", false),
+                (true, true) => ("online via Tor", true),
+                (false, true) => ("connecting via Tor…", false),
+                (true, false) => ("online", true),
+                (false, false) => ("connecting…", false),
             };
-            ui.label(RichText::new(text).color(if ok { p.accent } else { p.warn }));
+            sprites::labelled(
+                ui,
+                Icon::Dot,
+                RichText::new(text),
+                if ok { p.accent } else { p.warn },
+            );
             ui.label(RichText::new(termchat_engine::clean(&e.data.nickname)).color(p.dim));
             if e.needs_backup() {
+                sprites::icon(ui, Icon::Warning, 1.0, p.warn);
                 backup = ui
-                    .link(RichText::new("! no backup yet").color(p.warn))
+                    .link(RichText::new("no backup yet").color(p.warn))
                     .clicked();
             }
             let note = match &e.update {
@@ -1252,7 +1281,7 @@ enum Menu {
     Report,
 }
 
-/// The "⋮" menu of the open chat.
+/// The menu of the open chat.
 fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
     let verified = if c.verified {
         "verified"
@@ -1335,7 +1364,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
     let mut found = 0;
     for (n, m) in v.msgs.iter().enumerate() {
         let text = match &m.file {
-            Some(f) => clean_text(f.label().trim_start_matches("📄 ")),
+            Some(f) => clean_text(&f.label()),
             None => clean_text(&m.text),
         };
         if !query.is_empty() {
@@ -1350,8 +1379,16 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                     .stroke(Stroke::new(1.0, p.line))
                     .corner_radius(2)
                     .inner_margin(6)
-                    .show(ui, |ui| {
-                        ui.label(RichText::new(text).monospace().color(p.dim))
+                    .show(ui, |ui| match text.strip_prefix("⚠ ") {
+                        Some(rest) => sprites::labelled(
+                            ui,
+                            Icon::Warning,
+                            RichText::new(rest).monospace(),
+                            p.warn,
+                        ),
+                        None => {
+                            ui.label(RichText::new(text).monospace().color(p.dim));
+                        }
                     });
             });
             ui.add_space(6.0);
@@ -1402,15 +1439,22 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         let quote = match quoted {
                             Some(q) => {
                                 let q = clean_text(&q.text);
-                                format!("↳ {}", q.lines().next().unwrap_or_default())
+                                q.lines().next().unwrap_or_default().to_string()
                             }
-                            None => "↳ message no longer here".into(),
+                            None => "message no longer here".into(),
                         };
                         let quote = RichText::new(quote).monospace().italics().color(p.dim);
-                        ui.add(egui::Label::new(quote).truncate());
+                        sprites::lead(ui, Icon::Reply, 1.0, p.dim, |ui| {
+                            ui.add(egui::Label::new(quote).truncate())
+                        });
                     }
                     match m.deleted {
                         true => ui.label(RichText::new("message deleted").italics().color(p.dim)),
+                        false if m.file.is_some() => {
+                            sprites::lead(ui, Icon::Document, 1.0, p.accent, |ui| {
+                                ui.label(RichText::new(text).monospace())
+                            })
+                        }
                         false => ui.label(RichText::new(text).monospace()),
                     }
                 })
@@ -1532,17 +1576,26 @@ fn sprite(ui: &mut egui::Ui, p: &Pal, r: u8, px: f32, on: bool) -> egui::Respons
         painter.rect_stroke(rect, 2, Stroke::new(1.0, colour), egui::StrokeKind::Inside);
     }
     let origin = rect.min + egui::vec2(2.0, 2.0);
-    let cell = |x: u8, y: u8, grow: f32| {
-        let at = origin + egui::vec2(f32::from(x) * px, f32::from(y) * px);
-        egui::Rect::from_min_size(at, egui::vec2(px, px)).expand(grow)
-    };
-    for (x, y) in reactions::pixels(r) {
-        painter.rect_filled(cell(x, y, px * 0.6), 0, colour.gamma_multiply(0.18));
-    }
-    for (x, y) in reactions::pixels(r) {
-        painter.rect_filled(cell(x, y, 0.0), 0, colour);
-    }
+    crate::sprites::paint(&painter, origin, px, reactions::pixels(r), colour, true);
     response
+}
+
+/// A list heading that folds its section; `true` when it was clicked.
+fn heading(ui: &mut egui::Ui, p: &Pal, title: &str, n: usize, folded: bool) -> bool {
+    let r = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let fold = if folded { Icon::Folded } else { Icon::Unfolded };
+            sprites::icon(ui, fold, 1.0, p.dim);
+            let text = RichText::new(format!("{title}  {n}")).color(p.dim);
+            // Not selectable: a selectable label takes the click from the heading.
+            ui.add(egui::Label::new(text).selectable(false));
+        })
+        .response
+        .interact(egui::Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
+    r.on_hover_text(if folded { "Show" } else { "Hide" })
+        .clicked()
 }
 
 /// A square with initials, like the Android app; the "·fingerprint" a
@@ -1754,7 +1807,6 @@ mod tests {
             "notes.txt",
             "Save…",
             "new in this version",
-            "↳ hi there",
             "· edited",
             "message deleted",
         ] {
@@ -1764,7 +1816,11 @@ mod tests {
         assert!(shown.contains("connecting"), "the status bar");
         chat.act(Open::Chat(0), Act::Reply(0));
         let shown = texts(&frame(&mut chat));
-        assert!(shown.contains("↳ Answering: hi there"), "{shown}");
+        assert!(shown.contains("Answering: hi there"), "{shown}");
+        // Icons are sprites, never an emoji or a stand-in glyph.
+        for glyph in ['📌', '📄', '↳', '⚠', '✓', '●', '○', '×', '•'] {
+            assert!(!shown.contains(glyph), "{glyph} in:\n{shown}");
+        }
 
         // No relay here, so no invite queue: an invite made by hand to draw.
         let invite = termchat_core::proto::Invite {

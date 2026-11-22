@@ -58,7 +58,7 @@ termchat.app never opens, previews or renders a file, and never overwrites one w
 
 ## Pin and archive chats
 
-Pin a chat to keep it at the top of the list, archive one to move it to the bottom, under its own heading. An archived chat still receives messages and counts them as unread; mute it as well to keep it quiet. In the terminal: **Ctrl+P**, then **i** pin or **z** archive, or right-click the contact; in the desktop app and on Android, ⋮ in the chat → **Pin** or **Archive**. Groups keep their own place below the chats.
+Archived chats sit above the others, under their own heading; pin a chat to keep it at the top of your contacts. In the desktop app and on Android the Archived, Contacts and Groups headings fold: click or tap one to hide or show its chats. An archived chat still receives messages and counts them as unread; mute it as well to keep it quiet. In the terminal: **Ctrl+P**, then **i** pin or **z** archive, or right-click the contact; in the desktop app and on Android, the chat menu → **Pin** or **Archive**. Groups keep their own place below the chats.
 
 ## Mute a chat or group
 

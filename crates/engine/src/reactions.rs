@@ -99,16 +99,8 @@ pub const SPRITES: [&[&str]; 7] = [
 pub const COLOURS: [usize; 7] = [15, 11, 13, 0, 8, 16, 14];
 
 /// Lit pixels of reaction `r` as (column, row), centred in an 11×11 square.
-pub fn pixels(r: u8) -> impl Iterator<Item = (u8, u8)> {
-    let rows = SPRITES[usize::from(r).min(SPRITES.len() - 1)];
-    let top = (11 - rows.len()) / 2;
-    rows.iter().enumerate().flat_map(move |(y, row)| {
-        let left = (11 - row.len()) / 2;
-        row.bytes()
-            .enumerate()
-            .filter(|&(_, b)| b == b'1')
-            .map(move |(x, _)| ((left + x) as u8, (top + y) as u8))
-    })
+pub fn pixels(r: u8) -> impl Iterator<Item = (u8, u8)> + Clone {
+    crate::icons::lit(SPRITES[usize::from(r).min(SPRITES.len() - 1)], 11)
 }
 
 #[cfg(test)]

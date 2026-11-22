@@ -5,6 +5,7 @@
 mod chat;
 mod dialog;
 mod logo;
+mod sprites;
 mod synth;
 
 use std::path::PathBuf;
@@ -334,24 +335,27 @@ fn first_run(
 fn restore(ui: &mut egui::Ui, f: &mut SetupForm, path: &std::path::Path) -> bool {
     ui.add_space(16.0);
     let mut done = false;
-    egui::CollapsingHeader::new("Restore from a backup").show(ui, |ui| {
-        ui.label(
-            "Afterwards unlock with the backup's password. Chats start fresh; contacts \
+    egui::CollapsingHeader::new("Restore from a backup")
+        .icon(sprites::fold_icon)
+        .show(ui, |ui| {
+            ui.label(
+                "Afterwards unlock with the backup's password. Chats start fresh; contacts \
              see that you restarted the conversation.",
-        );
-        ui.horizontal(|ui| {
-            ui.label("Backup file");
-            ui.add(
-                egui::TextEdit::singleline(&mut f.backup).hint_text("/Volumes/USB/termchat-backup"),
             );
-            if ui.button("Restore").clicked() {
-                match termchat_engine::engine::restore(path, &data::expand(&f.backup)) {
-                    Ok(()) => done = true,
-                    Err(e) => f.error = e,
+            ui.horizontal(|ui| {
+                ui.label("Backup file");
+                ui.add(
+                    egui::TextEdit::singleline(&mut f.backup)
+                        .hint_text("/Volumes/USB/termchat-backup"),
+                );
+                if ui.button("Restore").clicked() {
+                    match termchat_engine::engine::restore(path, &data::expand(&f.backup)) {
+                        Ok(()) => done = true,
+                        Err(e) => f.error = e,
+                    }
                 }
-            }
+            });
         });
-    });
     done
 }
 
@@ -391,14 +395,16 @@ fn setup(
         &mut f.tor,
         "Connect through Tor (hides your IP from the relay)",
     );
-    egui::CollapsingHeader::new("Relay").show(ui, |ui| {
-        field(ui, "RELAY URL", egui::TextEdit::singleline(&mut f.relay));
-        field(
-            ui,
-            "ONION URL · empty: none",
-            egui::TextEdit::singleline(&mut f.onion),
-        );
-    });
+    egui::CollapsingHeader::new("Relay")
+        .icon(sprites::fold_icon)
+        .show(ui, |ui| {
+            field(ui, "RELAY URL", egui::TextEdit::singleline(&mut f.relay));
+            field(
+                ui,
+                "ONION URL · empty: none",
+                egui::TextEdit::singleline(&mut f.onion),
+            );
+        });
     ui.add_space(8.0);
     let go = synth::button(ui, pal, "Create my identity", egui::vec2(width, 40.0)).clicked();
     ui.add_space(4.0);

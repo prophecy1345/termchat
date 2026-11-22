@@ -558,8 +558,8 @@ impl FileMsg {
         };
         let total = termchat_proto::file_chunks(self.size);
         match self.complete() {
-            true => format!("📄 {} · {size}", self.name),
-            false => format!("📄 {} · {size} · {}/{total}", self.name, self.done),
+            true => format!("{} · {size}", self.name),
+            false => format!("{} · {size} · {}/{total}", self.name, self.done),
         }
     }
 
@@ -1478,7 +1478,7 @@ mod tests {
         gone.wipe();
         assert!(gone.forwardable().is_none());
         let file = |mine, data: Option<Vec<u8>>| {
-            let mut m = text("📄 a.txt");
+            let mut m = text("a.txt");
             m.mine = mine;
             m.file = Some(FileMsg {
                 id: 1,

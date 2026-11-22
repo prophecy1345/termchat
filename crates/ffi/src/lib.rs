@@ -232,6 +232,27 @@ pub fn reactions() -> Vec<Reaction> {
         .collect()
 }
 
+/// One of the apps' icons (engine `icons`): lit pixels as x, y pairs in an
+/// 11×11 square. The app colours it.
+#[derive(uniffi::Record)]
+pub struct IconSprite {
+    pub name: String,
+    pub pixels: Vec<u8>,
+}
+
+#[uniffi::export]
+pub fn icons() -> Vec<IconSprite> {
+    termchat_engine::icons::ALL
+        .iter()
+        .map(|&i| IconSprite {
+            name: i.name().into(),
+            pixels: termchat_engine::icons::pixels(i)
+                .flat_map(|(x, y)| [x, y])
+                .collect(),
+        })
+        .collect()
+}
+
 #[uniffi::export]
 pub fn state_exists(dir: String) -> bool {
     state(&dir).exists()

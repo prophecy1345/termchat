@@ -710,9 +710,10 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     for (n, msg) in msgs.iter().enumerate() {
         let text = match &msg.file {
             Some(f) if !msg.mine && f.complete() && f.data.is_some() => {
-                clean(&format!("{} · unsaved, Ctrl+G", f.label()))
+                clean(&format!("▤ {} · unsaved, Ctrl+G", f.label()))
             }
-            Some(f) => clean(&f.label()),
+            // A text mark for a document: the terminal draws no sprites.
+            Some(f) => clean(&format!("▤ {}", f.label())),
             None => crate::engine::clean_text(&msg.text),
         };
         if msg.status == Status::System {

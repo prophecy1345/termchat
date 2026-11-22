@@ -3386,11 +3386,16 @@ impl Engine {
         self.persist();
     }
 
-    /// Most recent first.
+    /// Archived first (owner, 2026-11-22), then pinned, then most recent.
     pub fn resort(&mut self) {
-        self.data
-            .contacts
-            .sort_by_key(|c| (c.own, c.archived, !c.pinned, std::cmp::Reverse(c.last_at())));
+        self.data.contacts.sort_by_key(|c| {
+            (
+                c.own,
+                !c.archived,
+                !c.pinned,
+                std::cmp::Reverse(c.last_at()),
+            )
+        });
     }
 }
 
@@ -3788,7 +3793,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pinned_chats_lead_and_archived_ones_trail() {
+    async fn archived_chats_lead_then_pinned_ones() {
         let (mut e, dir) = offline("pin");
         let said = |at| {
             let mut m = Msg::default();
@@ -3809,7 +3814,7 @@ mod tests {
         }
         e.resort();
         let order: Vec<u8> = e.data.contacts.iter().map(|c| c.key[0]).collect();
-        assert_eq!(order, [3, 2, 1, 4]);
+        assert_eq!(order, [4, 3, 2, 1]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
