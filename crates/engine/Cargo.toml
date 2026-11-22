@@ -11,7 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-arti-client = { version = "0.47", default-features = false, features = ["tokio", "rustls", "onion-service-client", "compression", "static-sqlite", "bridge-client", "pt-client"], optional = true }
+arti-client = { version = "0.48", default-features = false, features = ["tokio", "rustls", "onion-service-client", "compression", "static-sqlite", "bridge-client", "pt-client"], optional = true }
 base64 = "0.22"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 getrandom = "0.4.3"
@@ -23,7 +23,7 @@ termchat-core = { path = "../core" }
 termchat-proto = { path = "../proto" }
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
-tor-rtcompat = { version = "0.47", default-features = false, optional = true }
+tor-rtcompat = { version = "0.48", default-features = false, optional = true }
 zeroize = "1.9.1"
 zxcvbn = { version = "3.1.1", default-features = false }
 
