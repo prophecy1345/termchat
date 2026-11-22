@@ -1,6 +1,6 @@
 # ADR-040: paging, acknowledgement and escalation
 
-Status: **proposed** (2026-11-22), waiting for the maintainer. Русская версия: [040-paging.ru.md](040-paging.ru.md). Builds on [ADR-032](032-ask.md) (codes, pinned verified contacts) and [ADR-039](039-alert-webhooks.md).
+Status: **accepted** (maintainer, 2026-11-22). Русская версия: [040-paging.ru.md](040-paging.ru.md). Builds on [ADR-032](032-ask.md) (codes, pinned verified contacts) and [ADR-039](039-alert-webhooks.md).
 
 ## Context
 

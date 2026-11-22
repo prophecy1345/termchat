@@ -1,6 +1,6 @@
 # ADR-039: a webhook receiver for monitoring alerts
 
-Status: **proposed** (2026-11-22), waiting for the maintainer. Русская версия: [039-alert-webhooks.ru.md](039-alert-webhooks.ru.md). Revisits "Rejected: a TCP port on localhost" of [ADR-029](029-daemon.md).
+Status: **accepted** (maintainer, 2026-11-22). Русская версия: [039-alert-webhooks.ru.md](039-alert-webhooks.ru.md). Revisits "Rejected: a TCP port on localhost" of [ADR-029](029-daemon.md).
 
 ## Context
 

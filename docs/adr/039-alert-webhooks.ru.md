@@ -1,6 +1,6 @@
 # ADR-039: приёмник вебхуков для алертов мониторинга
 
-Статус: **предложено** (2026-11-22), ждёт решения владельца. English version: [039-alert-webhooks.md](039-alert-webhooks.md). Пересматривает пункт «Отклонено: TCP-порт на localhost» из [ADR-029](029-daemon.ru.md).
+Статус: **принято** (владелец, 2026-11-22). English version: [039-alert-webhooks.md](039-alert-webhooks.md). Пересматривает пункт «Отклонено: TCP-порт на localhost» из [ADR-029](029-daemon.ru.md).
 
 ## Контекст
 
