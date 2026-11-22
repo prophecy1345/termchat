@@ -2,6 +2,7 @@
 // No console window behind it on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod badge;
 mod chat;
 mod dialog;
 mod logo;
@@ -63,6 +64,7 @@ fn main() -> eframe::Result {
                 pal,
                 idle: Idle::default(),
                 _lock: lock,
+                badge: 0,
             }))
         }),
     )
@@ -118,6 +120,8 @@ struct App {
     idle: Idle,
     /// Held while the window is open (ADR-018).
     _lock: std::io::Result<Option<std::fs::File>>,
+    /// The unread count last shown on the Dock icon or in the title.
+    badge: u64,
 }
 
 impl App {
@@ -158,6 +162,15 @@ impl eframe::App for App {
         // Relay events arrive on a channel; a few checks a second are enough.
         // Polling for now; a waker from the relay task if latency matters.
         ctx.request_repaint_after(Duration::from_millis(250));
+        // Unread in chats and groups that are not muted; nothing while locked.
+        let unread = match &self.screen {
+            Screen::Main(chat) => chat.unread(),
+            _ => 0,
+        };
+        if unread != self.badge {
+            self.badge = unread;
+            badge::show(ctx, unread);
+        }
         let Screen::Main(chat) = &mut self.screen else {
             return;
         };

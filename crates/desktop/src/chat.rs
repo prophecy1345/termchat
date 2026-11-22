@@ -362,6 +362,20 @@ impl Chat {
         }
     }
 
+    /// Unread messages in chats and groups that are not muted.
+    pub(crate) fn unread(&self) -> u64 {
+        let d = &self.engine.data;
+        let chats = d
+            .contacts
+            .iter()
+            .filter(|c| !termchat_engine::engine::muted(c.muted_until));
+        let groups = d
+            .groups
+            .iter()
+            .filter(|g| !termchat_engine::engine::muted(g.muted_until));
+        chats.map(|c| c.unread as u64).sum::<u64>() + groups.map(|g| g.unread as u64).sum::<u64>()
+    }
+
     pub(crate) fn select(&mut self, key: Key) {
         self.stash_draft();
         self.open = Some(key);
@@ -438,6 +452,21 @@ impl Chat {
         let find = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F));
         if find && (self.open.is_some() || self.open_group().is_some()) {
             self.open_search();
+        }
+        // Cmd+K (Ctrl+K): jump to a chat by name. F1, or Cmd+/ where the
+        // layout has / on that key: the keyboard shortcuts.
+        if self.dialog.is_none() {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::K)) {
+                self.dialog = Some(Dialog::Jump {
+                    query: String::new(),
+                    focus: true,
+                });
+            } else if ui.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::F1)
+                    || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Slash)
+            }) {
+                self.dialog = Some(Dialog::Keys);
+            }
         }
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(p.surface).inner_margin(6))

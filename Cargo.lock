@@ -6843,6 +6843,9 @@ name = "termchat-desktop"
 version = "0.24.1"
 dependencies = [
  "eframe",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "qrcode",
  "rfd",
  "termchat-core",

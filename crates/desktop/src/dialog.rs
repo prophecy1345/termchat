@@ -26,6 +26,14 @@ pub(crate) const LINK_CONFIRMED: &str = "confirmed: linking finishes when the ot
 
 pub enum Dialog {
     Notice(String),
+    /// Cmd+K: go to the chat or group whose name holds the query; `focus`
+    /// until the field has taken the keyboard once.
+    Jump {
+        query: String,
+        focus: bool,
+    },
+    /// Cmd+/: the keyboard shortcuts.
+    Keys,
     Add {
         invite: String,
         incognito: bool,
@@ -178,6 +186,82 @@ impl Chat {
             Dialog::Notice(text) => {
                 ui.label(text.as_str());
                 !ui.button("OK").clicked()
+            }
+            Dialog::Jump { query, focus } => {
+                ui.heading("Go to a chat");
+                let field = ui.add(
+                    egui::TextEdit::singleline(query)
+                        .hint_text("Part of a name")
+                        .desired_width(f32::INFINITY),
+                );
+                // Once: asked every frame, egui drops what is typed.
+                if std::mem::take(focus) {
+                    field.request_focus();
+                }
+                let q = query.trim().to_lowercase();
+                let hit = |name: &str| q.is_empty() || name.to_lowercase().contains(&q);
+                let mut found: Vec<(String, Result<[u8; 32], usize>)> = Vec::new();
+                for c in self.engine.data.contacts.iter().filter(|c| !c.own) {
+                    let name = self.engine.name(c);
+                    if hit(&name) {
+                        found.push((name, Ok(c.key)));
+                    }
+                }
+                for (g, group) in self.engine.data.groups.iter().enumerate() {
+                    let name = termchat_engine::clean(group.name());
+                    if hit(&name) {
+                        found.push((format!("# {name}"), Err(g)));
+                    }
+                }
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let mut pick = enter.then(|| found.first().map(|(_, t)| *t)).flatten();
+                if found.is_empty() {
+                    ui.label(RichText::new("nothing matches").color(p.dim));
+                }
+                for (name, target) in found.iter().take(12) {
+                    if ui.button(RichText::new(name).monospace()).clicked() {
+                        pick = Some(*target);
+                    }
+                }
+                match pick {
+                    Some(Ok(key)) => {
+                        self.select(key);
+                        false
+                    }
+                    Some(Err(g)) => {
+                        self.select_group(g);
+                        false
+                    }
+                    None => !ui.input(|i| i.key_pressed(egui::Key::Escape)),
+                }
+            }
+            Dialog::Keys => {
+                ui.heading("Keyboard shortcuts");
+                let cmd = if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                };
+                egui::Grid::new("keys")
+                    .num_columns(2)
+                    .spacing([16.0, 6.0])
+                    .show(ui, |ui| {
+                        for (keys, what) in [
+                            (format!("{cmd}+K"), "go to a chat by name"),
+                            (format!("{cmd}+F"), "search the open chat"),
+                            ("Enter".into(), "send"),
+                            ("Shift+Enter".into(), "new line"),
+                            ("Esc".into(), "cancel an answer, an edit or a search"),
+                            ("Double-click".into(), "answer a message"),
+                            ("Right-click".into(), "react, forward, edit, delete"),
+                            ("F1".into(), "this list"),
+                        ] {
+                            ui.label(RichText::new(keys).monospace());
+                            ui.label(what);
+                            ui.end_row();
+                        }
+                    });
+                !ui.button("Close").clicked()
             }
             Dialog::Add {
                 invite,

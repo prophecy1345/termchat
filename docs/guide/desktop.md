@@ -17,6 +17,8 @@ The terminal client and the desktop app open the same account (`~/.termchat`), b
 - **Right:** the chat. ⋮ at the top holds **Search**, **Safety number**, **Rename…**, **No history**, **Block**, **Report…** and **Delete…** (**Reject request…** for a request).
 - **Bottom:** the field, **SEND**, **File** and the disappearing-messages timer (**timer off**, then 5m, 1h, 1d, 1w with each click). **Enter** sends, **Shift+Enter** starts a new line.
 - **Status bar:** online or connecting, your nickname, warnings.
+- **Keys:** **Cmd+K** (Ctrl+K on Linux and Windows) goes to a chat or group by part of its name; **F1** lists all the shortcuts.
+- **Unread:** the number of unread messages, in chats and groups that are not muted, shows on the Dock icon on macOS and in the window title elsewhere. Only the number, never a name.
 
 Double-click a message to answer it. Right-click it to answer, react, and edit or delete your own; see [Messages](messages.md).
 
