@@ -24,6 +24,7 @@ English version: [scripts.md](scripts.md).
 | `watch send WATCHER --every SECS` | шлёт скрытые пульсы сторожу (нужен daemon) |
 | `watch monitor SERVER --notify OWNER --after SECS` | пишет OWNER, когда пульсы SERVER прекращаются (нужен daemon) |
 | `run (--to C \| --group NAME \| --group-id ID) [--name L] [--lines N] [--failures-only] -- COMMAND` | запускает COMMAND и сообщает, чем она закончилась |
+| `hook --token-file PATH --route NAME=contact:C \| group:G [...]` | принимает вебхуки мониторинга и передаёт их дальше (нужна служба; см. ниже) |
 | `ask CONTACT QUESTION [--timeout SECS или Nm]` | ждёт подтверждения или отказа от проверенного контакта (нужен daemon) |
 | `daemon` | держит личность открытой, и команды выше работают без пароля и отвечают сразу (Linux, macOS; см. ниже) |
 
@@ -253,6 +254,57 @@ rsync: write failed on "/mnt/backup/db.tar": No space left on device (28)
 - `run` выходит с кодом команды: её кодом, `128 + N`, если её остановил сигнал N, или `127`, если она не запустилась. Ctrl+C и SIGTERM достаются команде, а `run` всё равно присылает отчёт. Если команда успешна, а отчёт не ушёл, `run` возвращает код отправки (`1`, `4` или `5`). О проблеме с отправкой он всегда пишет в stderr.
 
 В выводе могут оказаться секреты: токен, пароль, закрытый путь. Отчёт остаётся в истории чата и уведомлениях, а в группе — на каждом устройстве. Для таких команд используйте `--lines 0` или `--failures-only`.
+
+## Алерты из вашего мониторинга
+
+`termchat hook` принимает вебхуки от Alertmanager, Grafana, Uptime Kuma, Gatus и всего, что умеет POST, и передаёт каждый зашифрованным сообщением контакту или в приватную группу (ADR-039). Пароля и ключей у него нет: каждое сообщение он отдаёт [службе](#служба-для-бота-который-отвечает), поэтому сначала запустите её.
+
+```sh
+termchat hook --new-token /etc/termchat/hook-token     # один раз: 32 случайных байта, права 600
+termchat hook --token-file /etc/termchat/hook-token \
+    --route oncall=contact:alice --route ops=group:Ops --labels job,severity
+```
+
+- Маршрут — это `NAME=contact:CONTACT`, `NAME=group:GROUP` или `NAME=group-id:ID`, с форматом в конце по желанию: `:alertmanager`, `:kuma`, `:text` или `:auto` (по умолчанию, различает их сам). Тогда `POST /oncall` идёт alice, `POST /ops` — в группу. Запрос не может выбрать получателя.
+- Контакт должен быть принят и с проверенным номером безопасности; `hook` проверяет каждый маршрут при запуске и иначе не стартует.
+- Каждый запрос должен нести `Authorization: Bearer <токен>`. Без него: `401`.
+- Слушает `127.0.0.1:9099`. `--listen ADDR` задаёт другой адрес; всё, кроме loopback, передаёт токен открытым текстом, поэтому ставьте перед ним TLS-прокси (Caddy, nginx).
+- Алерт Alertmanager или Grafana становится строкой `FIRING (2)` и строкой на каждый алерт: имя, `instance` и аннотация `summary` или `description`. Другие метки не попадают в текст, если их не назвать в `--labels`: в них часто внутренние адреса.
+- Ответы: `200`, когда relay принял сообщение, `503`, если нет службы или relay (Alertmanager повторит), `400` для тела не в формате маршрута, `413` больше 1 МиБ, `429` больше 30 сообщений в минуту на маршрут.
+
+Alertmanager, в `alertmanager.yml`:
+
+```yaml
+receivers:
+  - name: termchat
+    webhook_configs:
+      - url: http://127.0.0.1:9099/oncall
+        http_config:
+          authorization:
+            credentials_file: /etc/termchat/hook-token
+```
+
+Grafana: точка контакта типа Webhook с этим URL и токеном в учётных данных «Authorization header» (схема `Bearer`). Uptime Kuma: уведомление Webhook с «Request Body» «Preset - application/json» и заголовком `{"Authorization": "Bearer <токен>"}`.
+
+Юнит рядом с юнитом службы:
+
+```ini
+[Unit]
+Description=termchat webhooks
+After=termchat-daemon.service
+Requires=termchat-daemon.service
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/usr/local/bin/termchat hook --token-file /etc/termchat/hook-token --route oncall=contact:alice
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Текст алерта попадает в историю чата на каждом устройстве, которое его получает. Не кладите секреты в аннотации. Владелец токена может писать в маршруты, и только: ни чтения, ни других получателей, ни команд серверу. Чтобы сменить токен, замените файл и перезапустите `hook`.
 
 ## Из GitHub Actions или другого CI
 

@@ -19,9 +19,11 @@ use zeroize::Zeroizing;
 #[cfg(unix)]
 mod daemon;
 mod group;
+#[cfg(unix)]
+mod hook;
 mod run;
 
-pub const COMMANDS: [&str; 12] = [
+pub const COMMANDS: [&str; 13] = [
     "init",
     "daemon",
     "invite",
@@ -34,6 +36,7 @@ pub const COMMANDS: [&str; 12] = [
     "watch",
     "ask",
     "run",
+    "hook",
 ];
 
 const USAGE: &str = "usage:
@@ -53,6 +56,8 @@ const USAGE: &str = "usage:
   termchat ask CONTACT QUESTION [--timeout SECS|Nm]   (default 10m)
   termchat run (--to CONTACT | --group NAME | --group-id ID) [--name LABEL]
                [--lines N] [--failures-only] -- COMMAND [ARGS...]
+  termchat hook --token-file PATH --route NAME=contact:CONTACT|group:GROUP [...]
+                                        (monitoring webhooks; termchat hook --help)
 identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
 state folder: TERMCHAT_HOME, or ~/.termchat";
 
@@ -285,6 +290,13 @@ pub async fn run(args: &[String]) -> i32 {
 }
 
 async fn command(args: &[String]) -> Result<(), Fail> {
+    // ADR-039: flags of its own, no identity options.
+    if args.first().is_some_and(|c| c == "hook") {
+        #[cfg(unix)]
+        return hook::run(&args[1..]).await;
+        #[cfg(not(unix))]
+        return fail(2, "termchat hook needs Linux or macOS");
+    }
     let a = parse(args)?;
     if a.command == "run" {
         return run_job(a).await;

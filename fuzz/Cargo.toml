@@ -11,6 +11,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 termchat-proto = { path = "../crates/proto" }
+# ADR-039: the webhook body parser; no Tor needed for it.
+termchat = { path = "../crates/client", default-features = false }
 
 # Not part of the main workspace: needs nightly.
 [workspace]
@@ -38,3 +40,7 @@ path = "fuzz_targets/invite.rs"
 [[bin]]
 name = "group"
 path = "fuzz_targets/group.rs"
+
+[[bin]]
+name = "alert"
+path = "fuzz_targets/alert.rs"

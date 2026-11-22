@@ -258,10 +258,18 @@ fn handle(
             .and_then(|i| can_write(e, i))
             .map(|_| ok(json!({}))),
         "contacts" => {
+            // ADR-039: `hook` routes only to verified contacts.
+            let verified = e
+                .data
+                .contacts
+                .iter()
+                .filter(|c| !c.own)
+                .map(|c| c.verified);
             let rows: Vec<Value> = contact_rows(e)
                 .into_iter()
-                .map(|[name, fingerprint, state]| {
-                    json!({ "name": name, "fingerprint": fingerprint, "state": state })
+                .zip(verified)
+                .map(|([name, fingerprint, state], verified)| {
+                    json!({ "name": name, "fingerprint": fingerprint, "state": state, "verified": verified })
                 })
                 .collect();
             Ok(ok(json!({ "contacts": rows })))

@@ -150,6 +150,12 @@ that (ADR-023).
   report leaves out arguments and the environment; it does not look for
   secrets in the output. Use `--lines 0` or `--failures-only` for such
   commands.
+- **Monitoring webhooks** (ADR-039). `hook` listens on a local TCP port.
+  Its token is a send-only key to the configured routes: a leak lets someone
+  post text as the server identity there, nothing more. Another local user
+  can connect but gets `401` without the token. Off loopback the token
+  crosses the network in the clear unless a TLS proxy stands in front.
+  Alert annotations land in the chat history in full.
 - **The start of a new session.** An Olm pre-key message is longer than a normal
   one; the relay can notice. The relay also chooses whether a new session
   starts on a one-time key or on the fallback key. On the fallback key, the

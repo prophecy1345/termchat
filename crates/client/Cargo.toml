@@ -31,6 +31,12 @@ qrcode = { version = "0.14.1", default-features = false }
 [target."cfg(unix)".dependencies]
 getrandom = "0.4.3"
 rustix = { version = "1.1.5", default-features = false, features = ["process", "std", "system"] }
+# ADR-039: the webhook receiver. All already in the build through Arti; no
+# HTTP parser of our own. subtle compares the token in constant time.
+hyper = { version = "1.12.0", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+http-body-util = "0.1.5"
+subtle = "2.6.1"
 
 [features]
 default = ["tor"]

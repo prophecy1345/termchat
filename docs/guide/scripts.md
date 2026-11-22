@@ -25,6 +25,7 @@ description: "Send end-to-end encrypted messages from a shell script, cron job, 
 | `watch monitor SERVER --notify OWNER --after SECS` | messages OWNER when SERVER's heartbeats stop (requires a daemon) |
 | `run (--to C \| --group NAME \| --group-id ID) [--name L] [--lines N] [--failures-only] -- COMMAND` | runs COMMAND, then reports how it ended |
 | `ask CONTACT QUESTION [--timeout SECS or Nm]` | waits for a verified contact to approve or decline (requires a daemon) |
+| `hook --token-file PATH --route NAME=contact:C \| group:G [...]` | takes monitoring webhooks and passes them on (requires a daemon; see below) |
 | `daemon` | keeps the identity open, so the commands above need no password and answer at once (Linux, macOS; see below) |
 
 Commands that open the identity take `--password-file PATH` or `--password-stdin` and `--timeout SECS` (60 by default). The state folder is `TERMCHAT_HOME`, or `~/.termchat`.
@@ -253,6 +254,57 @@ rsync: write failed on "/mnt/backup/db.tar": No space left on device (28)
 - `run` exits with the command's status: its code, `128 + N` when signal N ended it, or `127` when it could not start. Ctrl+C and SIGTERM go to the command, and `run` still reports. When the command succeeded but the report was not sent, `run` returns the send code (`1`, `4` or `5`). It always explains a send problem on stderr.
 
 The output can contain secrets: a token, a password, a private path. The report lands in the chat history and notifications, and on every device of a group. For such commands, use `--lines 0` or `--failures-only`.
+
+## Alerts from your monitoring
+
+`termchat hook` takes webhooks from Alertmanager, Grafana, Uptime Kuma, Gatus or anything that can POST, and passes each one on as an encrypted message to a contact or a private group (ADR-039). It holds no password and no keys: it hands every message to the [daemon](#a-daemon-for-a-bot-that-answers), so start that first.
+
+```sh
+termchat hook --new-token /etc/termchat/hook-token     # once: 32 random bytes, mode 600
+termchat hook --token-file /etc/termchat/hook-token \
+    --route oncall=contact:alice --route ops=group:Ops --labels job,severity
+```
+
+- A route is `NAME=contact:CONTACT`, `NAME=group:GROUP` or `NAME=group-id:ID`, with an optional format at the end: `:alertmanager`, `:kuma`, `:text`, or `:auto` (the default, which tells them apart). `POST /oncall` then goes to alice, `POST /ops` to the group. A request cannot pick a recipient.
+- A contact must be accepted and have a verified safety number; `hook` checks every route when it starts and refuses to run otherwise.
+- Every request needs `Authorization: Bearer <token>`. Without it: `401`.
+- It listens on `127.0.0.1:9099`. `--listen ADDR` takes another address; anything other than loopback sends the token in the clear, so put a TLS proxy (Caddy, nginx) in front.
+- An Alertmanager or Grafana alert becomes `FIRING (2)` and one line per alert: its name, `instance`, and the `summary` or `description` annotation. Other labels stay out unless `--labels` names them: they often hold internal addresses.
+- Answers: `200` once the relay has the message, `503` when the daemon or relay is not there (Alertmanager retries), `400` for a body that is not the route's format, `413` over 1 MiB, `429` over 30 messages a minute per route.
+
+Alertmanager, in `alertmanager.yml`:
+
+```yaml
+receivers:
+  - name: termchat
+    webhook_configs:
+      - url: http://127.0.0.1:9099/oncall
+        http_config:
+          authorization:
+            credentials_file: /etc/termchat/hook-token
+```
+
+Grafana: a contact point of type Webhook with the URL above and the token as "Authorization header" credentials (scheme `Bearer`). Uptime Kuma: a Webhook notification with "Request Body" set to "Preset - application/json" and the header `{"Authorization": "Bearer <token>"}`.
+
+A unit next to the daemon's:
+
+```ini
+[Unit]
+Description=termchat webhooks
+After=termchat-daemon.service
+Requires=termchat-daemon.service
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+ExecStart=/usr/local/bin/termchat hook --token-file /etc/termchat/hook-token --route oncall=contact:alice
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+What an alert says lands in the chat history on every device that gets it. Keep secrets out of annotations. Whoever holds the token can write to the routes and nothing more: no reading, no other recipients, no commands to the server. To change it, replace the file and restart `hook`.
 
 ## From GitHub Actions or another CI
 
