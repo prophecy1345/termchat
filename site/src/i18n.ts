@@ -83,8 +83,8 @@ const en = {
   phoneTitle: "termchat.app on Android",
   phoneLead: "The same messenger in your pocket: chats, small groups, answers and reactions, Tor, and the colour themes of the terminal. The release app blocks screenshots of itself, so these come from a test build.",
   phoneAlts: [
-    "The chat list on Android: three contacts and the group Saturday hike",
-    "A chat with bob: an answer to a message and two pixel reactions",
+    "The chat list on Android: an archived chat on top, a pinned contact and the group Saturday hike",
+    "A chat with bob: an answer to a message, a pixel reaction and an edited message",
     "The group Saturday hike with four members, names over messages and reactions",
     "The same group in the dracula theme",
   ],
@@ -231,8 +231,8 @@ const ru: typeof en = {
   phoneTitle: "termchat.app на Android",
   phoneLead: "Тот же мессенджер в кармане: переписки, маленькие группы, ответы и реакции, Tor и цветовые темы терминала. Выпускная версия запрещает снимки своего экрана, поэтому эти сделаны в тестовой сборке.",
   phoneAlts: [
-    "Список чатов на Android: три контакта и группа Saturday hike",
-    "Чат с bob: ответ на сообщение и две пиксельные реакции",
+    "Список чатов на Android: архивный чат сверху, закреплённый контакт и группа Saturday hike",
+    "Чат с bob: ответ на сообщение, пиксельная реакция и исправленное сообщение",
     "Группа Saturday hike из четырёх человек: имена над сообщениями и реакции",
     "Та же группа в теме dracula",
   ],
