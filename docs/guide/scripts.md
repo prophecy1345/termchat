@@ -327,6 +327,43 @@ From the webhook receiver, a route pages instead of sending: `--route oncall=pag
 
 An acknowledgement only stops the reminders. It authorizes nothing on the server, and nothing a contact sends can run a command there.
 
+## Your own AI bot
+
+termchat has no AI inside, and nothing you write reaches a model unless you send it there. If you want one, run it as a contact of its own: [`deploy/ai-bot/termchat-ai-bot`](https://github.com/prophecy1345/termchat/blob/main/deploy/ai-bot/termchat-ai-bot) answers each message with a language model, next to a [daemon](#a-daemon-for-a-bot-that-answers) on a machine of yours.
+
+It talks to any OpenAI-compatible chat API. By default that is [Ollama](https://ollama.com) on the same machine, so the whole path stays yours:
+
+```sh
+ollama pull llama3.2
+AI_ALLOW="12345 67890 11121 31415 16171 81920" termchat-ai-bot
+```
+
+- `AI_ALLOW` lists the fingerprints that may use the bot, comma-separated; it ignores everyone else.
+- `AI_URL` (default `http://127.0.0.1:11434/v1`), `AI_MODEL` (default `llama3.2`), `AI_KEY` for an API that needs a key, `AI_SYSTEM` for the system prompt.
+- Each message is answered on its own: the bot keeps no conversation history.
+- It needs `jq` and `curl`, and answers through `termchat send`, so the daemon must run.
+
+A unit next to the daemon's:
+
+```ini
+[Unit]
+Description=termchat AI bot
+After=termchat-daemon.service
+Requires=termchat-daemon.service
+
+[Service]
+User=termchat-bot
+Environment=TERMCHAT_HOME=/var/lib/termchat-bot
+Environment=AI_ALLOW=12345 67890 11121 31415 16171 81920
+ExecStart=/usr/local/bin/termchat-ai-bot
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+With a remote API instead of a local model, everything you write to the bot goes to that provider, in the clear for them: the encryption ends at your server. Do not add the bot to a group: it would pass on everything the group says. Keep the API key in a `0600` file, not in the unit.
+
 ## From GitHub Actions or another CI
 
 Keep no termchat identity in CI secrets (ADR-036). A secret is a fixed copy of the identity, so every run would start from the same encryption state and reuse message keys. Instead, CI connects over SSH to a server that runs a CI identity, with a key that can only send to one contact.

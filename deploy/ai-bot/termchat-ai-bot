@@ -1,0 +1,49 @@
+#!/bin/sh
+# termchat-ai-bot: answers your messages with a language model, as a contact
+# of its own. It runs next to `termchat daemon` on a machine of yours and
+# talks to any OpenAI-compatible chat API: Ollama on this machine by default,
+# so nothing leaves it. With a remote API, everything you write to the bot
+# goes to that provider. Docs: https://termchat.app/docs/scripts/#your-own-ai-bot
+#
+#   AI_ALLOW   fingerprints allowed to use the bot, comma-separated (required)
+#   AI_URL     chat API base URL (default http://127.0.0.1:11434/v1, Ollama)
+#   AI_MODEL   model name (default llama3.2)
+#   AI_KEY     API key, if the API needs one (read it from a 0600 file)
+#   AI_SYSTEM  system prompt (optional)
+set -eu
+
+: "${AI_ALLOW:?set AI_ALLOW to the fingerprints allowed to use the bot}"
+AI_URL=${AI_URL:-http://127.0.0.1:11434/v1}
+AI_MODEL=${AI_MODEL:-llama3.2}
+AI_SYSTEM=${AI_SYSTEM:-"You are a helpful assistant. Answer briefly, in plain text."}
+
+# The fingerprints without spaces, between commas, for an exact match below.
+allow=",$(printf '%s' "$AI_ALLOW" | tr -d ' '),"
+
+ask() {
+    body=$(jq -n --arg m "$AI_MODEL" --arg s "$AI_SYSTEM" --arg t "$1" \
+        '{model: $m, messages: [{role: "system", content: $s}, {role: "user", content: $t}]}')
+    if [ -n "${AI_KEY:-}" ]; then
+        printf '%s' "$body" | curl -sS -m 120 -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $AI_KEY" --data-binary @- "$AI_URL/chat/completions"
+    else
+        printf '%s' "$body" | curl -sS -m 120 -H "Content-Type: application/json" \
+            --data-binary @- "$AI_URL/chat/completions"
+    fi
+}
+
+termchat recv --follow --json | while IFS= read -r line; do
+    kind=$(printf '%s' "$line" | jq -r .kind)
+    [ "$kind" = message ] || continue
+    who=$(printf '%s' "$line" | jq -r .fingerprint)
+    case "$allow" in
+        *",$(printf '%s' "$who" | tr -d ' '),"*) ;;
+        *) continue ;;
+    esac
+    text=$(printf '%s' "$line" | jq -r '.text // empty')
+    [ -n "$text" ] || continue
+    # Texts have a size limit: a long answer is cut, by characters, not bytes.
+    answer=$(ask "$text" | jq -r '.choices[0].message.content // empty | .[0:5000]' 2>/dev/null) || answer=""
+    [ -n "$answer" ] || answer="The model did not answer. Try again in a moment."
+    printf '%s' "$answer" | termchat send "$who" || echo "termchat-ai-bot: could not send" >&2
+done
