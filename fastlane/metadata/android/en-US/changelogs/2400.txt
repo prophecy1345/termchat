@@ -1,0 +1,1 @@
+Without Tor, chats connect at once after unlock. A chat that is still connecting says so in its header. New setting, off by default: Connect the open chat at once, which lets the chat you open skip the wait after unlock under Tor. New theme: thoroughbred. Security updates of url and rustls-webpki.

@@ -3,6 +3,21 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.24.0
+
+- Without Tor, chats connect at once after you unlock, instead of one by
+  one over 30 seconds: the relay sees one IP address for all of them
+  anyway (ADR-038).
+- A chat or group whose connection is not up yet says "connecting…" in
+  its header, so a message that has not arrived yet is not a mystery.
+- New setting, off by default: Connect the open chat at once. With Tor,
+  the chat you open skips the wait after unlock; the relay may then see
+  which chat you opened.
+- New theme, thoroughbred: heritage gold and polo green, in every app.
+- Security updates: url 2.5.9 (RUSTSEC-2026-0592, a stack overflow on
+  nested `blob:` URLs) and rustls-webpki 0.103.17, the certificate checks
+  for the relay's TLS.
+
 ## 0.23.0
 
 - Compare safety numbers with a QR code: the desktop app and Android show
