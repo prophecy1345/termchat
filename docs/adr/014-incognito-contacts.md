@@ -55,7 +55,8 @@ identity is a vodozemac Olm account and an account on the relay.
   recommends Tor for incognito contacts.
 - **Timing.** Profiles connect with a random delay of 0–30 s each after
   unlock, and again before every reconnect, so they do not all come and go
-  within the same second.
+  within the same second. Since ADR-038 only with Tor on: directly they share an IP
+  anyway; and a setting lets the open chat skip the wait.
 - **Numbering.** Each profile numbers its `Send` frames itself, from a random
   start. One shared counter would show the relay which keys belong together.
   (Found by the security review at implementation.)

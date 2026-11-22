@@ -1,6 +1,6 @@
 # ADR-038 — The unlock spread and a user who is waiting
 
-Status — **proposed**, waiting for the maintainer. [Русская версия](038-unlock-spread-and-waiting.ru.md).
+Status — **accepted by the maintainer** (2026-11-22): B, C, and A as a setting, off by default. [Русская версия](038-unlock-spread-and-waiting.ru.md).
 
 ## Context
 
@@ -25,9 +25,13 @@ C. **Say why.** While a chat's link is still in its wait, the chat header says "
 
 D. **A shorter window**, say 0–10 s. Smaller wait for everyone, weaker timing protection under Tor in proportion.
 
-## Recommendation
+## Decision
 
-B and C now. A as a setting is possible later, but by default it would undo the spread exactly when the user is most active, right after unlock, so it is not recommended without the maintainer's choice.
+B and C, and A as a setting, **Connect the open chat at once**, off by default.
+
+- B: a link spreads its start at unlock, and its wait before each reconnect, only with Tor on.
+- C: the chat or group header says "connecting…" while its link has not reached the relay.
+- A: with the setting on, the open chat's or group's link, and a link a push names, skips the rest of its wait (`Relay::hurry`). It only cuts a wait in progress, so nothing is kept to cut a later one.
 
 ## Not changed
 
