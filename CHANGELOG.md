@@ -3,6 +3,25 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.23.0
+
+- Compare safety numbers with a QR code: the desktop app and Android show
+  it next to the digits, the terminal draws it (q in the Ctrl+F window),
+  and Android scans the code on the other screen (ADR-037).
+- Drafts stay with their chat when you switch chats or lock, encrypted
+  like the rest.
+- Mute a chat or group for an hour, a day or always; unread still counts.
+- Pin and archive chats. Archived chats sit above the others under their
+  own heading; in the desktop app and on Android each section folds.
+- Forward a message or a received document to another chat or group,
+  with no mark of where it came from.
+- Export a chat or group to a plain text file, on an explicit command and
+  with a warning that the file is not encrypted.
+- The desktop app searches the open chat and can show a system
+  notification that says only "New message", as on Android.
+- The apps draw their own fine pixel icons instead of emoji and system
+  glyphs.
+
 ## 0.22.0
 
 - `termchat send CONTACT --expires 5m` sends one direct message with a timer
