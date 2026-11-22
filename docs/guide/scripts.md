@@ -356,7 +356,9 @@ User=termchat-bot
 Environment=TERMCHAT_HOME=/var/lib/termchat-bot
 Environment=AI_ALLOW=12345 67890 11121 31415 16171 81920
 ExecStart=/usr/local/bin/termchat-ai-bot
-Restart=on-failure
+# Always: it may start before the daemon's socket is up, and then ends cleanly.
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
