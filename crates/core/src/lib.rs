@@ -999,9 +999,10 @@ pub fn verify_roster(admin: &Ed25519Key, roster: &[u8], sig: &Signature) -> Resu
     verify_message(admin, &[ROSTER_CONTEXT, roster].concat(), sig)
 }
 
-/// Whether `next` may follow the admin list `admins`, in force since roster
-/// `no` of `group` (ADR-042, section 1). A group with one admin starts from
-/// `[creator]`. Rights are checked here, not taken on the signer's word:
+/// Whether `next` may follow the admin list `admins` of `group`, where `no`
+/// is the last roster accepted, not the one the list came with: an older
+/// list, from a roster that lost the race, must not pass (ADR-042, section
+/// 1). A group with one admin starts from `[creator]`. Rights are checked here, not taken on the signer's word:
 /// - the main admin (first) makes and removes helpers, appending new ones
 ///   and keeping the others' order, or hands over: the successor first,
 ///   the main admin gone, the other helpers in their order;
@@ -1263,6 +1264,11 @@ mod tests {
         assert_eq!(change(&now, &with(&b, 5, a.sign_resign(&[6; 16], 4))), no);
         assert_eq!(change(&now, &with(&b, 5, b.sign_resign(&GROUP, 4))), no);
         assert_eq!(change(&now, &with(&c, 5, a.sign_resign(&GROUP, 4))), no);
+        // The main admin hands over by signing themselves, not by resign.
+        let mut own = list(&a, 5, &[&b, &c]);
+        own.resign = Some(a.sign_resign(&GROUP, 4));
+        own.signature = a.sign_admins(&own);
+        assert_eq!(change(&now, &own), no);
         // The rest stay as they were.
         let mut reordered = with(&b, 5, a.sign_resign(&GROUP, 4));
         reordered.admins = vec![key(&c), key(&b)];
