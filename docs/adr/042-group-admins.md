@@ -203,6 +203,15 @@ Found during implementation. Until now the main admin deleted the old queue righ
 4. **What remains:** a removed **admin** knows the old queue's token and, while it lives (up to 24 hours), can add a reader for themselves. They would read only what stragglers write there with the old Megolm session, and point 3 makes that nearly impossible. A removed ordinary member has no token and after `RemoveReaderAt` reads nothing.
 5. **An old relay** does not know `RemoveReaderAt` and answers with an error. The main admin then deletes the old queue at once, as before, and members a helper invited who are not the main admin's contacts drop out of the group. The main admin's app warns about this. The termchat.app relay is updated with the release (ADR-010).
 
+## Implementation notes (2026-11-23)
+
+1. **The new queue of a move is on the group's relay**, not the signer's home relay: members are connected to it already, and a move does not change the address. Read section 5 and "What the relay sees" with this.
+2. **A token that comes before its roster** waits in one slot and is taken only once an accepted roster names us an admin. Only the main admin, or whoever just handed the group over, can put it there; anyone else's is dropped and does not push out the real one.
+3. **Lists wait for their roster** per sender (at most 8 from one): a member who sends junk lists pushes out only their own.
+4. **A chain over missed rosters** is taken only with the main admin's roster (review of step 2): a helper cannot slip a list that lost a race to a member who fell behind.
+5. **"Read first"**: a group counts as read once the relay, after the backlog, sends `KeyCount` for our reader. A goodbye (`GroupLeave`) does not wait: we read no more.
+6. **Limit:** if a helper's roster lands in the queue between the main admin's `GroupResign` and `GroupLeave`, the resign goes stale and nobody takes over. The window is narrow (the main admin sends both back to back); the code marks it `shortcut`.
+
 ## Owner's decisions (2026-11-23)
 
 1. The creator (main admin) cannot be removed: they only leave themselves.

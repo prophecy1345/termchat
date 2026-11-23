@@ -610,8 +610,12 @@ const KNOWN_KINDS: u32 = 33;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
-/// copies that name their chat (ADR-030), 5 = receipts (ADR-041).
-pub const UNDERSTANDS: u16 = 5;
+/// copies that name their chat (ADR-030), 5 = receipts (ADR-041), 6 = several
+/// group admins (ADR-042).
+pub const UNDERSTANDS: u16 = 6;
+
+/// The level from which a member takes rosters from several admins (ADR-042).
+pub const ADMINS_LEVEL: u16 = 6;
 
 /// The level from which a contact reads proven device lists (ADR-030):
 /// what linked devices need, whatever later levels add.

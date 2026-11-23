@@ -1074,6 +1074,18 @@ pub fn check_admin_change(
     }
 }
 
+/// Whether `list` is well formed and signed by its signer, with no word on
+/// their right (ADR-042): for an invite, where the inviter is trusted, as
+/// for the roster it carries.
+pub fn verify_admins(list: &proto::AdminList) -> Result<(), Error> {
+    list.check()?;
+    verify_message(
+        &list.signer,
+        &[ADMINS_CONTEXT, &list.signed_bytes()].concat(),
+        &list.signature,
+    )
+}
+
 /// Whether a device list is well formed and signed by its identity (ADR-028).
 pub fn verify_devices(list: &DeviceList) -> Result<(), Error> {
     list.check()?;
@@ -1274,6 +1286,16 @@ mod tests {
         reordered.admins = vec![key(&c), key(&b)];
         reordered.signature = b.sign_admins(&reordered);
         assert_eq!(change(&now, &reordered), no);
+    }
+
+    #[test]
+    fn adr_042_an_invites_list_is_checked_for_its_signature() {
+        let [a, b] = [(); 2].map(|_| Client::default());
+        let good = list(&a, 4, &[&a, &b]);
+        assert_eq!(verify_admins(&good), Ok(()));
+        let mut forged = good.clone();
+        forged.signer = key(&b);
+        assert_eq!(verify_admins(&forged), Err(Error::BadSignature));
     }
 
     #[test]

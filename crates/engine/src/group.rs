@@ -5,8 +5,10 @@
 use super::*;
 use crate::data::{FileMsg, Group, GroupInvite, GroupMoving};
 use std::sync::atomic::Ordering;
+use termchat_core::check_admin_change;
 use termchat_core::proto::{
-    Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Ref, Roster, RosterMember, SecretBytes,
+    AdminList, Envelope, GroupId, OLM_TYPE_MEGOLM, ReaderGrant, Ref, Roster, RosterMember,
+    SecretBytes,
 };
 use zeroize::Zeroizing;
 
@@ -17,6 +19,8 @@ const MAX_PENDING_KEYS: usize = 32;
 /// The `Understands` level that knows groups (ADR-027).
 const GROUPS_LEVEL: u16 = 2;
 const MOVE_RETRY: Duration = Duration::from_secs(30);
+/// ADR-042, amendment 3: the longest an old queue outlives a move, seconds.
+const RETIRE_AFTER: u64 = 24 * 3600;
 
 const GROUP_ACCESS_LOST: &str = "this device is not in the group";
 const GROUP_SAVE_FAILED: &str = "could not save the group message before sending";
@@ -184,11 +188,14 @@ impl Engine {
 
     /// Reads our reader of group `g`, and asks the relay to wake us for it
     /// when a push endpoint is set (ADR-012): a reader is a queue like any.
-    fn subscribe_group(&self, g: usize) {
+    fn subscribe_group(&mut self, g: usize) {
         let group = &self.data.groups[g];
         let Some(r) = group.reader.clone() else {
             return;
         };
+        // Until the relay's key count says the backlog is out.
+        self.group_read.remove(&group.id);
+        let group = &self.data.groups[g];
         let push = group.push.clone();
         self.group_send(
             g,
@@ -333,9 +340,14 @@ impl Engine {
             return Err("their app is older; groups come after they update".into());
         }
         let key = c.key;
+        let level = c.understands;
         let group = &self.data.groups[g];
         if !group.is_admin() {
-            return Err("only the group's admin adds members".into());
+            return Err("only the group's admins add members".into());
+        }
+        // ADR-042, section 7: a group with helpers takes only apps that read them.
+        if !unheard && !group.admins.is_empty() && level < proto::ADMINS_LEVEL {
+            return Err("their app is older; this group comes after they update".into());
         }
         if group.moving.is_some() {
             return Err("the group is moving to a new queue; try again in a moment".into());
@@ -416,9 +428,27 @@ impl Engine {
             .cloned()
             .ok_or("no such invite")?;
         verify_roster(&inv.roster).map_err(|_| "the invite's roster is not signed by its admin")?;
-        if inv.roster.admin != inv.from {
+        // ADR-042: with admin lists, the inviter and the roster's signer are
+        // admins on the last one, and every admin is a member. The inviter
+        // is trusted with the list as with the roster.
+        let list = inv.admins.last();
+        let ok = match list {
+            None => inv.roster.admin == inv.from,
+            Some(l) => {
+                termchat_core::verify_admins(l).is_ok()
+                    && l.group == inv.roster.group
+                    && l.no <= inv.roster.no
+                    && l.admins.contains(&inv.from)
+                    && l.admins.contains(&inv.roster.admin)
+                    && l.admins
+                        .iter()
+                        .all(|a| inv.roster.members.iter().any(|m| m.ed25519 == *a))
+            }
+        };
+        if !ok {
             return Err("the invite does not come from the group's admin".into());
         }
+        let admins: Vec<AdminList> = list.cloned().into_iter().collect();
         self.data.group_invites.remove(n);
         let id = inv.roster.group;
         if self.data.groups.iter().any(|g| g.id == id && !g.left) {
@@ -437,6 +467,7 @@ impl Engine {
             send_id: inv.send_id,
             reader: Some(inv.reader),
             next_client_id: getrandom::u64().unwrap_or(0) >> 2,
+            admins,
             ..Default::default()
         });
         let g = self.data.groups.len() - 1;
@@ -917,7 +948,10 @@ impl Engine {
             who: link_who(&group.id),
             relay: group.relay_url.clone(),
         };
-        self.links.get(&link).is_some_and(|l| l.connected) && group.send_id != [0; 16]
+        self.links.get(&link).is_some_and(|l| l.connected)
+            && group.send_id != [0; 16]
+            // A goodbye from a group we left does not wait: we read no more.
+            && (group.reader.is_none() || group.left || self.group_read.contains(&group.id))
     }
 
     /// A new Megolm session for group `g`.
@@ -950,6 +984,15 @@ impl Engine {
     /// they are our contact, else through their reader, with a key claimed
     /// from it (the answer comes as `ClaimedKey`).
     pub(super) fn share_key(&mut self, g: usize) {
+        // ADR-042, amendment 2: words for readers that still lack a key.
+        let waiting: Vec<QueueId> = self.data.groups[g]
+            .reader_outbox
+            .iter()
+            .map(|(_, _, at)| *at)
+            .collect();
+        for send_id in waiting {
+            self.group_send(g, ClientFrame::ClaimKey { send_id });
+        }
         if self.removed() || self.data.groups[g].left || self.group_moving(g) {
             return;
         }
@@ -1021,6 +1064,22 @@ impl Engine {
         if self.removed() {
             return;
         }
+        // ADR-042, amendment 3, point 5: the link fell on `RemoveReaderAt`
+        // and no answer came: the relay is too old; the old queue goes now.
+        if self.data.groups[g]
+            .retiring
+            .as_ref()
+            .is_some_and(|r| r.probe)
+        {
+            self.note(
+                "this group's relay is older: members not in your contacts may need a new invite",
+            );
+            if let Some(r) = self.data.groups[g].retiring.as_mut() {
+                r.probe = false;
+                r.until = 0;
+            }
+        }
+        self.retire_old_queues();
         if self.data.groups[g].left {
             return self.flush_group(g);
         }
@@ -1132,6 +1191,15 @@ impl Engine {
                         send_id: group.send_id,
                         reader: grant,
                     };
+                    // ADR-042: the admin lists go just before the invite.
+                    let group = &self.data.groups[g];
+                    if !group.admins.is_empty() {
+                        let lists = Body::GroupAdmins {
+                            group: group.id,
+                            chain: group.admins.clone(),
+                        };
+                        self.group_tell(&who, lists);
+                    }
                     // A linked device of a contact gets its invite alone (ADR-028).
                     match self.index(&who) {
                         Some(o) => {
@@ -1177,7 +1245,14 @@ impl Engine {
                 let Some(r) = self.data.groups[g].reader.clone() else {
                     return;
                 };
-                if r.recv_id != recv_id || one_time_left >= CONTACT_KEYS {
+                if r.recv_id != recv_id {
+                    return;
+                }
+                // ADR-042, amendment 3: what waited for us is read; we write now.
+                if self.group_read.insert(self.data.groups[g].id) {
+                    self.flush_group(g);
+                }
+                if one_time_left >= CONTACT_KEYS {
                     return;
                 }
                 let one_time = self
@@ -1195,6 +1270,19 @@ impl Engine {
                 );
             }
             ServerFrame::ClaimedKey { send_id, key } => {
+                // ADR-042, amendment 2: a word for a reader, maybe in a queue
+                // the group has left.
+                let waiting = self.data.groups[g]
+                    .reader_outbox
+                    .iter()
+                    .find(|(_, _, at)| *at == send_id)
+                    .map(|(k, ..)| *k);
+                if let Some(who) = waiting {
+                    if self.has_session(&who) || self.core().start_session(&who, &key).is_ok() {
+                        self.flush_reader_outbox(g, &who);
+                    }
+                    return;
+                }
                 if self.removed() || self.data.groups[g].left || self.group_moving(g) {
                     return;
                 }
@@ -1254,6 +1342,12 @@ impl Engine {
                 }
                 if self.group_receive(g, &envelope) {
                     self.group_send(g, ClientFrame::Ack { recv_id, relay_id });
+                }
+            }
+            ServerFrame::ReaderRemoved { .. } => {
+                if let Some(r) = self.data.groups[g].retiring.as_mut() {
+                    r.probe = false;
+                    self.persist();
                 }
             }
             ServerFrame::Accepted { client_id } => {
@@ -1316,10 +1410,10 @@ impl Engine {
             }
             return self.persist();
         }
-        // A session key from a member, over Olm.
+        // A session key from a member, or an admin's word to us alone, over Olm.
         let got = self.core().decrypt_on_reader(envelope);
         if let Ok(r) = got {
-            self.group_key_from(r.sender, r.body);
+            self.group_from_reader(r.sender, r.body);
         }
         self.persist()
     }
@@ -1350,6 +1444,7 @@ impl Engine {
         {
             return;
         }
+        self.seen_on_new_queue(g, &sender);
         // What came before the key reads now.
         let early = std::mem::take(&mut self.data.groups[g].early);
         for bytes in early {
@@ -1372,6 +1467,7 @@ impl Engine {
         let Some(sender) = self.data.groups[g].owner(&device) else {
             return;
         };
+        self.seen_on_new_queue(g, &device);
         let mine = sender == self.identity_key();
         // The admin's roster and device lists still count from our primary.
         let change = matches!(
@@ -1436,6 +1532,19 @@ impl Engine {
                 }
             }
             Body::GroupRoster { roster } if device == sender => self.take_roster(g, sender, roster),
+            Body::GroupAdmins { group, chain }
+                if device == sender && group == self.data.groups[g].id =>
+            {
+                self.hear_admins(g, sender, chain);
+            }
+            // ADR-042: kept by the helpers for when the main admin's goodbye comes.
+            Body::GroupResign { group, resign }
+                if device == sender
+                    && group == self.data.groups[g].id
+                    && self.data.groups[g].main_admin() == Some(sender) =>
+            {
+                self.data.groups[g].resign = Some(resign);
+            }
             Body::GroupDevices {
                 member,
                 list,
@@ -1479,9 +1588,19 @@ impl Engine {
             Body::GroupLeave { group } if group == self.data.groups[g].id => {
                 let name = self.member_name(g, &sender);
                 self.group_system(g, format!("{name} left the group"));
-                if self.data.groups[g].is_admin() {
+                let me = self.me();
+                let admins = self.data.groups[g].admin_keys();
+                if admins.first() == Some(&me) {
                     let _ = self.remove_from_group(g, &sender);
-                } else if Some(sender) != self.data.groups[g].roster.as_ref().map(|r| r.admin) {
+                } else if admins.first() == Some(&sender) {
+                    // ADR-042, section 4: the next admin takes over with the
+                    // main admin's word; the others wait for their move.
+                    if admins.get(1) == Some(&me) {
+                        self.take_over(g);
+                    } else if admins.len() > 1 {
+                        self.wait_for_group_move(g);
+                    }
+                } else {
                     self.wait_for_group_move(g);
                 }
             }
@@ -1491,35 +1610,201 @@ impl Engine {
 
     /// A newer roster, from the admin, signed: new members learn our key.
     fn take_roster(&mut self, g: usize, sender: Ed25519Key, roster: Roster) {
-        let current = self.data.groups[g].roster.as_ref();
-        let admin = current.map(|r| r.admin);
-        if Some(sender) != admin
-            || Some(roster.admin) != admin
-            || roster.group != self.data.groups[g].id
-            || current.is_some_and(|r| roster.no <= r.no)
-            || verify_roster(&roster).is_err()
-        {
+        if sender != roster.admin {
             return;
         }
+        let Some(lists) = self.roster_lists(g, &roster, false) else {
+            return;
+        };
+        let current = self.data.groups[g].roster.as_ref();
         let had_access = self.group_access(g);
         let losing_member = current.is_some_and(|r| {
             r.members
                 .iter()
                 .any(|old| !roster.members.iter().any(|new| new.ed25519 == old.ed25519))
         });
+        let no = roster.no;
         let me = self.me();
         self.data.groups[g].set_roster(roster, &me);
+        let moves = self.take_admin_lists(g, lists, no);
         if had_access && !self.group_access(g) {
             self.lose_group_access(g);
             return;
         }
-        if losing_member {
+        if moves {
+            self.move_as_main(g);
+        } else if losing_member && self.data.groups[g].main_admin() != Some(me) {
             self.wait_for_group_move(g);
         }
         self.know_members(g);
         self.replay_pending_keys(g);
         self.share_key(g);
         self.flush_group(g);
+    }
+
+    /// ADR-042: whether `roster`, signed by `roster.admin`, may follow ours,
+    /// with the admin lists heard for it; those lists, oldest first, if so.
+    /// `by_main`: only the main admin's will do, as for a move.
+    fn roster_lists(&self, g: usize, roster: &Roster, by_main: bool) -> Option<Vec<AdminList>> {
+        let group = &self.data.groups[g];
+        let current = group.roster.as_ref()?;
+        if roster.group != group.id || roster.no <= current.no || verify_roster(roster).is_err() {
+            return None;
+        }
+        let signer = roster.admin;
+        // Lists for rosters we missed, then this roster's own, from its signer.
+        let mut heard: Vec<&AdminList> = group
+            .pending_admins
+            .iter()
+            .map(|(_, l)| l)
+            .filter(|l| l.no > current.no && (l.no < roster.no || l.signer == signer))
+            .filter(|l| l.no <= roster.no)
+            .collect();
+        heard.sort_by_key(|l| l.no);
+        let mut set = group.admin_keys();
+        let mut before = set.clone();
+        let mut since = current.no;
+        let mut lists: Vec<AdminList> = Vec::new();
+        for l in heard {
+            if l.no == since || check_admin_change(&group.id, &set, since, l).is_err() {
+                continue;
+            }
+            before = std::mem::replace(&mut set, l.admins.clone());
+            since = l.no;
+            lists.push(l.clone());
+        }
+        let own = lists.last().filter(|l| l.no == roster.no);
+        let rights = if own.is_some() { &before } else { &set };
+        let main = rights.first() == Some(&signer)
+            || own.is_some_and(|l| l.resign.is_some() && set.first() == Some(&signer));
+        // Review: a chain over missed rosters only from the main admin, so a
+        // helper cannot slip in a list that lost its race.
+        let gap = lists.iter().any(|l| l.no < roster.no);
+        let helper_ok = !by_main
+            && !gap
+            && rights.contains(&signer)
+            && roster.name == current.name
+            && roster.expires_in == current.expires_in
+            && roster.members.starts_with(&current.members);
+        if !(main && !(gap && set.first() != Some(&signer)) || helper_ok) {
+            return None;
+        }
+        // Every admin in force is a member. Before any list the creator
+        // alone signs, and a roster of theirs may still be empty.
+        let named = set
+            .iter()
+            .all(|a| roster.members.iter().any(|m| m.ed25519 == *a));
+        (named || group.admins.is_empty() && lists.is_empty()).then_some(lists)
+    }
+
+    /// ADR-042: takes the lists that came with roster `no` and says what
+    /// changed. `true`: we are the main admin and the group must move.
+    fn take_admin_lists(&mut self, g: usize, lists: Vec<AdminList>, no: u64) -> bool {
+        let me = self.me();
+        let group = &mut self.data.groups[g];
+        group.pending_admins.retain(|(_, l)| l.no > no);
+        if lists.is_empty() {
+            return false;
+        }
+        let old = group.admin_keys();
+        group.admins.extend(lists);
+        let drop = group.admins.len().saturating_sub(proto::MAX_ADMIN_CHAIN);
+        group.admins.drain(..drop);
+        group.resign = None;
+        let new = group.admin_keys();
+        let signer = group.admins.last().map(|l| l.signer).unwrap_or_default();
+        if !new.contains(&me) {
+            // Out of the role: the token is no longer ours to use.
+            group.admin = None;
+            group.pending_grant = None;
+        }
+        let name = |k: &Ed25519Key| group.name_of(k).map_or("someone".into(), clean);
+        let mut lines = Vec::new();
+        let handed = old.first() != new.first();
+        match (old.first(), new.first()) {
+            (Some(was), Some(main)) if handed && *was == signer => {
+                lines.push(format!(
+                    "{} handed the group over to {}",
+                    name(was),
+                    name(main)
+                ));
+            }
+            (_, Some(main)) if handed => {
+                lines.push(format!("{} is now the main admin", name(main)));
+            }
+            _ => {}
+        }
+        for k in new.iter().skip(1).filter(|k| !old.contains(k)) {
+            lines.push(format!("{} made {} an admin", name(&signer), name(k)));
+        }
+        for k in old.iter().filter(|k| !new.contains(k)) {
+            if handed && old.first() == Some(k) {
+                continue;
+            }
+            if *k == signer {
+                lines.push(format!("{} stepped down as admin", name(k)));
+            } else if old.first() != Some(k) {
+                lines.push(format!("{} removed {} as admin", name(&signer), name(k)));
+            }
+        }
+        for l in lines {
+            self.group_system(g, l);
+        }
+        self.take_pending_grant(g);
+        let group = &self.data.groups[g];
+        // Who knew the token and lost the role: the main admin moves.
+        let lost = old.iter().any(|k| !new.contains(k));
+        group.main_admin() == Some(me) && lost
+    }
+
+    /// ADR-042: we are the main admin and someone who knew the token lost
+    /// the role; once we hold it, the group moves without it.
+    fn move_as_main(&mut self, g: usize) {
+        if self.data.groups[g].admin.is_none() {
+            self.data.groups[g].owe_move = true;
+            return self.persist_unit();
+        }
+        self.data.groups[g].owe_move = false;
+        self.start_move(g, Vec::new());
+        self.persist();
+    }
+
+    /// ADR-042: admin lists heard, kept for the roster they come with.
+    fn hear_admins(&mut self, g: usize, from: Ed25519Key, chain: Vec<AdminList>) {
+        let at = self.data.groups[g].roster.as_ref().map_or(0, |r| r.no);
+        let gid = self.data.groups[g].id;
+        let pending = &mut self.data.groups[g].pending_admins;
+        // Review: a sender's new chain replaces their old one, so a member
+        // who floods lists crowds out only their own.
+        pending.retain(|(k, _)| *k != from);
+        let fresh = chain.into_iter().filter(|l| l.no > at && l.group == gid);
+        pending.extend(fresh.take(proto::MAX_ADMIN_CHAIN).map(|l| (from, l)));
+    }
+
+    /// ADR-042: the main admin's token, once a roster names us an admin.
+    fn take_pending_grant(&mut self, g: usize) {
+        let me = self.me();
+        let group = &mut self.data.groups[g];
+        let Some((from, no, _)) = &group.pending_grant else {
+            return;
+        };
+        let at = group.roster.as_ref().map_or(0, |r| r.no);
+        if *no > at {
+            return;
+        }
+        // Kept until a roster makes us an admin: the token may come first.
+        if !group.admin_keys().contains(&me) {
+            return;
+        }
+        // The main admin's, or the one who just handed the group to us.
+        let handed = group.admins.last().is_some_and(|l| l.signer == *from);
+        let ok = group.main_admin() == Some(*from) || handed;
+        if let Some((_, _, grant)) = group.pending_grant.take().filter(|_| ok) {
+            group.admin = Some((grant.queue, grant.token));
+            if group.owe_move && group.main_admin() == Some(me) {
+                self.move_as_main(g);
+            }
+        }
     }
 
     /// Keys that came before the roster or device list that names their
@@ -1541,10 +1826,9 @@ impl Engine {
     /// every member starts a new session (ADR-027).
     pub fn remove_from_group(&mut self, g: usize, who: &Ed25519Key) -> Result<(), String> {
         let me = self.me();
-        let group = self.data.groups.get(g).ok_or("no such group")?;
-        if !group.is_admin() {
-            return Err("only the group's admin removes members".into());
-        }
+        self.main_check(g)
+            .map_err(|_| "only the group's main admin removes members")?;
+        let group = &self.data.groups[g];
         if *who == me {
             return Err("the admin cannot remove themselves; leave the group instead".into());
         }
@@ -1558,10 +1842,11 @@ impl Engine {
                 gone.extend(list.devices.iter().map(|d| d.ed25519).filter(|k| k != who));
             }
         }
+        // The move first: it notes every reader in the old queue, theirs too.
+        self.start_move(g, gone);
         self.data.groups[g]
             .member_devices
             .retain(|(m, ..)| m != who);
-        self.start_move(g, gone);
         let name = self.data.groups[g]
             .name_of(who)
             .unwrap_or("someone")
@@ -1575,6 +1860,11 @@ impl Engine {
     /// devices; every device that stays gets a reader of the new one.
     fn start_move(&mut self, g: usize, gone: Vec<Ed25519Key>) {
         self.stop_group_writes(g, false);
+        let at: Vec<(Ed25519Key, QueueId)> = self.data.groups[g]
+            .devices()
+            .iter()
+            .map(|m| (m.ed25519, m.reader))
+            .collect();
         let stay: Vec<Ed25519Key> = self.data.groups[g]
             .devices()
             .iter()
@@ -1611,6 +1901,7 @@ impl Engine {
                     grants: Vec::new(),
                     old: None,
                     reinvite,
+                    at,
                 });
                 group.asking = asking;
                 self.group_connected(g);
@@ -1640,6 +1931,18 @@ impl Engine {
         let Some(old_roster) = self.data.groups[g].roster.clone() else {
             return;
         };
+        // ADR-042, amendment 2: those we have no chat with hear of the move
+        // through their reader in the old queue.
+        let old_readers: Vec<(Ed25519Key, QueueId)> = if moving.at.is_empty() {
+            self.data.groups[g]
+                .devices()
+                .iter()
+                .map(|m| (m.ed25519, m.reader))
+                .collect()
+        } else {
+            moving.at.clone()
+        };
+        let old_at = |k: &Ed25519Key| old_readers.iter().find(|(x, _)| x == k).map(|(_, r)| *r);
         let reader_of = |k: &Ed25519Key| {
             moving
                 .grants
@@ -1661,6 +1964,8 @@ impl Engine {
             })
             .collect();
         roster.no += 1;
+        // ADR-042: `admin` names the roster's signer, us.
+        roster.admin = me;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         let group = &mut self.data.groups[g];
         group.waiting_for_move = false;
@@ -1685,16 +1990,30 @@ impl Engine {
         if !self.persist() {
             return self.retry_group_move_later(g);
         }
+        let gid = self.data.groups[g].id;
+        let chain = self.data.groups[g].admins.clone();
+        let mut through_reader = Vec::new();
         for (who, grant) in &moving.grants {
             if *who == me || moving.removed.contains(who) || moving.reinvite.contains(who) {
                 continue;
+            }
+            if !self.has_chat(who) {
+                through_reader.push(*who);
+            }
+            // ADR-042: the lists first, so a new main admin's move is taken.
+            if !chain.is_empty() {
+                let lists = Body::GroupAdmins {
+                    group: gid,
+                    chain: chain.clone(),
+                };
+                self.group_tell_in(g, who, lists, old_at(who));
             }
             let body = Body::GroupMove {
                 roster: roster.clone(),
                 send_id,
                 reader: grant.clone(),
             };
-            self.group_tell(who, body);
+            self.group_tell_in(g, who, body, old_at(who));
         }
         for who in &moving.reinvite {
             let Some(grant) = reader_of(who) else {
@@ -1710,11 +2029,17 @@ impl Engine {
                 send_id,
                 reader: grant,
             };
+            if !chain.is_empty() {
+                let lists = Body::GroupAdmins {
+                    group: gid,
+                    chain: chain.clone(),
+                };
+                self.group_tell(who, lists);
+            }
             self.group_tell(who, body);
         }
-        let gid = self.data.groups[g].id;
         for who in &moving.removed {
-            self.group_tell(who, Body::GroupLeave { group: gid });
+            self.group_tell_in(g, who, Body::GroupLeave { group: gid }, old_at(who));
             if let (Some((group_id, token)), Some(grant)) =
                 (self.data.groups[g].admin, reader_of(who))
             {
@@ -1729,7 +2054,33 @@ impl Engine {
             }
         }
         if let Some((group_id, token)) = moving.old {
-            self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
+            if through_reader.is_empty() {
+                self.group_send(g, ClientFrame::DeleteGroup { group_id, token });
+            } else {
+                // ADR-042, amendment 3: the old queue lives until those told
+                // through it spoke on the new one, or a day; the removed lose
+                // their readers in it now.
+                for who in &moving.removed {
+                    if let Some(send_id) = old_at(who) {
+                        let frame = ClientFrame::RemoveReaderAt {
+                            group_id,
+                            token,
+                            send_id,
+                        };
+                        self.group_send(g, frame);
+                    }
+                }
+                self.data.groups[g].retiring = Some(crate::data::Retiring {
+                    old: (group_id, token),
+                    until: now() + RETIRE_AFTER,
+                    waiting: through_reader,
+                    probe: !moving.removed.is_empty(),
+                });
+            }
+        }
+        // ADR-042: the helpers get the new queue's token.
+        for helper in self.data.groups[g].admin_keys().into_iter().skip(1) {
+            self.send_admin_keys(g, &helper);
         }
         self.data.groups[g].moving = None;
         if !self.persist() {
@@ -1825,17 +2176,17 @@ impl Engine {
 
     /// The admin sets group `g`'s disappearing timer: a new roster for all.
     pub fn set_group_timer(&mut self, g: usize, expires_in: Option<u32>) -> Result<(), String> {
-        let group = self.data.groups.get(g).ok_or("no such group")?;
-        if !group.is_admin() {
-            return Err("only the group's admin sets the timer".into());
-        }
+        self.main_check(g)
+            .map_err(|_| "only the group's main admin sets the timer")?;
+        let group = &self.data.groups[g];
         let Some(mut roster) = group.roster.clone() else {
             return Err("the group is not ready yet".into());
         };
+        let me = self.me();
         roster.expires_in = expires_in;
         roster.no += 1;
+        roster.admin = me;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
-        let me = self.me();
         self.data.groups[g].set_roster(roster.clone(), &me);
         self.persist();
         if roster.members.len() > 1 {
@@ -1851,7 +2202,19 @@ impl Engine {
             return Ok(());
         }
         let gid = group.id;
+        let me = self.me();
+        let admins = group.admin_keys();
+        let roster_no = group.roster.as_ref().map_or(0, |r| r.no);
+        // Frames still unconfirmed are dropped first, so what follows goes out.
         self.stop_group_writes(g, true);
+        if admins.len() > 1 && admins.first() == Some(&me) {
+            // ADR-042, section 4: our word, so the next admin can take over.
+            let resign = self.core().sign_resign(&gid, roster_no);
+            self.send_group_body(g, Body::GroupResign { group: gid, resign });
+        } else if admins.len() > 1 && admins.contains(&me) {
+            // A helper leaves the role first: the main admin moves the group.
+            self.step_down(g)?;
+        }
         self.data.groups[g].left = true;
         self.send_group_body(g, Body::GroupLeave { group: gid });
         // The keys go once the goodbye is out (`flush_group`).
@@ -1893,6 +2256,8 @@ impl Engine {
             reader,
         });
         roster.no += 1;
+        // ADR-042: a helper signs the rosters of those they invite.
+        roster.admin = me;
         if new && who != me {
             self.group_system(g, format!("{nickname} joined the group"));
         }
@@ -2057,7 +2422,14 @@ impl Engine {
                 entry.2.retain(|(k, _)| listed(k));
             }
             if !gone.is_empty() {
-                self.start_move(g, gone.into_iter().collect());
+                if self.data.groups[g].main_admin() == Some(self.me()) {
+                    self.start_move(g, gone.into_iter().collect());
+                } else {
+                    // ADR-042, amendment 2: a helper tells the group; the
+                    // main admin moves it.
+                    self.publish_devices(g, who);
+                    self.wait_for_group_move(g);
+                }
             }
             if !welcome || new.is_empty() || self.data.groups[g].moving.is_some() {
                 continue;
@@ -2083,7 +2455,8 @@ impl Engine {
         readers: Vec<(Ed25519Key, QueueId)>,
     ) {
         let group = &self.data.groups[g];
-        let admin = group.roster.as_ref().map(|r| r.admin);
+        // ADR-042: any admin vouches for the readers of those they invited.
+        let admin = group.admin_keys().contains(&sender).then_some(sender);
         let on_roster = group.members().iter().any(|m| m.ed25519 == member);
         // ADR-030, section 3: a device key that is another member's, or another
         // member's device, is not this member's (review 2026-11c, finding 5).
@@ -2127,13 +2500,17 @@ impl Engine {
             .collect();
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
-        if !gone.is_empty() {
+        // ADR-042: a helper's word on devices gone; the main admin moves.
+        let main = self.data.groups[g].main_admin() == Some(me) && self.is_primary();
+        if !gone.is_empty() && !main {
             self.wait_for_group_move(g);
         }
         self.know_members(g);
         self.replay_pending_keys(g);
         if gone.is_empty() {
             self.share_key(g);
+        } else if main {
+            self.start_move(g, gone);
         } else {
             self.after_members_left(g, &gone);
         }
@@ -2176,7 +2553,74 @@ impl Engine {
     /// Group bodies that come over a chat with contact `i`.
     pub(super) fn group_from_contact(&mut self, i: usize, body: Body) {
         let from = self.data.contacts[i].key;
+        self.group_from(from, Some(i), body);
+    }
+
+    /// ADR-042, amendment 2: what an admin may say to us one to one through
+    /// our reader, when we are not their contact.
+    fn group_from_reader(&mut self, from: Ed25519Key, body: Body) {
         match body {
+            body @ Body::GroupKey { .. } => self.group_key_from(from, body),
+            body @ (Body::GroupAdmins { .. }
+            | Body::GroupMove { .. }
+            | Body::GroupLeave { .. }
+            | Body::GroupAdminKeys { .. }) => self.group_from(from, None, body),
+            _ => {}
+        }
+    }
+
+    /// Group bodies from `from` one to one: over the chat with contact
+    /// `chat`, or through our reader.
+    fn group_from(&mut self, from: Ed25519Key, chat: Option<usize>, body: Body) {
+        match body {
+            // ADR-042: lists go just before the roster they came with.
+            Body::GroupAdmins { group, chain } => {
+                match self
+                    .data
+                    .groups
+                    .iter()
+                    .position(|x| x.id == group && !x.left)
+                {
+                    Some(g) => self.hear_admins(g, from, chain),
+                    None if chat.is_some() => {
+                        let stash = &mut self.data.invite_admins;
+                        stash.retain(|(f, x, _)| !(*f == from && *x == group));
+                        if stash.len() >= proto::MAX_ADMIN_CHAIN {
+                            stash.remove(0);
+                        }
+                        stash.push((from, group, chain));
+                    }
+                    None => {}
+                }
+            }
+            Body::GroupAdminKeys {
+                group,
+                roster_no,
+                grant,
+            } => {
+                let Some(g) = self
+                    .data
+                    .groups
+                    .iter()
+                    .position(|x| x.id == group && !x.left)
+                else {
+                    return;
+                };
+                // ADR-028: the token lives on the primary device alone.
+                if !self.is_primary() {
+                    return;
+                }
+                // Review: only the main admin, or who just handed the group
+                // over, may leave a token waiting; nobody else replaces it.
+                let group = &self.data.groups[g];
+                let giver = group.main_admin() == Some(from)
+                    || group.admins.last().is_some_and(|l| l.signer == from);
+                if !giver {
+                    return;
+                }
+                self.data.groups[g].pending_grant = Some((from, roster_no, grant));
+                self.take_pending_grant(g);
+            }
             Body::GroupInvite {
                 roster,
                 relay_url,
@@ -2184,6 +2628,9 @@ impl Engine {
                 send_id,
                 reader,
             } => {
+                let Some(i) = chat else {
+                    return;
+                };
                 // We joined already, through an invite to a queue the group
                 // has since left: this one moves us, as a `GroupMove` would.
                 if self
@@ -2197,7 +2644,7 @@ impl Engine {
                         send_id,
                         reader,
                     };
-                    return self.group_from_contact(i, body);
+                    return self.group_from(from, chat, body);
                 }
                 // Review 2026-11c, finding 3: a group on an address we cannot use.
                 if !self.peer_addr_ok(&relay_url, onion_url.as_deref()) {
@@ -2209,8 +2656,17 @@ impl Engine {
                     .group_invites
                     .retain(|x| x.roster.group != roster.group);
                 let group = roster.group;
+                let at = self
+                    .data
+                    .invite_admins
+                    .iter()
+                    .position(|(f, x, _)| *f == from && *x == group);
+                let admins = at
+                    .map(|n| self.data.invite_admins.remove(n).2)
+                    .unwrap_or_default();
                 self.data.group_invites.push(GroupInvite {
                     from,
+                    admins,
                     roster,
                     relay_url,
                     onion_url,
@@ -2227,7 +2683,7 @@ impl Engine {
                 }
                 self.system(i, format!("invites you to the group \"{}\"", clean(&name)));
             }
-            Body::GroupJoin { group } => {
+            Body::GroupJoin { group } if chat.is_some() => {
                 let Some(g) = self
                     .data
                     .groups
@@ -2263,15 +2719,14 @@ impl Engine {
                     return;
                 };
                 let current = self.data.groups[g].roster.clone();
-                let group = &self.data.groups[g];
-                let ok = send_id != group.send_id
-                    && current.as_ref().is_some_and(|r| {
-                        r.admin == from && roster.admin == from && roster.no > r.no
-                    })
-                    && verify_roster(&roster).is_ok();
-                if !ok {
+                // ADR-042, amendment 2: only the main admin moves the group.
+                let lists = (send_id != self.data.groups[g].send_id && roster.admin == from)
+                    .then(|| self.roster_lists(g, &roster, true))
+                    .flatten();
+                let Some(lists) = lists else {
                     return;
-                }
+                };
+                let no = roster.no;
                 let gone: Vec<Ed25519Key> = current
                     .map(|r| r.members)
                     .unwrap_or_default()
@@ -2286,6 +2741,8 @@ impl Engine {
                 group.set_roster(roster, &me);
                 group.send_id = send_id;
                 group.reader = Some(reader.clone());
+                self.take_admin_lists(g, lists, no);
+                let group = &mut self.data.groups[g];
                 group.waiting_for_move = false;
                 group.early.clear();
                 for (_, _, readers) in &mut group.member_devices {
@@ -2310,11 +2767,7 @@ impl Engine {
                 else {
                     return;
                 };
-                if self.data.groups[g]
-                    .roster
-                    .as_ref()
-                    .is_none_or(|r| r.admin != from)
-                {
+                if self.data.groups[g].main_admin() != Some(from) {
                     return;
                 }
                 self.group_system(g, "the admin removed you from the group".to_string());
@@ -2323,6 +2776,318 @@ impl Engine {
             _ => {}
         }
         self.persist();
+    }
+}
+
+impl Engine {
+    /// ADR-042: whether every member reads rosters from several admins. We
+    /// know it of our contacts; a group whose creator invited everyone has
+    /// only those, and once it has helpers, every invite asks for it.
+    fn admins_welcome(&self, g: usize) -> bool {
+        let me = self.identity_key();
+        let group = &self.data.groups[g];
+        !group.admins.is_empty()
+            || group.members().iter().all(|m| {
+                m.ed25519 == me
+                    || self
+                        .index(&m.ed25519)
+                        .is_some_and(|i| self.data.contacts[i].understands >= proto::ADMINS_LEVEL)
+            })
+    }
+
+    /// ADR-042: we sign a new admin list and roster `no + 1` for group `g`
+    /// and tell everyone; `members` replaces the roster's when given.
+    /// `true`: the group must move.
+    fn publish_admins(
+        &mut self,
+        g: usize,
+        admins: Vec<Ed25519Key>,
+        resign: Option<proto::Resign>,
+        members: Option<Vec<RosterMember>>,
+    ) -> Result<bool, String> {
+        let me = self.me();
+        let group = &self.data.groups[g];
+        let mut roster = group.roster.clone().ok_or("the group is not ready yet")?;
+        let old = group.admin_keys();
+        let since = roster.no;
+        if let Some(members) = members {
+            roster.members = members;
+        }
+        roster.no += 1;
+        roster.admin = me;
+        roster.signature = self.core().sign_roster(&roster.signed_bytes());
+        let mut list = AdminList {
+            group: group.id,
+            no: roster.no,
+            signer: me,
+            admins,
+            resign,
+            signature: [0; 64],
+        };
+        list.signature = self.core().sign_admins(&list);
+        // Our own rules hold for us too: the same check every member makes.
+        check_admin_change(&group.id, &old, since, &list).map_err(|_| "not allowed")?;
+        self.data.groups[g].set_roster(roster.clone(), &me);
+        let moves = self.take_admin_lists(g, vec![list], roster.no);
+        let gid = self.data.groups[g].id;
+        let chain = self.data.groups[g].admins.clone();
+        self.persist();
+        self.send_group_body(g, Body::GroupAdmins { group: gid, chain });
+        self.send_group_body(g, Body::GroupRoster { roster });
+        Ok(moves)
+    }
+
+    fn main_check(&self, g: usize) -> Result<(), String> {
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        if group.left || group.main_admin() != Some(self.me()) || !group.is_admin() {
+            return Err("only the group's main admin does this".into());
+        }
+        if !self.is_primary() {
+            return Err("do this on your main device".into());
+        }
+        if group.moving.is_some() {
+            return Err("the group is moving to a new queue; try again in a moment".into());
+        }
+        Ok(())
+    }
+
+    /// ADR-042: the main admin makes member `who` an admin.
+    pub fn make_admin(&mut self, g: usize, who: &Ed25519Key) -> Result<(), String> {
+        self.main_check(g)?;
+        let group = &self.data.groups[g];
+        let mut admins = group.admin_keys();
+        if *who == self.me() || !group.members().iter().any(|m| m.ed25519 == *who) {
+            return Err("only another member can be made an admin".into());
+        }
+        if admins.contains(who) {
+            return Err("already an admin".into());
+        }
+        if admins.len() >= proto::MAX_GROUP_ADMINS {
+            return Err("a group has at most 4 admins".into());
+        }
+        if !self.admins_welcome(g) {
+            return Err("every member's app must be updated first".into());
+        }
+        admins.push(*who);
+        self.publish_admins(g, admins, None, None)?;
+        self.send_admin_keys(g, who);
+        Ok(())
+    }
+
+    /// ADR-042: the main admin takes the role from helper `who`; the group
+    /// moves, so the token they knew opens nothing.
+    pub fn remove_admin(&mut self, g: usize, who: &Ed25519Key) -> Result<(), String> {
+        self.main_check(g)?;
+        let mut admins = self.data.groups[g].admin_keys();
+        if *who == self.me() || !admins.contains(who) {
+            return Err("not a helper of this group".into());
+        }
+        admins.retain(|k| k != who);
+        if self.publish_admins(g, admins, None, None)? {
+            self.move_as_main(g);
+        }
+        Ok(())
+    }
+
+    /// ADR-042: a helper leaves the role; the main admin moves the group.
+    pub fn step_down(&mut self, g: usize) -> Result<(), String> {
+        let me = self.me();
+        let group = self.data.groups.get(g).ok_or("no such group")?;
+        let mut admins = group.admin_keys();
+        if group.left || admins.first() == Some(&me) || !admins.contains(&me) {
+            return Err("only a helper steps down; the main admin hands over".into());
+        }
+        if !self.is_primary() {
+            return Err("do this on your main device".into());
+        }
+        admins.retain(|k| *k != me);
+        self.publish_admins(g, admins, None, None)?;
+        Ok(())
+    }
+
+    /// ADR-042: the main admin hands the group over to member `who`, and
+    /// stays a member or leaves (`leave`). The successor moves the group.
+    pub fn hand_over_group(
+        &mut self,
+        g: usize,
+        who: &Ed25519Key,
+        leave: bool,
+    ) -> Result<(), String> {
+        self.main_check(g)?;
+        let me = self.me();
+        let group = &self.data.groups[g];
+        if *who == me || !group.members().iter().any(|m| m.ed25519 == *who) {
+            return Err("hand over to another member".into());
+        }
+        if !self.admins_welcome(g) {
+            return Err("every member's app must be updated first".into());
+        }
+        let old = group.admin_keys();
+        let mut admins = vec![*who];
+        admins.extend(old.iter().skip(1).filter(|k| *k != who));
+        let members = leave.then(|| {
+            group
+                .members()
+                .iter()
+                .filter(|m| m.ed25519 != me)
+                .cloned()
+                .collect()
+        });
+        // A member who was no helper gets the token before the roster.
+        if !old.contains(who) {
+            self.send_admin_keys(g, who);
+        }
+        self.publish_admins(g, admins, None, members)?;
+        if leave {
+            self.leave_group(g)?;
+        }
+        Ok(())
+    }
+
+    /// ADR-042, section 4: the main admin left with their word; we are next.
+    /// shortcut: a helper's roster that lands between the main admin's resign
+    /// and goodbye makes the resign stale and nobody takes over; if that is
+    /// ever seen, let helpers hold their rosters while a resign is known.
+    fn take_over(&mut self, g: usize) {
+        let group = &self.data.groups[g];
+        let (Some(roster), Some(resign)) = (group.roster.as_ref(), group.resign.clone()) else {
+            return;
+        };
+        let old = group.admin_keys();
+        let Some(main) = old.first().copied() else {
+            return;
+        };
+        if resign.roster_no != roster.no {
+            return;
+        }
+        let members = roster
+            .members
+            .iter()
+            .filter(|m| m.ed25519 != main)
+            .cloned()
+            .collect();
+        let admins = old[1..].to_vec();
+        self.data.groups[g]
+            .member_devices
+            .retain(|(m, ..)| *m != main);
+        match self.publish_admins(g, admins, Some(resign), Some(members)) {
+            Ok(true) => self.move_as_main(g),
+            Ok(false) => {}
+            Err(e) => self.note(e),
+        }
+    }
+
+    /// ADR-042: the queue's admin token to admin `who`, from the main admin.
+    fn send_admin_keys(&mut self, g: usize, who: &Ed25519Key) {
+        let group = &self.data.groups[g];
+        let (Some((queue, token)), Some(roster)) = (group.admin, group.roster.as_ref()) else {
+            return;
+        };
+        let body = Body::GroupAdminKeys {
+            group: group.id,
+            roster_no: roster.no,
+            grant: proto::AdminGrant { queue, token },
+        };
+        self.group_tell_in(g, who, body, None);
+    }
+
+    /// `body` to device `who` of group `g`: over a chat if we have one, else
+    /// through their reader (ADR-042, amendment 2), at `at` when the roster
+    /// no longer names it, as on a move.
+    fn group_tell_in(&mut self, g: usize, who: &Ed25519Key, body: Body, at: Option<QueueId>) {
+        if self.has_chat(who) {
+            return self.group_tell(who, body);
+        }
+        let Some(send_id) = at.or_else(|| {
+            self.data.groups[g]
+                .devices()
+                .iter()
+                .find(|m| m.ed25519 == *who)
+                .map(|m| m.reader)
+        }) else {
+            return;
+        };
+        self.data.groups[g]
+            .reader_outbox
+            .push((*who, body, send_id));
+        self.persist();
+        if self.has_session(who) {
+            self.flush_reader_outbox(g, who);
+        } else {
+            self.group_send(g, ClientFrame::ClaimKey { send_id });
+        }
+    }
+
+    /// Whether we talk to device `who` over a chat: a contact on our main
+    /// identity, or a contact's linked device.
+    fn has_chat(&self, who: &Ed25519Key) -> bool {
+        self.index(who)
+            .is_some_and(|i| self.data.contacts[i].profile.is_none())
+            || self.owner_of_device(who).is_some()
+    }
+
+    /// What waits for device `who`'s reader, now that we have a session.
+    fn flush_reader_outbox(&mut self, g: usize, who: &Ed25519Key) {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.data.groups[g].reader_outbox)
+            .into_iter()
+            .partition(|(k, ..)| k == who);
+        self.data.groups[g].reader_outbox = rest;
+        for (who, body, send_id) in mine {
+            let Ok(envelope) = self.core().encrypt(&who, body) else {
+                continue;
+            };
+            if !self.persist() {
+                return;
+            }
+            let client_id = self.data.groups[g].next_client_id;
+            self.data.groups[g].next_client_id += 1;
+            self.group_send(
+                g,
+                ClientFrame::Send {
+                    client_id,
+                    send_id,
+                    envelope,
+                },
+            );
+        }
+        self.persist();
+    }
+
+    /// ADR-042, amendment 3: `who` spoke on the new queue; the old one goes
+    /// once nobody it was kept for is left.
+    fn seen_on_new_queue(&mut self, g: usize, who: &Ed25519Key) {
+        let Some(r) = self.data.groups[g].retiring.as_mut() else {
+            return;
+        };
+        r.waiting.retain(|k| k != who);
+        if r.waiting.is_empty() {
+            self.retire_old_queue(g);
+        }
+    }
+
+    fn retire_old_queue(&mut self, g: usize) {
+        let Some(r) = self.data.groups[g].retiring.take() else {
+            return;
+        };
+        let (group_id, token) = r.old;
+        if !self.group_send(g, ClientFrame::DeleteGroup { group_id, token }) {
+            self.data.groups[g].retiring = Some(r);
+        }
+        self.persist();
+    }
+
+    /// Old queues whose day is over (ADR-042, amendment 3).
+    pub(super) fn retire_old_queues(&mut self) {
+        let at = now();
+        for g in 0..self.data.groups.len() {
+            if self.data.groups[g]
+                .retiring
+                .as_ref()
+                .is_some_and(|r| r.until <= at)
+            {
+                self.retire_old_queue(g);
+            }
+        }
     }
 }
 

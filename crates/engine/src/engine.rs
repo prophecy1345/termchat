@@ -252,6 +252,9 @@ pub struct Engine {
     links: BTreeMap<Link, Live>,
     group_writes: BTreeMap<proto::GroupId, Arc<AtomicBool>>,
     group_move_retries: BTreeMap<proto::GroupId, Instant>,
+    /// Groups whose reader's backlog came in since the link came up: only
+    /// then do we write to them (ADR-042, amendment 3).
+    group_read: BTreeSet<proto::GroupId>,
     /// Links asked to delete their queue, until the relay confirms.
     /// With the `DeleteQueue` sent on it, to send again if a new link for
     /// the same contact and relay starts before this one is done.
@@ -648,6 +651,7 @@ impl Engine {
             links: BTreeMap::new(),
             group_writes: BTreeMap::new(),
             group_move_retries: BTreeMap::new(),
+            group_read: BTreeSet::new(),
             retiring: Vec::new(),
             events,
             events_tx,
@@ -2248,6 +2252,8 @@ impl Engine {
             | Body::GroupRoster { .. }
             | Body::GroupLeave { .. }
             | Body::GroupMove { .. }
+            | Body::GroupAdmins { .. }
+            | Body::GroupAdminKeys { .. }
                 if got.request =>
             {
                 return self.persist();
@@ -2256,15 +2262,15 @@ impl Engine {
             | Body::GroupJoin { .. }
             | Body::GroupKey { .. }
             | Body::GroupMove { .. }
-            | Body::GroupLeave { .. }) => {
+            | Body::GroupLeave { .. }
+            | Body::GroupAdmins { .. }
+            | Body::GroupAdminKeys { .. }) => {
                 self.group_from_contact(i, body);
                 return self.persist();
             }
             Body::GroupRoster { .. } => return self.persist(),
-            // ADR-042: not taken yet; this version still says level 5.
-            Body::GroupAdmins { .. } | Body::GroupResign { .. } | Body::GroupAdminKeys { .. } => {
-                return self.persist();
-            }
+            // ADR-042: a resign is said inside the group only.
+            Body::GroupResign { .. } => return self.persist(),
             // Pointing at messages waits for the request to be accepted.
             Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } if got.request => {
                 return self.persist();
@@ -2380,6 +2386,7 @@ impl Engine {
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
         self.retry_group_moves();
+        self.retire_old_queues();
         self.hurry_open_links();
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
@@ -3704,6 +3711,8 @@ mod tests {
 
         let id = e.send_group_text(g, "queued while offline").unwrap();
         e.links.get_mut(&link).unwrap().connected = true;
+        // ADR-042, amendment 3: the backlog is read before anything is written.
+        e.group_read.insert(group);
         std::fs::create_dir(&disk).unwrap();
         let client_id = e.data.groups[g].next_client_id;
         e.flush_group(g);

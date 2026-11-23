@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use termchat_core::store::file_id;
 use termchat_proto::{
-    Body, DeviceList, Ed25519Key, GroupId, Identity, InviteCode, QueueId, QueueToken, ReaderGrant,
-    Ref, Roster, RosterMember, SecretBytes,
+    AdminGrant, AdminList, Body, DeviceList, Ed25519Key, GroupId, Identity, InviteCode, QueueId,
+    QueueToken, ReaderGrant, Ref, Resign, Roster, RosterMember, SecretBytes,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -107,6 +107,10 @@ pub struct Data {
     /// Groups another device of ours joined, whose invite to this device
     /// has not come yet (ADR-028).
     pub pending_group_joins: Vec<GroupId>,
+    /// ADR-042: admin lists a contact sent for a group we are not in yet,
+    /// for the invite that follows them: (from, group, chain).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invite_admins: Vec<(Ed25519Key, GroupId, Vec<AdminList>)>,
 }
 
 /// A group member's devices (ADR-028): the member, their signed list, and
@@ -176,6 +180,45 @@ pub struct Group {
     pub left: bool,
     /// Group messages missing, as last shown (ADR-030, section 6).
     pub missed: u64,
+    /// ADR-042: admin lists taken, oldest first, the last in force; none
+    /// while the creator is the only admin.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub admins: Vec<AdminList>,
+    /// ADR-042: lists heard before the roster they came with, and who sent
+    /// them: each sender holds a chain at most, so none crowds out another.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_admins: Vec<(Ed25519Key, AdminList)>,
+    /// ADR-042: the main admin's word that they leave, for their successor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resign: Option<Resign>,
+    /// ADR-042: the admin token from the main admin, before the roster that
+    /// makes us an admin: (from, roster number, token).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_grant: Option<(Ed25519Key, u64, AdminGrant)>,
+    /// ADR-042: we became the main admin and move the group once the
+    /// token is here.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub owe_move: bool,
+    /// ADR-042, amendment 2: what goes to a member through their reader,
+    /// waiting for a key claimed from it: (device, body, reader's send_id).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reader_outbox: Vec<(Ed25519Key, Body, QueueId)>,
+    /// ADR-042, amendment 3: the queue a move left, kept for those told
+    /// through their reader in it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retiring: Option<Retiring>,
+}
+
+/// The queue a move left (ADR-042, amendment 3): deleted once everyone
+/// waited for spoke on the new one, or at `until` (unix seconds).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Retiring {
+    pub old: (QueueId, QueueToken),
+    pub until: u64,
+    pub waiting: Vec<Ed25519Key>,
+    /// `RemoveReaderAt` went out and no answer came: a relay that closes the
+    /// link on it is too old for it (amendment 3, point 5).
+    pub probe: bool,
 }
 
 /// The admin moves group to a new queue: who stays, the readers made so far,
@@ -189,12 +232,19 @@ pub struct GroupMoving {
     /// Contacts invited but not joined yet: invited again to the new queue.
     #[serde(default)]
     pub reinvite: Vec<Ed25519Key>,
+    /// ADR-042, amendment 3: every device's reader in the old queue, taken
+    /// before anyone was dropped, to tell or cut them there.
+    #[serde(default)]
+    pub at: Vec<(Ed25519Key, QueueId)>,
 }
 
 /// An invite into a group, from the contact who is its admin.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct GroupInvite {
     pub from: Ed25519Key,
+    /// ADR-042: the group's admin lists, as the inviter sent them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admins: Vec<AdminList>,
     pub roster: Roster,
     pub relay_url: String,
     pub onion_url: Option<String>,
@@ -253,8 +303,23 @@ impl Group {
         self.roster.as_ref().and_then(|r| r.expires_in)
     }
 
+    /// We hold the group queue's admin token: the main admin or a helper.
     pub fn is_admin(&self) -> bool {
         self.admin.is_some()
+    }
+
+    /// ADR-042: the admins in force, the main admin first. Before any list,
+    /// the creator alone: the roster's signer.
+    pub fn admin_keys(&self) -> Vec<Ed25519Key> {
+        match self.admins.last() {
+            Some(l) => l.admins.clone(),
+            None => self.roster.iter().map(|r| r.admin).collect(),
+        }
+    }
+
+    /// ADR-042: who moves the group, removes, names it and sets its timer.
+    pub fn main_admin(&self) -> Option<Ed25519Key> {
+        self.admin_keys().first().copied()
     }
 
     /// The reactions to the message with `id`, one per member.
