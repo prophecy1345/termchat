@@ -14,8 +14,9 @@ Website: [termchat.app](https://termchat.app).
 2022; termchat.app's own code has had no external review. Treat it as experimental.
 
 Independent security audit: not yet. AI-assisted security review (Claude Fable 5.2,
-November 2026): findings and fixes of the [first](docs/security/review-2026-11.md)
-and [second](docs/security/review-2026-11b.md) pass.
+November 2026): findings and fixes of the [first](docs/security/review-2026-11.md),
+[second](docs/security/review-2026-11b.md), [third](docs/security/review-2026-11c.md)
+and [fourth](docs/security/review-2026-11d.md) pass.
 
 termchat.app is a free, non-commercial, open-source project created and maintained as a
 personal hobby. It has no advertising, subscriptions, paid features or commercial
