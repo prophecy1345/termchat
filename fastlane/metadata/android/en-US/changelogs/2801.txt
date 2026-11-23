@@ -1,0 +1,1 @@
+Security fixes from a new review: group admin rights are checked more strictly, and a share from another app can no longer point at the app's own private files.

@@ -3,6 +3,22 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.28.1
+
+Fixes from the fourth AI-assisted security review (review 2026-11d,
+ADR-042 amendment 4):
+
+- Groups: an admin who stepped down or handed the group over can no
+  longer slip a queue token of their choice to an admin; a helper can no
+  longer freeze a group with the last roster number, list a member twice,
+  or drop other members' linked devices; a member can no longer pass on
+  another member's session key as their own and hide that member's
+  messages.
+- Android: a share from another app can no longer point at termchat.app's
+  own private files.
+- `termchat hook` logs no path for a request without the token; the AI
+  bot refuses a key file others can read and a remote plain-http API.
+
 ## 0.28.0
 
 - A muted chat or group shows a struck bell beside its name in the list
