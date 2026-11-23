@@ -212,6 +212,22 @@ Found during implementation. Until now the main admin deleted the old queue righ
 5. **"Read first"**: a group counts as read once the relay, after the backlog, sends `KeyCount` for our reader. A goodbye (`GroupLeave`) does not wait: we read no more.
 6. **Limit:** if a helper's roster lands in the queue between the main admin's `GroupResign` and `GroupLeave`, the resign goes stale and nobody takes over. The window is narrow (the main admin sends both back to back); the code marks it `shortcut`.
 
+## Amendment 4 (2026-11-23, approved by the owner): after review 2026-11d
+
+Review [2026-11d](../security/review-2026-11d.md) found three holes in this ADR's rules and one in how Megolm sessions are kept (ADR-027). Findings 1, 2 and 4 were confirmed with tests.
+
+1. **The token (finding 1).** `GroupAdminKeys` is taken only if:
+   - the sender is the main admin of the list in force and we are a helper; **or**
+   - the last list made **us** the main admin, the previous main admin signed it, the sender is them, and we hold no token taken for that roster or later.
+
+   A token is kept with the number of the roster it was given for. A new one replaces it only if given for a later roster. A main admin who holds a token takes no other. Whoever signed themselves out (a helper's step-down is signed by that helper) gives no more tokens.
+2. **Roster numbers and doubles (finding 2).** A roster and an admin list are taken only if their number is at most the current one plus **1024**: a member who fell behind still catches up after a long gap, and nobody can take the "last number" (`u64::MAX`). Where we sign, the number grows with an overflow check. `proto` refuses a roster that names one key twice, as it already refuses such admin and device lists.
+3. **A member's devices (finding 3).** `GroupDevices` about member M is taken only from the main admin or from the admin whose roster first named M (who invited them). Each member notes who invited whom as rosters come. For members taken before this version, only from the main admin. A helper can no longer drop others' devices and force a move.
+4. **Megolm sessions (finding 4, ADR-027).** A session is kept under (member, session id), not under the id alone. A message is decrypted with the session of that id whose member is the sender its plaintext names. A key brought by another member is filed under them and does not hide the real one. No new cryptography: the same vodozemac sessions, another lookup key.
+5. **A leave stops writing (note 6).** After any `GroupLeave` the others do not write until the main admin moves the group. If the main admin's device is lost, the first leave stops the group for good. This adds to section 4 ("the group can no longer change"): it then stops writing as well. Written into the threat model; the code does not change.
+
+What the relay sees: nothing new.
+
 ## Owner's decisions (2026-11-23)
 
 1. The creator (main admin) cannot be removed: they only leave themselves.
