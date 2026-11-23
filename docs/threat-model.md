@@ -134,6 +134,11 @@ that (ADR-023).
   To the relay, making an admin looks like nothing, removing one like any
   move. A relay too old for `RemoveReaderAt` makes the old queue go at once,
   and members only another admin knows can then drop out of the group.
+  After any member leaves, the others stop writing until the main admin
+  moves the group; if the main admin's device is lost, the group then stops
+  for good. Only the main admin or whoever invited a member can drop that
+  member's devices, and a main admin's token comes only from the main admin
+  before them (ADR-042, amendment 4).
 - **Several devices** (ADR-028). Every device has keys of its own and reads
   everything sent to you, so each one is a way in: a stolen unlocked laptop
   reads like your phone would. Remove a lost device from the main one; it then

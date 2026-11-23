@@ -1132,6 +1132,7 @@ impl Engine {
                     _ => return,
                 }
                 group.admin = Some((group_id, token));
+                group.admin_no = group.roster.as_ref().map_or(0, |r| r.no);
                 group.send_id = send_id;
                 if !self.persist() && self.data.groups[g].moving.is_some() {
                     return self.retry_group_move_later(g);
@@ -1643,6 +1644,7 @@ impl Engine {
         });
         let no = roster.no;
         let me = self.me();
+        self.note_inviter(g, &roster);
         self.data.groups[g].set_roster(roster, &me);
         let moves = self.take_admin_lists(g, lists, no);
         if had_access && !self.group_access(g) {
@@ -1666,7 +1668,14 @@ impl Engine {
     fn roster_lists(&self, g: usize, roster: &Roster, by_main: bool) -> Option<Vec<AdminList>> {
         let group = &self.data.groups[g];
         let current = group.roster.as_ref()?;
-        if roster.group != group.id || roster.no <= current.no || verify_roster(roster).is_err() {
+        // ADR-042, amendment 4: never more than a step ahead, so nobody takes
+        // the last number and freezes the group.
+        let ahead = current.no.saturating_add(proto::MAX_ROSTER_STEP);
+        if roster.group != group.id
+            || roster.no <= current.no
+            || roster.no > ahead
+            || verify_roster(roster).is_err()
+        {
             return None;
         }
         let signer = roster.admin;
@@ -1736,9 +1745,14 @@ impl Engine {
             group.admin = None;
             group.pending_grant = None;
         }
-        let name = |k: &Ed25519Key| group.name_of(k).map_or("someone".into(), clean);
         let mut lines = Vec::new();
         let handed = old.first() != new.first();
+        if handed {
+            // Only a main admin who signed the change themselves hands over.
+            group.handed_by =
+                (new.first() == Some(&me) && old.first() == Some(&signer)).then_some(signer);
+        }
+        let name = |k: &Ed25519Key| group.name_of(k).map_or("someone".into(), clean);
         match (old.first(), new.first()) {
             (Some(was), Some(main)) if handed && *was == signer => {
                 lines.push(format!(
@@ -1799,6 +1813,31 @@ impl Engine {
         pending.extend(fresh.take(proto::MAX_ADMIN_CHAIN).map(|l| (from, l)));
     }
 
+    /// ADR-042, amendment 4: who invited the members `roster` names first:
+    /// its signer.
+    fn note_inviter(&mut self, g: usize, roster: &Roster) {
+        let group = &mut self.data.groups[g];
+        for m in &roster.members {
+            let new = !group.members().iter().any(|x| x.ed25519 == m.ed25519);
+            if new && !group.invited_by.iter().any(|(k, _)| *k == m.ed25519) {
+                group.invited_by.push((m.ed25519, roster.admin));
+            }
+        }
+        // Only members are remembered: at most 32.
+        let named: Vec<Ed25519Key> = roster.members.iter().map(|m| m.ed25519).collect();
+        group.invited_by.retain(|(k, _)| named.contains(k));
+    }
+
+    /// ADR-042, amendment 4: whether `from` may give us the queue's token:
+    /// the main admin in force while we are not, or whoever handed the group
+    /// to us. Nobody who signed themselves out.
+    fn token_giver(&self, g: usize, from: &Ed25519Key) -> bool {
+        let me = self.me();
+        let group = &self.data.groups[g];
+        let main = group.main_admin();
+        (main == Some(*from) && main != Some(me)) || group.handed_by == Some(*from)
+    }
+
     /// ADR-042: the main admin's token, once a roster names us an admin.
     fn take_pending_grant(&mut self, g: usize) {
         let me = self.me();
@@ -1814,11 +1853,16 @@ impl Engine {
         if !group.admin_keys().contains(&me) {
             return;
         }
-        // The main admin's, or the one who just handed the group to us.
-        let handed = group.admins.last().is_some_and(|l| l.signer == *from);
-        let ok = group.main_admin() == Some(*from) || handed;
+        let (from, no) = (*from, *no);
+        // ADR-042, amendment 4: a token for the same or an older roster never
+        // replaces ours, and a main admin who holds one takes no other.
+        let main = group.main_admin() == Some(me);
+        let stale = group.admin.is_some() && (main || no <= group.admin_no);
+        let ok = !stale && self.token_giver(g, &from);
+        let group = &mut self.data.groups[g];
         if let Some((_, _, grant)) = group.pending_grant.take().filter(|_| ok) {
             group.admin = Some((grant.queue, grant.token));
+            group.admin_no = no;
             if group.owe_move && group.main_admin() == Some(me) {
                 self.move_as_main(g);
             }
@@ -1981,7 +2025,10 @@ impl Engine {
                 })
             })
             .collect();
-        roster.no += 1;
+        let Some(no) = roster.no.checked_add(1) else {
+            return;
+        };
+        roster.no = no;
         // ADR-042: `admin` names the roster's signer, us.
         roster.admin = me;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
@@ -2203,7 +2250,10 @@ impl Engine {
         };
         let me = self.me();
         roster.expires_in = expires_in;
-        roster.no += 1;
+        roster.no = roster
+            .no
+            .checked_add(1)
+            .ok_or("the group cannot change any more")?;
         roster.admin = me;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         self.data.groups[g].set_roster(roster.clone(), &me);
@@ -2274,9 +2324,15 @@ impl Engine {
             nickname: nickname.clone(),
             reader,
         });
-        roster.no += 1;
+        let Some(no) = roster.no.checked_add(1) else {
+            return;
+        };
+        roster.no = no;
         // ADR-042: a helper signs the rosters of those they invite.
         roster.admin = me;
+        if !group.invited_by.iter().any(|(k, _)| *k == who) {
+            group.invited_by.push((who, me));
+        }
         if new && who != me {
             self.group_system(g, format!("{nickname} joined the group"));
         }
@@ -2474,7 +2530,13 @@ impl Engine {
         readers: Vec<(Ed25519Key, QueueId)>,
     ) {
         let group = &self.data.groups[g];
-        // ADR-042: any admin vouches for the readers of those they invited.
+        // ADR-042, amendment 4: the main admin and who invited the member
+        // speak for its devices; another admin may only add some.
+        let full = group.main_admin() == Some(sender)
+            || group
+                .invited_by
+                .iter()
+                .any(|(m, by)| *m == member && *by == sender);
         let admin = group.admin_keys().contains(&sender).then_some(sender);
         let on_roster = group.members().iter().any(|m| m.ed25519 == member);
         // ADR-030, section 3: a device key that is another member's, or another
@@ -2517,6 +2579,9 @@ impl Engine {
                     || !list.devices.iter().any(|d| &d.ed25519 == k)
             })
             .collect();
+        if !full && !gone.is_empty() {
+            return;
+        }
         group.member_devices.retain(|(m, ..)| *m != member);
         group.member_devices.push((member, list, readers));
         // ADR-042: a helper's word on devices gone; the main admin moves.
@@ -2637,12 +2702,9 @@ impl Engine {
                 if !self.is_primary() {
                     return;
                 }
-                // Review: only the main admin, or who just handed the group
-                // over, may leave a token waiting; nobody else replaces it.
-                let group = &self.data.groups[g];
-                let giver = group.main_admin() == Some(from)
-                    || group.admins.last().is_some_and(|l| l.signer == from);
-                if !giver {
+                // ADR-042, amendment 4: only the main admin in force, or who
+                // handed the group to us, may leave a token waiting.
+                if !self.token_giver(g, &from) {
                     return;
                 }
                 self.data.groups[g].pending_grant = Some((from, roster_no, grant));
@@ -2840,7 +2902,10 @@ impl Engine {
         if let Some(members) = members {
             roster.members = members;
         }
-        roster.no += 1;
+        roster.no = roster
+            .no
+            .checked_add(1)
+            .ok_or("the group cannot change any more")?;
         roster.admin = me;
         roster.signature = self.core().sign_roster(&roster.signed_bytes());
         let mut list = AdminList {

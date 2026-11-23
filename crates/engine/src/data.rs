@@ -199,6 +199,18 @@ pub struct Group {
     /// token is here.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub owe_move: bool,
+    /// ADR-042, amendment 4: the roster our `admin` token was given for; a
+    /// token for the same or an older roster never replaces it.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub admin_no: u64,
+    /// ADR-042, amendment 4: the main admin who handed the group to us, the
+    /// one other than the main admin in force who may give us its token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handed_by: Option<Ed25519Key>,
+    /// ADR-042, amendment 4: who invited each member, as the roster that
+    /// first named them said; they and the main admin speak for its devices.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub invited_by: Vec<(Ed25519Key, Ed25519Key)>,
     /// ADR-042, amendment 2: what goes to a member through their reader,
     /// waiting for a key claimed from it: (device, body, reader's send_id).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1293,6 +1305,10 @@ pub fn permission_warning(path: &Path) -> Option<String> {
     }
     let _ = path;
     None
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[cfg(test)]
