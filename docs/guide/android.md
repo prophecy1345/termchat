@@ -22,11 +22,12 @@ The Android app needs Android 8.0 or newer and no Google services. [Install](ins
 
 A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only. Nobody can find it.
 
-- **Create:** ⋮ → **New group**, then a name. You are its admin.
-- **Invite:** ⋮ → **Invite** in the group. Only your own contacts, on a version that knows groups; an invited one shows **Invited** with a check mark.
+- **Create:** ⋮ → **New group**, then a name. You are its main admin.
+- **Invite:** ⋮ → **Invite** in the group. Any admin invites, only their own contacts, on a version that knows groups; an invited one shows **Invited** with a check mark.
 - **Join:** the contact shows **GROUP INVITE** in the list; their chat has **Join** and **Decline**.
-- **In the group:** each message shows who wrote it, each name in a colour of its own; answers, edits, deletes and reactions work as in a chat. Only the admin sets the timer (⋮ → **Disappearing**).
-- **Members:** tap the group's name, or ⋮ → **Members**. The admin removes people there (**Remove**): the group moves to a new queue, and they read nothing from then on.
+- **In the group:** each message shows who wrote it, each name in a colour of its own; answers, edits, deletes and reactions work as in a chat. Only the main admin sets the timer (⋮ → **Disappearing**).
+- **Members:** tap the group's name, or ⋮ → **Members**. The main admin removes people there (⋮ beside a member → **Remove**): the group moves to a new queue, and they read nothing from then on.
+- **Admins:** up to 4, marked MAIN ADMIN and ADMIN. In **Members**, ⋮ beside a member gives the main admin **Make admin** or **Remove admin**, **Hand over** and **Hand over and leave**. Another admin can only invite their own contacts, and has **Step down** beside their own name. Only the main admin removes people, sets the timer and makes admins. If the main admin leaves, the admin made first takes over. Every member's app must be updated first. Make admins only of people you trust: an admin can cut a member off at the relay ([ADR-042](https://github.com/prophecy1345/termchat/blob/main/docs/adr/042-group-admins.md)).
 - **Leave:** ⋮ → **Leave**. The others are told; the chat stays, read-only.
 
 A new member does not see what was said before they joined. Documents go to the group as in a chat (up to 1 MiB, saved only by hand).

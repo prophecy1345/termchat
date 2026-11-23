@@ -116,6 +116,24 @@ that (ADR-023).
   so the admin could read (as ciphertext) and delete what waits for a
   member. A reader past its quota or its rate limit loses group messages;
   as in a chat, the gap shows as "messages missing" (ADR-030).
+- **Several admins** (ADR-042). A group has a main admin and up to three
+  more. Every member checks each change against the admin list in force, not
+  on the signer's word: another admin can only invite their own contacts and
+  step down; only the main admin removes people, names the group, sets its
+  timer and makes or removes admins, and nobody can remove the main admin,
+  who only leaves or hands over. Every admin holds the queue's token, so each
+  can do at the relay what the admin above could: read (as ciphertext) and
+  delete what waits for a member, or drop a member's reader and cut them off
+  without touching the member list. Cryptography cannot stop that; the member
+  is told when the relay no longer knows their reader. A removed admin still
+  knows the old queue's token: the group moves to a new queue, and the old one
+  lives until every member told of the move through it has shown up on the
+  new one, a day at most. Meanwhile that admin could add a reader there and
+  read what a member who has not moved yet writes with the old session; a
+  client reads what waits for it before it writes, which keeps this narrow.
+  To the relay, making an admin looks like nothing, removing one like any
+  move. A relay too old for `RemoveReaderAt` makes the old queue go at once,
+  and members only another admin knows can then drop out of the group.
 - **Several devices** (ADR-028). Every device has keys of its own and reads
   everything sent to you, so each one is a way in: a stolen unlocked laptop
   reads like your phone would. Remove a lost device from the main one; it then

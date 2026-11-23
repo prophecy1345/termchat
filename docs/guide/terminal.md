@@ -77,12 +77,13 @@ Editing what you type: **←/→**, **Home/End**, **Alt+←/→** (by word), **C
 
 A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only ([ADR-027](https://github.com/prophecy1345/termchat/blob/main/docs/adr/027-small-private-groups.md)).
 
-- **New group:** **Ctrl+P**, then **g**, and a name. You are its admin.
-- **Invite:** in the group, **Ctrl+R** opens the members, **a** lists contacts you can invite. Only your own contacts, on a version that knows groups.
-- **Join:** the invite comes in your chat with the admin; **Ctrl+Y** there joins.
-- **In the group:** answers, edits, deletes and reactions work as in a chat. Each member's name has a colour of its own, the same on every device. Only the admin sets the timer (**Ctrl+T**).
+- **New group:** **Ctrl+P**, then **g**, and a name. You are its main admin.
+- **Invite:** in the group, **Ctrl+R** opens the members, **a** lists contacts you can invite. Any admin invites, only their own contacts, on a version that knows groups.
+- **Join:** the invite comes in your chat with the admin who invited you; **Ctrl+Y** there joins.
+- **In the group:** answers, edits, deletes and reactions work as in a chat. Each member's name has a colour of its own, the same on every device. Only the main admin sets the timer (**Ctrl+T**).
 - **Documents:** **Ctrl+L** sends one (up to 1 MiB, one at a time), **Ctrl+G** saves the newest one received, as in a chat.
-- **Remove:** **Ctrl+R**, pick the member, **x**. The group moves to a new queue; they read nothing from then on.
+- **Remove:** **Ctrl+R**, pick the member, **x** (main admin only). The group moves to a new queue; they read nothing from then on.
+- **Admins:** up to 4, marked "main admin" and "admin" in **Ctrl+R**. There the main admin picks a member and presses **m** to make or remove an admin, or **h** to hand the group over (then **y** to stay, **l** to leave). Another admin can only invite their own contacts, and steps down with **d**. Only the main admin removes people, sets the timer and makes admins. If the main admin leaves, the admin made first takes over. Every member's app must be updated first. Make admins only of people you trust: an admin can cut a member off at the relay ([ADR-042](https://github.com/prophecy1345/termchat/blob/main/docs/adr/042-group-admins.md)).
 - **Leave:** **Ctrl+D**. The others are told; the chat stays with you, read-only.
 
 A new member does not see what was said before they joined.

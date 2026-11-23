@@ -143,7 +143,7 @@ fun Group(m: Model, index: UInt) {
             val who = runCatching { a.groupMembers(index) }.getOrDefault(emptyList()).firstOrNull { it.fingerprint == fp }
             val name = who?.name ?: ""
             when (what) {
-                "make" -> Confirm(m, "Make $name an admin?", "They can invite their own contacts. Only you remove people, name the group and set its timer. Choose someone you trust: an admin can also cut a member off at the relay.", "Make admin", { dialog = null }) {
+                "make" -> Confirm(m, "Make $name an admin?", "They can invite their own contacts. Only you remove people, set the timer and make admins. Choose someone you trust: an admin can also cut a member off at the relay.", "Make admin", { dialog = null }) {
                     runCatching { a.makeAdmin(index, fp) }.onFailure(fail)
                 }
                 "unmake" -> Confirm(m, "Remove $name as admin?", "They stay a member. The group moves to a new queue, so the key they held opens nothing.", "Remove admin", { dialog = null }) {
@@ -151,7 +151,7 @@ fun Group(m: Model, index: UInt) {
                 }
                 "hand", "handleave" -> Confirm(
                     m, "Hand the group to $name?",
-                    "They become the main admin and move the group to a new queue. You can no longer remove people, name the group or set its timer." +
+                    "They become the main admin and move the group to a new queue. You can no longer remove people, set the timer or make admins." +
                         if (what == "handleave") " Then you leave the group." else "",
                     "Hand over", { dialog = null },
                 ) {

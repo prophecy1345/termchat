@@ -1758,7 +1758,7 @@ fn popup_pane(
                 AdminChange::Make => (
                     "make an admin",
                     format!(
-                        "Make {name} an admin?\nThey can invite their own contacts. Only you remove people,\nname the group and set its timer. Choose someone you trust:\nan admin can also cut a member off at the relay."
+                        "Make {name} an admin?\nThey can invite their own contacts. Only you remove people,\nset the timer and make admins. Choose someone you trust:\nan admin can also cut a member off at the relay."
                     ),
                 ),
                 AdminChange::Unmake => (
@@ -1775,7 +1775,7 @@ fn popup_pane(
                 AdminChange::HandOver => (
                     "hand the group over",
                     format!(
-                        "Make {name} the main admin?\nYou can no longer remove people, name the group or set\nits timer. They move the group to a new queue."
+                        "Make {name} the main admin?\nYou can no longer remove people, set the timer or\nmake admins. They move the group to a new queue."
                     ),
                 ),
             };

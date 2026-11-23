@@ -55,7 +55,7 @@ const en = {
       ["Invites, not a directory", "Nobody can find you: people join with an invite you give them, one-time or public, and wait as a request until you accept. Block, reject or report."],
       ["Safety numbers", "Compare 60 digits with a friend once, or scan the QR code on their screen, and rule out anyone in the middle."],
       ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Your contacts cannot link you to each other."],
-      ["Small private groups", "Up to 32 devices (32 people with one each), by the admin's invitation only, and nobody can find the group. Megolm from the same vodozemac; new members do not read the old history, removed ones not the new. Documents go there as in a chat."],
+      ["Small private groups", "Up to 32 devices (32 people with one each), by invitation only, and nobody can find the group. Up to four admins: the main one removes, sets the timer and hands over; the others invite their own contacts. Megolm from the same vodozemac; new members do not read the old history, removed ones not the new. Documents go there as in a chat."],
       ["Phone and laptop, one identity", "Link up to four devices with a code and a fingerprint check on both screens. Contacts write to each of them; each device has keys of its own, and a lost one is removed from the main device. Groups, documents and what you send reach all of them."],
     ]],
     ["If your device is in the wrong hands", [
@@ -208,7 +208,7 @@ const ru: typeof en = {
       ["Приглашения вместо каталога", "Найти вас нельзя: люди приходят по приглашению, которое вы дали, одноразовому или публичному, и ждут как запрос, пока вы не примете. Блокировка, отказ, жалоба."],
       ["Номер безопасности", "Один раз сверьте 60 цифр с другом или отсканируйте QR-код на его экране и исключите посредника."],
       ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут связать вас между собой."],
-      ["Маленькие приватные группы", "До 32 устройств (32 человека с одним устройством), только по приглашению администратора, найти группу нельзя. Megolm из той же vodozemac; новые участники не читают старую историю, исключённые — новую. Документы отправляются туда, как в чат."],
+      ["Маленькие приватные группы", "До 32 устройств (32 человека с одним устройством), только по приглашению, найти группу нельзя. До четырёх администраторов: основной исключает, ставит таймер и передаёт роль, остальные приглашают своих контактов. Megolm из той же vodozemac; новые участники не читают старую историю, исключённые — новую. Документы отправляются туда, как в чат."],
       ["Телефон и ноутбук, одна личность", "Привяжите до четырёх устройств кодом со сверкой отпечатка на обоих экранах. Контакты пишут на каждое; у каждого устройства свои ключи, а потерянное удаляется с основного. Группы, документы и отправленное вами доходят до всех."],
     ]],
     ["Если устройство попало в чужие руки", [

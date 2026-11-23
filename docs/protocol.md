@@ -151,6 +151,7 @@ C -> R  CreateGroup                                   R -> C  GroupCreated { gro
 C -> R  AddReader { group_id, token }                 R -> C  ReaderAdded { group_id, recv_id, send_id, token }
 C -> R  RemoveReader { group_id, token, recv_id }     R -> C  ReaderRemoved { recv_id }
 C -> R  DeleteGroup { group_id, token }               R -> C  GroupDeleted { group_id }
+C -> R  RemoveReaderAt { group_id, token, send_id }   R -> C  ReaderRemoved { recv_id }
 ```
 
 - A group queue has the admin's `group_id` and token, and a `send_id` for
@@ -162,6 +163,8 @@ C -> R  DeleteGroup { group_id, token }               R -> C  GroupDeleted { gro
 - At most 32 readers. Making a group or a reader counts against the same
   budget as `CreateQueue`. A wrong token, or a `recv_id` that is not one of
   the group's readers, gets `UnknownQueue`.
+- `RemoveReaderAt` (ADR-042) is `RemoveReader` for a reader named by its own
+  `send_id`, found only among this group's readers.
 - `RemoveReader` deletes that reader's queue; `DeleteGroup` deletes the group
   and every reader. A group unused for 90 days goes when none of its readers
   has come by in that time either.
@@ -386,6 +389,46 @@ primary, from any device on their list (as the contact), and from our own
 devices (as ours). A device announces itself to contacts with `Devices`, never
 with `QueueOffer`, which would move where they write to the whole identity.
 Contacts below `Understands` level 3 hear only the primary.
+
+### Several admins (ADR-042)
+
+```
+AdminList { group: [u8; 16], no: u64, signer: [u8; 32], admins: Vec<[u8; 32]>,
+            resign: Option<Resign>, signature: [u8; 64] }
+Resign { roster_no: u64, signature: [u8; 64] }
+AdminGrant { queue: [u8; 16], token: [u8; 32] }
+
+Body += GroupAdmins { group: [u8; 16], chain: Vec<AdminList> }  // before a roster: in the group, an invite or a move
+      | GroupResign { group: [u8; 16], resign: Resign }         // main admin -> group, inside Megolm
+      | GroupAdminKeys { group: [u8; 16], roster_no: u64, grant: AdminGrant }  // over Olm only
+```
+
+`admins` holds 1 to 4 identities, the main admin first, then the others in
+the order they were made; no key twice. `no` is the roster the list came with;
+`signer` is an admin of the list before. The list is signed over
+`"termchat-admins-v1" || postcard(group, no, signer, admins, resign)`, a resign
+by the main admin over `"termchat-resign-v1" || postcard(group, roster_no)`.
+A group without lists has its creator, the roster's `admin`, as its one admin.
+
+A member takes roster N+1 only if it is signed by an admin of the list in
+force and its lists, oldest first, each follow the one before: the main
+admin makes, removes and orders admins or hands over (the successor first,
+the main admin gone); another admin only drops themselves; the next admin
+takes over only with the main admin's `Resign` for roster N. A roster from an
+admin other than the main one only adds members after the existing ones and
+keeps the name and the timer. Every admin in force is a member. `Roster.admin`
+names the roster's signer. Only the main admin's roster moves the group.
+
+`GroupAdminKeys` carries the group queue's admin token from the main admin to
+another admin's primary device, kept until a roster names it an admin; it is
+refused inside a group message and inside a `Copy`. Members who are not an
+admin's contacts get `GroupAdmins`, `GroupMove`, `GroupLeave` and
+`GroupAdminKeys` through their reader, over Olm with a key claimed from it.
+After a move the main admin cuts removed readers with `RemoveReaderAt` and
+deletes the old queue once every member told through it has written to the
+new one, or after a day. A client writes to a group only once the relay has
+sent `KeyCount` for its reader, after what waited. Rosters from several
+admins need `Understands` level 6 on every member's devices.
 
 ## 10. Fingerprint
 

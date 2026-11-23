@@ -779,7 +779,7 @@ impl Chat {
                     AdminChange::Make => (
                         "Make an admin",
                         format!(
-                            "Make {name} an admin? They can invite their own contacts to the group. Only you remove people, name the group and set its timer. Choose someone you trust: an admin can also cut a member off at the relay."
+                            "Make {name} an admin? They can invite their own contacts to the group. Only you remove people, set the timer and make admins. Choose someone you trust: an admin can also cut a member off at the relay."
                         ),
                         "Make admin",
                     ),
@@ -799,7 +799,7 @@ impl Chat {
                     AdminChange::HandOver(_) => (
                         "Hand the group over",
                         format!(
-                            "Make {name} the main admin? You can no longer remove people, name the group or set its timer. They move the group to a new queue."
+                            "Make {name} the main admin? You can no longer remove people, set the timer or make admins. They move the group to a new queue."
                         ),
                         "Hand over",
                     ),
