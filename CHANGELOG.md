@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.28.0
+
+- A muted chat or group shows a struck bell beside its name in the list
+  (a dim ~ before its count in the terminal). On Android, Mute keeps its
+  menu open: each tap takes the next span, so any span can be picked.
+- Clear a chat's or group's history on this device: Ctrl+P, w in the
+  terminal, Clear history in the desktop and Android menus. The others
+  and your other devices keep theirs; what is still on its way stays.
+- `termchat systemd-unit CONTACT` (or `--group NAME`) prints a unit for
+  `OnFailure=` that tells them "backup.service failed on myserver".
+
 ## 0.27.0
 
 - Several admins in a group: the main admin makes up to three more, who

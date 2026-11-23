@@ -1,0 +1,1 @@
+A muted chat or group shows a struck bell in the list, and Mute keeps its menu open so any span can be picked. Clear a chat's or group's history on this phone from its menu.
