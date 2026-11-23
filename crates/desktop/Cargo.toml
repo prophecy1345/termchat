@@ -39,7 +39,11 @@ tor = ["termchat-engine/tor"]
 # macOS, only the features for NSApplication and NSDockTile.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSString"] }
+# The notification from the app itself, with its icon: osascript shows Script
+# Editor's. block2 is already in the tree (winit); it builds the callback.
+block2 = "0.6.2"
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

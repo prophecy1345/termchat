@@ -358,7 +358,7 @@ impl Chat {
             notify::sound();
         }
         if shout {
-            notify::system();
+            crate::badge::alert();
         }
     }
 
