@@ -2078,6 +2078,7 @@ impl Engine {
                 // ADR-042, amendment 3: the old queue lives until those told
                 // through it spoke on the new one, or a day; the removed lose
                 // their readers in it now.
+                let mut probe = false;
                 for who in &moving.removed {
                     if let Some(send_id) = old_at(who) {
                         let frame = ClientFrame::RemoveReaderAt {
@@ -2085,14 +2086,14 @@ impl Engine {
                             token,
                             send_id,
                         };
-                        self.group_send(g, frame);
+                        probe |= self.group_send(g, frame);
                     }
                 }
                 self.data.groups[g].retiring = Some(crate::data::Retiring {
                     old: (group_id, token),
                     until: now() + RETIRE_AFTER,
                     waiting: through_reader,
-                    probe: !moving.removed.is_empty(),
+                    probe,
                 });
             }
         }
@@ -2536,7 +2537,15 @@ impl Engine {
     }
 
     fn send_group_body(&mut self, g: usize, body: Body) {
-        let goodbye = matches!(body, Body::GroupLeave { .. });
+        // What leaving queues goes out after it too (ADR-042): the main
+        // admin's resign, a helper's last list and roster.
+        let goodbye = matches!(
+            body,
+            Body::GroupLeave { .. }
+                | Body::GroupResign { .. }
+                | Body::GroupAdmins { .. }
+                | Body::GroupRoster { .. }
+        ) && (self.data.groups[g].left || matches!(body, Body::GroupLeave { .. }));
         if !goodbye && (self.removed() || self.data.groups[g].left) {
             return;
         }

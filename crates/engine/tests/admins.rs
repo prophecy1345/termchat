@@ -462,3 +462,24 @@ async fn a_member_cut_off_at_the_relay_is_told() {
     .await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_main_admin_leaves_before_the_link_is_up_and_bob_still_takes_over() {
+    let (mut e, _url, dir) = world("offline").await;
+    group_with_helper(&mut e).await;
+    let bob = e[BOB].me();
+    // Alice comes back and leaves at once: her resign waits with the goodbye.
+    e[ALICE].persist();
+    e[ALICE] = match Engine::unlock(&dir.join("alice"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(x) => x,
+        _ => panic!("alice's state"),
+    };
+    e[ALICE].leave_group(0).unwrap();
+    pump(&mut e, |e| {
+        [BOB, CAROL]
+            .iter()
+            .all(|&x| admins(&e[x]) == vec![bob] && members(&e[x]) == 2)
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
