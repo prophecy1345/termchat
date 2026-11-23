@@ -77,7 +77,13 @@ impl Group {
             }
         };
         let id = session.session_id();
-        if self.inbound.iter().any(|s| s.session.session_id() == id) {
+        // Review 2026-11d, finding 4: kept per member and id, so a key one
+        // member passes on as theirs never hides the owner's.
+        if self
+            .inbound
+            .iter()
+            .any(|s| s.member == member && s.session.session_id() == id)
+        {
             return Ok(());
         }
         self.inbound.push(Inbound {
@@ -198,21 +204,31 @@ impl Groups {
     ) -> Result<(Ed25519Key, Body), Error> {
         let wire = GroupCiphertext::decode(bytes)?;
         let g = self.0.get_mut(group).ok_or(Error::NoSession)?;
-        let s = g
-            .inbound
-            .iter_mut()
-            .find(|s| s.session.session_id() == wire.session_id)
-            .ok_or(Error::UnknownSender)?;
         let message = MegolmMessage::from_bytes(&wire.message).map_err(|_| Error::DecryptFailed)?;
-        let plain = s
-            .session
-            .decrypt(&message)
-            .map_err(|_| Error::DecryptFailed)?;
-        let plain = Zeroizing::new(plain.plaintext);
-        let inner = GroupInner::from_padded(&plain)?;
-        if inner.sender != s.member || inner.group != *group {
-            return Err(Error::SenderMismatch);
+        // The session of this id whose member is the sender the plaintext
+        // names (review 2026-11d, finding 4); another member's copy of the
+        // same key does not count.
+        let mut why = Error::UnknownSender;
+        let mut found = None;
+        for (n, s) in g.inbound.iter_mut().enumerate() {
+            if s.session.session_id() != wire.session_id {
+                continue;
+            }
+            let Ok(plain) = s.session.decrypt(&message) else {
+                why = Error::DecryptFailed;
+                continue;
+            };
+            let plain = Zeroizing::new(plain.plaintext);
+            let inner = GroupInner::from_padded(&plain)?;
+            if inner.sender != s.member || inner.group != *group {
+                why = Error::SenderMismatch;
+                continue;
+            }
+            found = Some((n, inner));
+            break;
         }
+        let (n, inner) = found.ok_or(why)?;
+        let s = &mut g.inbound[n];
         let index = message.message_index();
         if (s.seen.len() >= SEEN_PER_SESSION
             && s.seen.first().is_some_and(|oldest| index < *oldest))
