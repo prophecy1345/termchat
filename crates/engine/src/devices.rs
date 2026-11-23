@@ -377,7 +377,7 @@ impl Engine {
             onion_url: addr.onion_url,
             send_id: addr.send_id,
         };
-        if c.devices_told < list.no && c.understands >= proto::UNDERSTANDS {
+        if c.devices_told < list.no && c.understands >= proto::DEVICES_LEVEL {
             // Every address we know: the contact may not read a device of
             // ours before it has our list, so each device repeats the others'.
             let mut queues = vec![queue.clone()];

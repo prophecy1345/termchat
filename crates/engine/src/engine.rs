@@ -2225,7 +2225,7 @@ impl Engine {
                 }
                 // A member who now reads device lists may be the last one a
                 // group waited for: as admin, welcome the devices it kept out.
-                if news && level >= proto::UNDERSTANDS && !got.request {
+                if news && level >= proto::DEVICES_LEVEL && !got.request {
                     let mut owners: Vec<Ed25519Key> = vec![self.identity_key()];
                     owners.extend(
                         self.data
@@ -2605,7 +2605,7 @@ impl Engine {
             return Err("this device was removed from your account".into());
         }
         // ADR-028: an app before devices hears only from the primary.
-        if !self.is_primary() && !c.own && c.understands < proto::UNDERSTANDS {
+        if !self.is_primary() && !c.own && c.understands < proto::DEVICES_LEVEL {
             return Err("their app knows no second devices yet: write from your main one, or ask them to update".into());
         }
         Ok(c)

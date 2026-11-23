@@ -295,6 +295,14 @@ async fn a_contact_writes_to_both_devices_and_each_device_sees_what_the_other_se
     })
     .await;
 
+    // A contact on 0.25 (devices, no receipts) still takes the laptop's texts.
+    e[1].data.contacts[j].understands = termchat_core::proto::DEVICES_LEVEL;
+    e[1].send(j, "still from the laptop").unwrap();
+    pump(&mut e, |e| {
+        has(&e[2], &alice, "still from the laptop", false)
+    })
+    .await;
+
     let k = e[0].index(&bob).unwrap();
     e[0].send(k, "from the phone").unwrap();
     pump(&mut e, |e| {
@@ -834,7 +842,7 @@ async fn a_copy_lands_only_in_the_chat_it_names() {
 /// once that member's app says it can, the admin's device linked later joins.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_admins_device_joins_once_the_last_old_member_updates() {
-    use termchat_core::proto::{Body, ServerFrame, UNDERSTANDS};
+    use termchat_core::proto::{Body, DEVICES_LEVEL, ServerFrame};
     use termchat_engine::Event;
     use termchat_engine::engine::Link;
 
@@ -858,7 +866,7 @@ async fn the_admins_device_joins_once_the_last_old_member_updates() {
     e[2].accept_group(0).unwrap();
     pump(&mut e, |e| e[0].data.groups[0].members().len() == 2).await;
     // Bob's app as if it were older; then the laptop is linked.
-    e[0].data.contacts[b].understands = UNDERSTANDS - 1;
+    e[0].data.contacts[b].understands = DEVICES_LEVEL - 1;
     let code = e[1].link_code().unwrap();
     let at_phone = e[0].add_device(&code).unwrap();
     pump(&mut e, |e| e[1].pending_link().is_some()).await;
@@ -878,7 +886,12 @@ async fn the_admins_device_joins_once_the_last_old_member_updates() {
     // Bob's app says it reads device lists.
     let envelope = e[2]
         .core()
-        .encrypt(&alice, Body::Understands { level: UNDERSTANDS })
+        .encrypt(
+            &alice,
+            Body::Understands {
+                level: DEVICES_LEVEL,
+            },
+        )
         .unwrap();
     let recv_id = e[0].data.contacts[b].mine.as_ref().unwrap().recv_id;
     let frame = ServerFrame::Deliver {

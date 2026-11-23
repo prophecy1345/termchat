@@ -586,6 +586,10 @@ const KNOWN_KINDS: u32 = 30;
 /// copies that name their chat (ADR-030), 5 = receipts (ADR-041).
 pub const UNDERSTANDS: u16 = 5;
 
+/// The level from which a contact reads proven device lists (ADR-030):
+/// what linked devices need, whatever later levels add.
+pub const DEVICES_LEVEL: u16 = 4;
+
 /// Ids of each kind in one `Receipt` (ADR-041).
 pub const MAX_RECEIPT_IDS: usize = 64;
 

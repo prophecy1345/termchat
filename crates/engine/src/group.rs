@@ -360,7 +360,7 @@ impl Engine {
         self.data.groups[g].awaiting.retain(|k| *k != key);
         // ADR-028: a reader for each of their devices, primary first.
         let welcome =
-            self.devices_welcome(g) && self.data.contacts[i].understands >= proto::UNDERSTANDS;
+            self.devices_welcome(g) && self.data.contacts[i].understands >= proto::DEVICES_LEVEL;
         let devices: Vec<Ed25519Key> = self.data.contacts[i]
             .their_devices
             .iter()
@@ -1978,7 +1978,7 @@ impl Engine {
             m.ed25519 == me
                 || self
                     .index(&m.ed25519)
-                    .is_some_and(|i| self.data.contacts[i].understands >= proto::UNDERSTANDS)
+                    .is_some_and(|i| self.data.contacts[i].understands >= proto::DEVICES_LEVEL)
         })
     }
 
