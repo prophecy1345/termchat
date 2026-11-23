@@ -1165,14 +1165,8 @@ impl Main {
             1 => vec![
                 row("sound for new messages", s.sound),
                 row("system notification: \"termchat: new message\"", s.notify),
-                row(
-                    "tell contacts their messages arrived (✓✓; the relay can link your queues by timing)",
-                    s.receipts,
-                ),
-                row(
-                    "read receipts: send yours and see theirs (off: neither)",
-                    s.read_receipts,
-                ),
+                row("delivery receipts: tell contacts it arrived", s.receipts),
+                row("read receipts: send yours, see theirs", s.read_receipts),
             ],
             2 => vec![row("mouse (off: the terminal selects text)", s.mouse)],
             _ => vec![
