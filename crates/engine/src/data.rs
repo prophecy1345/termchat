@@ -425,6 +425,9 @@ pub struct Contact {
     /// Edits, deletes and reactions waiting for a session (ADR-025).
     #[serde(default)]
     pub outbox: Vec<Body>,
+    /// Receipts gathered for them, not sent yet (ADR-041).
+    #[serde(default)]
+    pub receipts: Receipts,
     /// One of our own devices, not a person (ADR-028): never shown as a contact.
     #[serde(default)]
     pub own: bool,
@@ -509,6 +512,28 @@ pub struct Msg {
     /// Changes from the contact `termchat recv` has not printed yet.
     #[serde(default)]
     pub changes: Changes,
+    /// Ours: the contact's device has it (ADR-041).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delivered: bool,
+    /// Ours: the contact saw it; theirs: we said we did (ADR-041).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read: bool,
+}
+
+/// ADR-041: what a receipt names, a text by its id or a whole document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Seen {
+    Message(u64),
+    File(u32),
+}
+
+/// ADR-041: receipts gathered for one contact, sent together at `due`
+/// (Unix seconds) or before our next message to them.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Receipts {
+    pub delivered: Vec<Seen>,
+    pub read: Vec<Seen>,
+    pub due: Option<u64>,
 }
 
 /// What happened to a message after it arrived, for `termchat recv`.
@@ -517,6 +542,11 @@ pub struct Changes {
     pub edit: bool,
     pub delete: bool,
     pub react: bool,
+    /// Ours, marked by the contact's receipt (ADR-041).
+    #[serde(default)]
+    pub delivered: bool,
+    #[serde(default)]
+    pub read: bool,
 }
 
 /// What was said is wiped when a message goes: on lock, when its timer runs

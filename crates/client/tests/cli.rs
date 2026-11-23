@@ -680,7 +680,14 @@ async fn commands_go_through_a_running_daemon() {
         .spawn()
         .unwrap();
     let lines = std::io::BufReader::new(follower.stdout.take().unwrap());
-    let mut first = tokio::task::spawn_blocking(move || lines.lines().next().unwrap().unwrap());
+    // ADR-041: the phone's receipt for "disk full" may come first.
+    let mut first = tokio::task::spawn_blocking(move || {
+        lines
+            .lines()
+            .map(Result::unwrap)
+            .find(|l| l.contains("\"kind\":\"message\""))
+            .unwrap()
+    });
     tokio::time::sleep(Duration::from_millis(500)).await;
     phone.send(0, "status?").unwrap();
     let first = loop {

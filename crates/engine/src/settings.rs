@@ -26,6 +26,10 @@ pub struct Settings {
     pub desktop_theme: String,
     /// Minutes without input before the app locks itself (ADR-021).
     pub lock_minutes: u64,
+    /// Tell contacts their messages arrived (ADR-041).
+    pub receipts: bool,
+    /// Tell contacts we read theirs, and see when they read ours (ADR-041).
+    pub read_receipts: bool,
 }
 
 /// The lock times a user can pick, in minutes; no "never" (ADR-021).
@@ -41,6 +45,8 @@ impl Default for Settings {
             notify: false,
             desktop_theme: "termchat".into(),
             lock_minutes: 5,
+            receipts: true,
+            read_receipts: false,
         }
     }
 }

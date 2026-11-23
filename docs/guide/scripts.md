@@ -457,7 +457,7 @@ termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/p
 
 ## What recv prints
 
-Plain: `alice: text`, `alice edited: text`, `alice deleted a message`, `alice reacted like to: text`.
+Plain: `alice: text`, `alice edited: text`, `alice deleted a message`, `alice reacted like to: text`, `alice got: your text`, `alice read: your text`.
 
 With `--json`, one object per line:
 
@@ -466,7 +466,7 @@ With `--json`, one object per line:
 {"at":1794913393,"fingerprint":"78125 66938 20371 20023 95579 06120","from":"alice·78125","id":"5136533931879411279","kind":"message","reply_to":{"id":"5235206626092912747","mine":true},"text":"which disk? / or /var?"}
 ```
 
-- `kind`: `message`, `edit`, `delete` or `react`.
+- `kind`: `message`, `edit`, `delete`, `react`, `delivered` or `read`. The last two are about one of your messages (ADR-041): it reached a device of theirs, or they saw it. `read` comes only while read receipts are on in the settings; `file` names your document, if it was one, and `id` is `null` then. A script that answers should look only at `message`.
 - `id`: the message, as a string (JSON readers lose digits past 2^53). For `react`, `mine` says whether it is your message; `reaction` is one of `like`, `love`, `laugh`, `wow`, `sad`, `thanks`, `dislike`, or `null` when it was taken back.
 - `reply_to`: what a message answers; `mine` there says whether that was your message.
 - `at`: when the message itself arrived.

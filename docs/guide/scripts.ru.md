@@ -457,7 +457,7 @@ termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/p
 
 ## Что печатает recv
 
-Обычный вывод: `alice: текст`, `alice edited: текст`, `alice deleted a message`, `alice reacted like to: текст`.
+Обычный вывод: `alice: текст`, `alice edited: текст`, `alice deleted a message`, `alice reacted like to: текст`, `alice got: ваш текст`, `alice read: ваш текст`.
 
 С `--json` — один объект на строку:
 
@@ -466,7 +466,7 @@ termchat recv --from alice --wait 600 --json --password-file /etc/termchat-bot/p
 {"at":1794913393,"fingerprint":"78125 66938 20371 20023 95579 06120","from":"alice·78125","id":"5136533931879411279","kind":"message","reply_to":{"id":"5235206626092912747","mine":true},"text":"which disk? / or /var?"}
 ```
 
-- `kind`: `message`, `edit`, `delete` или `react`.
+- `kind`: `message`, `edit`, `delete`, `react`, `delivered` или `read`. Последние два — про ваше сообщение (ADR-041): оно дошло до устройства собеседника или он его увидел. `read` приходит, только пока в настройках включено «прочитано»; `file` — имя вашего документа, если это был он, и тогда `id` равен `null`. Скрипту, который отвечает, стоит смотреть только на `message`.
 - `id`: сообщение, строкой (числа больше 2^53 читатели JSON искажают). Для `react` поле `mine` говорит, ваше ли это сообщение; `reaction` — одно из `like`, `love`, `laugh`, `wow`, `sad`, `thanks`, `dislike` или `null`, если реакцию убрали.
 - `reply_to`: на что отвечает сообщение; `mine` там говорит, было ли оно вашим.
 - `at`: когда пришло само сообщение.

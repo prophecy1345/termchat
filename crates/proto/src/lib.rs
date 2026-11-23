@@ -561,6 +561,13 @@ pub enum Body {
     Heartbeat {
         sent_at: u64,
     },
+    /// ADR-041: our `Message` ids and whole `File` ids the contact got
+    /// (`read`: also saw on screen). At most `MAX_RECEIPT_IDS` of each.
+    Receipt {
+        messages: Vec<u64>,
+        files: Vec<u32>,
+        read: bool,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -572,12 +579,15 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 29;
+const KNOWN_KINDS: u32 = 30;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
-/// copies that name their chat (ADR-030).
-pub const UNDERSTANDS: u16 = 4;
+/// copies that name their chat (ADR-030), 5 = receipts (ADR-041).
+pub const UNDERSTANDS: u16 = 5;
+
+/// Ids of each kind in one `Receipt` (ADR-041).
+pub const MAX_RECEIPT_IDS: usize = 64;
 
 /// Devices of one identity, the primary included (ADR-028).
 pub const MAX_DEVICES: usize = 4;
@@ -876,7 +886,8 @@ impl GroupInner {
 
     fn check_body(&self) -> Result<(), Error> {
         match &self.body {
-            Body::Heartbeat { .. } => Err(Error::Malformed),
+            // ADR-041: receipts are between two people, never in a group.
+            Body::Heartbeat { .. } | Body::Receipt { .. } => Err(Error::Malformed),
             body => check_body(body),
         }
     }
@@ -917,9 +928,16 @@ fn check_body(body: &Body) -> Result<(), Error> {
         Body::Unknown => Err(Error::Malformed),
         // One level: a copy of a copy is no message anyone sent.
         Body::Copy { body, .. } => match **body {
-            Body::Copy { .. } | Body::Heartbeat { .. } => Err(Error::Malformed),
+            Body::Copy { .. } | Body::Heartbeat { .. } | Body::Receipt { .. } => {
+                Err(Error::Malformed)
+            }
             ref inner => check_body(inner),
         },
+        Body::Receipt {
+            messages, files, ..
+        } if messages.len() > MAX_RECEIPT_IDS || files.len() > MAX_RECEIPT_IDS => {
+            Err(Error::TooLarge)
+        }
         Body::GroupInvite {
             roster,
             relay_url,
@@ -1164,10 +1182,49 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(Body::Heartbeat { sent_at: 1 })).unwrap();
+        let receipt = Body::Receipt {
+            messages: vec![],
+            files: vec![],
+            read: false,
+        };
+        let raw = postcard::to_allocvec(&with(receipt)).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
-        assert_eq!(raw[head.len()], 28);
+        assert_eq!(raw[head.len()], 29);
+    }
+
+    #[test]
+    fn receipts_are_direct_and_bounded() {
+        let receipt = |n: usize, m: usize| Body::Receipt {
+            messages: vec![7; n],
+            files: vec![9; m],
+            read: true,
+        };
+        let ok = with(receipt(MAX_RECEIPT_IDS, MAX_RECEIPT_IDS));
+        assert_eq!(Inner::from_padded(&ok.to_padded().unwrap()).unwrap(), ok);
+        for body in [
+            receipt(MAX_RECEIPT_IDS + 1, 0),
+            receipt(0, MAX_RECEIPT_IDS + 1),
+        ] {
+            assert!(matches!(
+                with(body.clone()).to_padded(),
+                Err(Error::TooLarge)
+            ));
+            let raw = pad(postcard::to_allocvec(&with(body)).unwrap());
+            assert!(Inner::from_padded(&raw).is_err());
+        }
+        let group = GroupInner {
+            sender: [1; 32],
+            group: [2; 16],
+            body: receipt(1, 0),
+        };
+        let copy = with(Body::Copy {
+            contact: [5; 32],
+            body: Box::new(receipt(1, 0)),
+        });
+        assert!(group.to_padded().is_err());
+        assert!(copy.to_padded().is_err());
+        assert!(GroupInner::from_padded(&pad(postcard::to_allocvec(&group).unwrap())).is_err());
     }
 
     #[test]

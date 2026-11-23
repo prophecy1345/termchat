@@ -110,7 +110,12 @@ async fn answers_edits_reactions_and_deletes_travel() {
     assert!(alice.data.contacts[0].messages[m].edited);
     // Edited before `recv` took it: it comes once, as it is now.
     let got = alice.take_new(None);
-    let got: Vec<_> = got.iter().map(|(_, m, w)| (m.text.as_str(), *w)).collect();
+    // ADR-041: bob's receipt for "hi bob" went right before his edit.
+    let got: Vec<_> = got
+        .iter()
+        .filter(|(_, _, w)| *w != Fetched::Delivered)
+        .map(|(_, m, w)| (m.text.as_str(), *w))
+        .collect();
     assert_eq!(got, [("hello", Fetched::Message)]);
 
     alice.react(0, m, Some(6)).unwrap();

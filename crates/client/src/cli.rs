@@ -905,6 +905,19 @@ fn record(
             "reaction": m.their_reaction.map(|r| REACTION_NAMES[usize::from(r)]),
             "_text": text,
         }),
+        // ADR-041: about one of ours; a document by its name, never its bytes.
+        Fetched::Delivered | Fetched::Read => {
+            let kind = if what == Fetched::Read {
+                "read"
+            } else {
+                "delivered"
+            };
+            let file = m.file.as_ref().map(|f| clean(&f.name));
+            return serde_json::json!({
+                "from": name, "fingerprint": fingerprint, "at": m.at, "id": id,
+                "kind": kind, "file": file, "_text": text,
+            });
+        }
     };
     if let (Some(line), Some(more)) = (line.as_object_mut(), more.as_object()) {
         line.extend(more.clone());
@@ -965,6 +978,11 @@ fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
         (true, _) => writeln!(out, "{v}"),
         (false, "edit") => writeln!(out, "{name} edited: {}", text.replace('\n', "\n  ")),
         (false, "delete") => writeln!(out, "{name} deleted a message"),
+        (false, kind @ ("delivered" | "read")) => {
+            let quoted = quoted.as_ref().and_then(|q| q.as_str()).unwrap_or_default();
+            let what = if kind == "read" { "read" } else { "got" };
+            writeln!(out, "{name} {what}: {}", first_line(quoted))
+        }
         (false, "react") => match v["reaction"].as_str() {
             Some(r) => {
                 let quoted = quoted.as_ref().and_then(|q| q.as_str()).unwrap_or_default();

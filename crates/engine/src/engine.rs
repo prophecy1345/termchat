@@ -24,6 +24,8 @@ use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
 mod devices;
 #[path = "group.rs"]
 mod group;
+#[path = "receipts.rs"]
+mod receipts;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 pub use group::GroupScriptError;
 use subtle::ConstantTimeEq;
@@ -43,6 +45,9 @@ pub enum Fetched {
     Edit,
     Delete,
     React,
+    /// Ours reached the contact, or they read it (ADR-041).
+    Delivered,
+    Read,
 }
 
 /// `proto::REACTIONS` by index, as words for scripts and screen readers.
@@ -262,6 +267,10 @@ pub struct Engine {
     pub open: Option<Ed25519Key>,
     /// The group on screen, likewise.
     pub open_group: Option<termchat_core::proto::GroupId>,
+    /// ADR-041: send delivery receipts; on unless the settings say no.
+    pub receipts: bool,
+    /// ADR-041: send read receipts, and show the contacts'; off by default.
+    pub read_receipts: bool,
     pub happened: Vec<Happened>,
     path: PathBuf,
     leaving: Option<Leaving>,
@@ -630,6 +639,7 @@ impl Engine {
             .map(Happened::Notice)
             .into_iter()
             .collect();
+        let settings = crate::settings::Settings::load(&crate::settings::path(&path));
         let mut engine = Box::new(Self {
             core,
             key,
@@ -645,6 +655,8 @@ impl Engine {
             update: None,
             open: None,
             open_group: None,
+            receipts: settings.receipts,
+            read_receipts: settings.read_receipts,
             happened,
             path,
             leaving: None,
@@ -1400,6 +1412,8 @@ impl Engine {
                 Err(e) => return self.note(e),
             }
         }
+        // ADR-041: what we gathered goes first, so the relay sees one burst.
+        self.send_receipts(i);
         let rich = self.data.contacts[i].understands >= RICH_LEVEL;
         for m in 0..self.data.contacts[i].messages.len() {
             let msg = &self.data.contacts[i].messages[m];
@@ -2150,7 +2164,24 @@ impl Engine {
                 if !self.data.take_chunk(i, body, now()) {
                     return self.persist();
                 }
+                let whole = self.data.contacts[i].messages.iter().rev();
+                if let Some(id) = whole
+                    .filter(|m| !m.mine)
+                    .find_map(|m| m.file.as_ref())
+                    .map(|f| f.id)
+                {
+                    self.got(i, data::Seen::File(id));
+                }
                 self.happened.push(alert(false));
+            }
+            Body::Receipt { .. } if got.request => return self.persist(),
+            Body::Receipt {
+                messages,
+                files,
+                read,
+            } => {
+                self.take_receipt(i, &messages, &files, read);
+                return self.persist();
             }
             // ADR-025: a kind from a newer client; its `seq` counted.
             Body::Unknown => return self.persist(),
@@ -2258,6 +2289,7 @@ impl Engine {
                     }),
                     ..Default::default()
                 });
+                self.got(i, data::Seen::Message(id));
                 self.happened.push(alert(false));
             }
             body @ (Body::Edit { .. } | Body::Delete { .. } | Body::React { .. }) => {
@@ -2362,6 +2394,7 @@ impl Engine {
             }
         }
         self.expire();
+        self.receipts_due();
         self.rotate_aged_fallbacks();
         self.send_chunks();
         self.leave_timeout();
@@ -3347,6 +3380,8 @@ impl Engine {
                     (changes.edit, Fetched::Edit),
                     (changes.delete, Fetched::Delete),
                     (changes.react, Fetched::React),
+                    (changes.delivered, Fetched::Delivered),
+                    (changes.read, Fetched::Read),
                 ] {
                     if happened {
                         out.push((i, m.clone(), what));
