@@ -103,6 +103,8 @@ pub enum Dialog {
     InviteToGroup(String),
     /// Remove this member from the open group?
     RemoveMember([u8; 32]),
+    /// ADR-042: a change of admins in the open group, to confirm.
+    Admin(AdminChange, [u8; 32]),
     /// Leave the open group?
     LeaveGroup,
     /// ADR-028: this device's link code, for the main device.
@@ -611,16 +613,18 @@ impl Chat {
                 };
                 let group = &self.engine.data.groups[g];
                 let me = self.engine.me();
-                let admin_key = group.roster.as_ref().map(|r| r.admin);
+                let admins = group.admin_keys();
+                let main = admins.first() == Some(&me) && group.is_admin();
                 ui.set_width(560.0);
                 ui.heading(format!(
                     "{} · members",
                     termchat_engine::clean(group.name())
                 ));
                 ui.add_space(6.0);
-                ui.label("The admin added them. Compare safety numbers in person to be sure.");
+                ui.label("The admins added them. Compare safety numbers in person to be sure.");
                 ui.add_space(12.0);
                 let mut remove = None;
+                let mut change = None;
                 for m in group.members() {
                     row(ui, p, |ui| {
                         avatar_letter(ui, p, &m.nickname);
@@ -632,15 +636,34 @@ impl Chat {
                             ui.label(RichText::new(name).monospace());
                             let fp = fingerprint(&m.ed25519);
                             let mut under = fp[..fp.len().min(11)].to_string();
-                            if admin_key == Some(m.ed25519) {
-                                under.push_str(" · ADMIN");
+                            match admins.iter().position(|k| *k == m.ed25519) {
+                                Some(0) => under.push_str(" · MAIN ADMIN"),
+                                Some(_) => under.push_str(" · ADMIN"),
+                                None => {}
                             }
                             ui.label(RichText::new(under).monospace().small().color(p.dim));
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if group.is_admin() && m.ed25519 != me && ui.button("Remove…").clicked()
-                            {
-                                remove = Some(m.ed25519);
+                            // Right to left: the last one stands first.
+                            let helper = admins.iter().skip(1).any(|k| *k == m.ed25519);
+                            if main && m.ed25519 != me {
+                                if ui.button("Remove…").clicked() {
+                                    remove = Some(m.ed25519);
+                                }
+                                if ui.button("Hand over…").clicked() {
+                                    change = Some((AdminChange::HandOver(false), m.ed25519));
+                                }
+                                let (label, what) = if helper {
+                                    ("Remove admin…", AdminChange::Unmake)
+                                } else {
+                                    ("Make admin…", AdminChange::Make)
+                                };
+                                if ui.button(label).clicked() {
+                                    change = Some((what, m.ed25519));
+                                }
+                            }
+                            if helper && m.ed25519 == me && ui.button("Step down…").clicked() {
+                                change = Some((AdminChange::StepDown, me));
                             }
                         });
                     });
@@ -664,6 +687,10 @@ impl Chat {
                     .inner;
                 if let Some(k) = remove {
                     self.dialog = Some(Dialog::RemoveMember(k));
+                    return false;
+                }
+                if let Some((what, k)) = change {
+                    self.dialog = Some(Dialog::Admin(what, k));
                     return false;
                 }
                 if invite {
@@ -733,6 +760,66 @@ impl Chat {
                 let (go, stay) = buttons(ui, p, "Remove");
                 if go {
                     if let Err(e) = self.engine.remove_from_group(g, who) {
+                        self.status = e;
+                    }
+                    return false;
+                }
+                stay
+            }
+            Dialog::Admin(what, who) => {
+                let Some(g) = self.open_group() else {
+                    return false;
+                };
+                let name = self.engine.data.groups[g]
+                    .name_of(who)
+                    .map(termchat_engine::clean)
+                    .unwrap_or_default();
+                ui.set_width(560.0);
+                let (title, text, go) = match what {
+                    AdminChange::Make => (
+                        "Make an admin",
+                        format!(
+                            "Make {name} an admin? They can invite their own contacts to the group. Only you remove people, name the group and set its timer. Choose someone you trust: an admin can also cut a member off at the relay."
+                        ),
+                        "Make admin",
+                    ),
+                    AdminChange::Unmake => (
+                        "Remove an admin",
+                        format!(
+                            "Take the admin role from {name}? They stay a member. The group moves to a new queue, so the key they held opens nothing."
+                        ),
+                        "Remove admin",
+                    ),
+                    AdminChange::StepDown => (
+                        "Step down",
+                        "Stop being an admin? You stay a member; the main admin moves the group."
+                            .to_string(),
+                        "Step down",
+                    ),
+                    AdminChange::HandOver(_) => (
+                        "Hand the group over",
+                        format!(
+                            "Make {name} the main admin? You can no longer remove people, name the group or set its timer. They move the group to a new queue."
+                        ),
+                        "Hand over",
+                    ),
+                };
+                ui.heading(title);
+                ui.add_space(6.0);
+                ui.label(text);
+                if let AdminChange::HandOver(leave) = what {
+                    ui.add_space(6.0);
+                    ui.checkbox(leave, "Leave the group too");
+                }
+                let (yes, stay) = buttons(ui, p, go);
+                if yes {
+                    let done = match *what {
+                        AdminChange::Make => self.engine.make_admin(g, who),
+                        AdminChange::Unmake => self.engine.remove_admin(g, who),
+                        AdminChange::StepDown => self.engine.step_down(g),
+                        AdminChange::HandOver(leave) => self.engine.hand_over_group(g, who, leave),
+                    };
+                    if let Err(e) = done {
                         self.status = e;
                     }
                     return false;
@@ -948,6 +1035,16 @@ impl Chat {
                 ui.heading("Leave the group");
                 ui.add_space(6.0);
                 ui.label("The others are told. The chat stays here, read-only.");
+                // ADR-042, section 4: who runs the group after us.
+                let group = &self.engine.data.groups[g];
+                let admins = group.admin_keys();
+                if admins.first() == Some(&self.engine.me()) {
+                    let next = admins.get(1).and_then(|k| group.name_of(k));
+                    ui.label(match next {
+                        Some(n) => format!("{} becomes the main admin.", termchat_engine::clean(n)),
+                        None => "Nobody can change the group after you: make someone an admin first, or hand it over.".into(),
+                    });
+                }
                 let (go, stay) = buttons(ui, p, "Leave");
                 if go {
                     if let Err(e) = self.engine.leave_group(g) {
@@ -1583,6 +1680,16 @@ fn buttons(ui: &mut egui::Ui, p: &Pal, main: &str) -> (bool, bool) {
         (go, !cancel)
     })
     .inner
+}
+
+/// ADR-042: what an admin change does, for its confirmation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AdminChange {
+    Make,
+    Unmake,
+    StepDown,
+    /// Hand the group over; `true`: and leave it.
+    HandOver(bool),
 }
 
 /// One row of a list in a dialog: a framed line.

@@ -189,7 +189,8 @@ fun Chats(m: Model) {
     if (newGroup) NewGroup(m) { newGroup = false }
     dialog?.let { (c, which) -> ContactDialog(m, c, which) { dialog = null } }
     leaving?.let { g ->
-        Confirm(m, "Leave the group?", "The others are told. The chat stays here, read-only.", "Leave", { leaving = null }) {
+        val view = a.groups().firstOrNull { it.index == g }
+        Confirm(m, "Leave the group?", view?.let { leaveText(it) } ?: "The others are told. The chat stays here, read-only.", "Leave", { leaving = null }) {
             runCatching { a.leaveGroup(g) }.onFailure { m.note = it.message ?: "$it" }
         }
     }

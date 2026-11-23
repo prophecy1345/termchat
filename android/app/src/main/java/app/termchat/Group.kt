@@ -26,7 +26,8 @@ fun Group(m: Model, index: UInt) {
     val g = a.groups().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.groupMessages(index) }.getOrDefault(emptyList())
     var text by remember(index) { mutableStateOf(runCatching { a.groupDraft(index) }.getOrDefault("")) }
-    // "members", "invite", "leave", or a member's fingerprint to remove.
+    // "members", "invite", "leave", "stepdown", "make:", "unmake:", "hand:" or
+    // "handleave:" and a fingerprint (ADR-042), or a member's fingerprint to remove.
     var dialog by remember(index) { mutableStateOf<String?>(null) }
     var compose by remember(index) { mutableStateOf<Triple<UInt, Boolean, String>?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
@@ -131,13 +132,32 @@ fun Group(m: Model, index: UInt) {
         "members" -> Members(m, g, { dialog = it }) { dialog = null }
         "invite" -> InviteToGroup(m, g) { dialog = null }
         "export" -> ExportChat(m, app.termchat.engine.Place.Group(index)) { dialog = null }
-        "leave" -> Confirm(m, "Leave the group?", "The others are told. The chat stays here, read-only.", "Leave", { dialog = null }) {
+        "leave" -> Confirm(m, "Leave the group?", leaveText(g), "Leave", { dialog = null }) {
             runCatching { a.leaveGroup(index) }.onFailure(fail)
         }
+        "stepdown" -> Confirm(m, "Step down?", "You stay a member; the main admin moves the group.", "Step down", { dialog = null }) {
+            runCatching { a.stepDown(index) }.onFailure(fail)
+        }
         else -> {
-            val who = runCatching { a.groupMembers(index) }.getOrDefault(emptyList()).firstOrNull { it.fingerprint == d }
-            Confirm(m, "Remove ${who?.name ?: ""}?", "The group moves to a new queue: they read nothing from now on.", "Remove", { dialog = null }) {
-                runCatching { a.removeFromGroup(index, d) }.onFailure(fail)
+            val (what, fp) = if (':' in d) d.substringBefore(':') to d.substringAfter(':') else "remove" to d
+            val who = runCatching { a.groupMembers(index) }.getOrDefault(emptyList()).firstOrNull { it.fingerprint == fp }
+            val name = who?.name ?: ""
+            when (what) {
+                "make" -> Confirm(m, "Make $name an admin?", "They can invite their own contacts. Only you remove people, name the group and set its timer. Choose someone you trust: an admin can also cut a member off at the relay.", "Make admin", { dialog = null }) {
+                    runCatching { a.makeAdmin(index, fp) }.onFailure(fail)
+                }
+                "unmake" -> Confirm(m, "Remove $name as admin?", "They stay a member. The group moves to a new queue, so the key they held opens nothing.", "Remove admin", { dialog = null }) {
+                    runCatching { a.removeAdmin(index, fp) }.onFailure(fail)
+                }
+                "hand", "handleave" -> Confirm(
+                    m, "Hand the group to $name?",
+                    "They become the main admin and move the group to a new queue. You can no longer remove people, name the group or set its timer." +
+                        if (what == "handleave") " Then you leave the group." else "",
+                    "Hand over", { dialog = null },
+                ) {
+                    runCatching { a.handOverGroup(index, fp, what == "handleave") }.onFailure(fail)
+                }
+                else -> RemoveMember(m, index, d, name, fail) { dialog = null }
             }
         }
     }
@@ -150,6 +170,22 @@ fun Group(m: Model, index: UInt) {
 }
 
 @Composable
+private fun RemoveMember(m: Model, index: UInt, fp: String, name: String, fail: (Throwable) -> Unit, close: () -> Unit) {
+    val a = m.account ?: return
+    Confirm(m, "Remove $name?", "The group moves to a new queue: they read nothing from now on.", "Remove", close) {
+        runCatching { a.removeFromGroup(index, fp) }.onFailure(fail)
+    }
+}
+
+/** ADR-042, section 4: what leaving says about who runs the group after us. */
+fun leaveText(g: GroupView): String {
+    val base = "The others are told. The chat stays here, read-only."
+    if (!g.mainAdmin) return base
+    return base + (g.nextAdmin?.let { " $it becomes the main admin." }
+        ?: " Nobody can change the group after you: make someone an admin first, or hand it over.")
+}
+
+@Composable
 private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
     val a = m.account ?: return
     var menu by remember { mutableStateOf(false) }
@@ -158,7 +194,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
         Avatar("# ${g.name}")
         Column(Modifier.weight(1f).padding(start = 12.dp).clickable { ask("members") }) {
             Text(g.name, style = Tc.name)
-            Text(groupState(g) + if (g.admin) " · ADMIN" else "", style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
+            Text(groupState(g) + if (g.mainAdmin) " · MAIN ADMIN" else if (g.admin) " · ADMIN" else "", style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
             // ADR-038: why its messages are not here yet.
             if (g.connecting) Text("CONNECTING…", style = Tc.caps.copy(color = Tc.warn))
         }
@@ -170,8 +206,8 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                 }
                 item("Members") { ask("members") }
                 item("Export…") { ask("export") }
-                if (g.admin) {
-                    item("Invite") { ask("invite") }
+                if (g.admin) item("Invite") { ask("invite") }
+                if (g.mainAdmin) {
                     item("Disappearing: ${span(g.expiresIn)}") {
                         runCatching { a.nextGroupTimer(g.index) }.onFailure { m.note = it.message ?: "$it" }
                         m.changed()
@@ -203,18 +239,37 @@ private fun Members(m: Model, g: GroupView, ask: (String) -> Unit, close: () -> 
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    if (g.admin) "You added them. Others see them on your word: compare safety numbers in person."
-                    else "The admin added them. Compare safety numbers in person to be sure.",
+                    if (g.admin) "You and the other admins added them. Others see them on your word: compare safety numbers in person."
+                    else "The admins added them. Compare safety numbers in person to be sure.",
                     style = Tc.small,
                 )
                 members.forEach { p ->
+                    var actions by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().border(1.dp, Tc.line, corner).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Avatar(p.name, 32.dp)
                         Column(Modifier.weight(1f).padding(start = 10.dp)) {
                             Text(p.name + if (p.me) " (you)" else "", style = Tc.mono)
-                            Text(p.fingerprint.take(11) + if (p.admin) " · ADMIN" else "", style = Tc.small)
+                            Text(p.fingerprint.take(11) + if (p.mainAdmin) " · MAIN ADMIN" else if (p.admin) " · ADMIN" else "", style = Tc.small)
                         }
-                        if (g.admin && !p.me) Text("Remove", style = Tc.small.copy(color = Tc.danger), modifier = Modifier.clickable { ask(p.fingerprint) }.padding(6.dp))
+                        // ADR-042: the main admin acts on others; a helper steps down.
+                        val stepDown = p.me && p.admin && !p.mainAdmin && g.admin
+                        if ((g.mainAdmin && !p.me) || stepDown) Box {
+                            IconTap("menu", "Member actions") { actions = true }
+                            DropdownMenu(actions, { actions = false }) {
+                                val item = @Composable { label: String, go: String ->
+                                    DropdownMenuItem({ Text(label, style = Tc.mono) }, { actions = false; ask(go) })
+                                }
+                                if (stepDown) {
+                                    item("Step down", "stepdown")
+                                } else {
+                                    if (p.admin) item("Remove admin", "unmake:${p.fingerprint}")
+                                    else item("Make admin", "make:${p.fingerprint}")
+                                    item("Hand over", "hand:${p.fingerprint}")
+                                    item("Hand over and leave", "handleave:${p.fingerprint}")
+                                    item("Remove", p.fingerprint)
+                                }
+                            }
+                        }
                     }
                 }
             }

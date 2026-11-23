@@ -74,6 +74,16 @@ pub trait Listener: Send + Sync {
 /// default (ADR-014). Every other queue has its own instance (ADR-023).
 const MAIN_INSTANCE: &str = "default";
 
+/// The member of group `g` with this fingerprint.
+fn member_key(e: &Engine, g: usize, fingerprint: &str) -> std::result::Result<[u8; 32], String> {
+    e.data.groups[g]
+        .members()
+        .iter()
+        .find(|m| termchat_core::fingerprint(&m.ed25519) == fingerprint)
+        .map(|m| m.ed25519)
+        .ok_or_else(|| String::from("not in this group"))
+}
+
 fn hex(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -171,7 +181,12 @@ pub struct GroupView {
     pub name: String,
     pub members: u32,
     pub unread: u32,
+    /// We hold the group's admin token: we may invite (ADR-042).
     pub admin: bool,
+    /// We are the main admin: we remove, name, set the timer, make admins.
+    pub main_admin: bool,
+    /// Who becomes the main admin if we, the main admin, leave.
+    pub next_admin: Option<String>,
     /// We left or were removed: read-only.
     pub left: bool,
     /// The admin's disappearing timer, seconds.
@@ -197,7 +212,10 @@ pub struct DeviceView {
 pub struct MemberView {
     pub name: String,
     pub fingerprint: String,
+    /// An admin, main or helper (ADR-042).
     pub admin: bool,
+    /// The main admin.
+    pub main_admin: bool,
     pub me: bool,
 }
 
@@ -792,6 +810,12 @@ impl Account {
                 members: x.members().len() as u32,
                 unread: u32::try_from(x.unread).unwrap_or(u32::MAX),
                 admin: x.is_admin(),
+                main_admin: x.is_admin() && x.main_admin() == Some(e.me()),
+                next_admin: x
+                    .admin_keys()
+                    .get(1)
+                    .and_then(|k| x.name_of(k))
+                    .map(engine::clean),
                 left: x.left,
                 expires_in: x.timer(),
                 last_at: x.messages.last().map_or(0, |m| m.at),
@@ -815,13 +839,14 @@ impl Account {
     pub fn group_members(&self, group: u32) -> Result<Vec<MemberView>> {
         self.with_group(group, |e, g| {
             let x = &e.data.groups[g];
-            let admin = x.roster.as_ref().map(|r| r.admin);
+            let admins = x.admin_keys();
             x.members()
                 .iter()
                 .map(|m| MemberView {
                     name: engine::clean(&m.nickname),
                     fingerprint: termchat_core::fingerprint(&m.ed25519),
-                    admin: admin == Some(m.ed25519),
+                    admin: admins.contains(&m.ed25519),
+                    main_admin: admins.first() == Some(&m.ed25519),
                     me: m.ed25519 == e.me(),
                 })
                 .collect()
@@ -931,13 +956,37 @@ impl Account {
     /// The admin removes the member with this fingerprint.
     pub fn remove_from_group(&self, group: u32, fingerprint: String) -> Result<()> {
         Ok(self.with_group(group, |e, g| {
-            let who = e.data.groups[g]
-                .members()
-                .iter()
-                .find(|m| termchat_core::fingerprint(&m.ed25519) == fingerprint)
-                .map(|m| m.ed25519)
-                .ok_or_else(|| String::from("not in this group"))?;
+            let who = member_key(e, g, &fingerprint)?;
             e.remove_from_group(g, &who)
+        })??)
+    }
+
+    /// ADR-042: the main admin makes member `fingerprint` an admin.
+    pub fn make_admin(&self, group: u32, fingerprint: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| {
+            let who = member_key(e, g, &fingerprint)?;
+            e.make_admin(g, &who)
+        })??)
+    }
+
+    /// ADR-042: the main admin takes the role from helper `fingerprint`.
+    pub fn remove_admin(&self, group: u32, fingerprint: String) -> Result<()> {
+        Ok(self.with_group(group, |e, g| {
+            let who = member_key(e, g, &fingerprint)?;
+            e.remove_admin(g, &who)
+        })??)
+    }
+
+    /// ADR-042: a helper leaves the role.
+    pub fn step_down(&self, group: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.step_down(g))??)
+    }
+
+    /// ADR-042: the main admin hands the group to `fingerprint`; `leave`: and leaves.
+    pub fn hand_over_group(&self, group: u32, fingerprint: String, leave: bool) -> Result<()> {
+        Ok(self.with_group(group, |e, g| {
+            let who = member_key(e, g, &fingerprint)?;
+            e.hand_over_group(g, &who, leave)
         })??)
     }
 

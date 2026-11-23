@@ -77,6 +77,15 @@ pub struct Unlock {
     pub error: String,
 }
 
+/// ADR-042: what an admin change does, for its confirmation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AdminChange {
+    Make,
+    Unmake,
+    StepDown,
+    HandOver,
+}
+
 pub enum Popup {
     /// A long text with a filter: the keys or the manual.
     Pager {
@@ -137,6 +146,8 @@ pub enum Popup {
     },
     /// Remove this member from the open group?
     RemoveMember(Ed25519Key),
+    /// ADR-042: a change of admins in the open group, to confirm.
+    Admin(AdminChange, Ed25519Key),
     /// Leave the open group?
     LeaveGroup,
     /// ADR-028: this device's link code, to paste on the main device.
@@ -1586,20 +1597,36 @@ impl Main {
             },
             Popup::Members(at) => {
                 let Some(g) = self.group_index() else { return };
-                let n = self.engine.data.groups[g].members().len();
-                let admin = self.engine.data.groups[g].is_admin();
+                let group = &self.engine.data.groups[g];
+                let n = group.members().len();
+                let admin = group.is_admin();
+                let me = self.engine.me();
+                let admins = group.admin_keys();
+                let main = admin && admins.first() == Some(&me);
+                let helper = admin && !main && admins.contains(&me);
+                // The highlighted member, not us.
+                let other = group
+                    .members()
+                    .get(at)
+                    .map(|m| m.ed25519)
+                    .filter(|k| *k != me);
                 match k.code {
                     KeyCode::Up => Some(Popup::Members(at.saturating_sub(1))),
                     KeyCode::Down => Some(Popup::Members((at + 1).min(n.saturating_sub(1)))),
                     KeyCode::Char('a') if admin => Some(Popup::InviteToGroup(0)),
-                    KeyCode::Char('x') if admin => {
-                        let who = self.engine.data.groups[g]
-                            .members()
-                            .get(at)
-                            .map(|m| m.ed25519);
-                        who.filter(|k| *k != self.engine.me())
-                            .map(Popup::RemoveMember)
+                    KeyCode::Char('x') if main => other.map(Popup::RemoveMember),
+                    KeyCode::Char('m') if main => other.map(|k| {
+                        let what = if admins.contains(&k) {
+                            AdminChange::Unmake
+                        } else {
+                            AdminChange::Make
+                        };
+                        Popup::Admin(what, k)
+                    }),
+                    KeyCode::Char('h') if main => {
+                        other.map(|k| Popup::Admin(AdminChange::HandOver, k))
                     }
+                    KeyCode::Char('d') if helper => Some(Popup::Admin(AdminChange::StepDown, me)),
                     KeyCode::Esc => None,
                     _ => Some(Popup::Members(at)),
                 }
@@ -1733,6 +1760,25 @@ impl Main {
                         Ok(()) => self.status = "device removed".into(),
                         Err(e) => self.status = e,
                     }
+                }
+                None
+            }
+            Popup::Admin(what, who) => {
+                let Some(g) = self.group_index() else { return };
+                let done = match (what, k.code) {
+                    (AdminChange::Make, KeyCode::Char('y')) => self.engine.make_admin(g, &who),
+                    (AdminChange::Unmake, KeyCode::Char('y')) => self.engine.remove_admin(g, &who),
+                    (AdminChange::StepDown, KeyCode::Char('y')) => self.engine.step_down(g),
+                    (AdminChange::HandOver, KeyCode::Char('y')) => {
+                        self.engine.hand_over_group(g, &who, false)
+                    }
+                    (AdminChange::HandOver, KeyCode::Char('l')) => {
+                        self.engine.hand_over_group(g, &who, true)
+                    }
+                    _ => Ok(()),
+                };
+                if let Err(e) = done {
+                    self.status = e;
                 }
                 None
             }

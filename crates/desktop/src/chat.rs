@@ -737,7 +737,12 @@ impl Chat {
                         ui.label(RichText::new(&name).strong().size(16.0));
                         let (mut state, ok) = group_state(group);
                         if admin {
-                            state.push_str(" · YOU ARE ADMIN");
+                            let main = group.main_admin() == Some(self.engine.me());
+                            state.push_str(if main {
+                                " · YOU ARE MAIN ADMIN"
+                            } else {
+                                " · YOU ARE AN ADMIN"
+                            });
                         }
                         ui.label(caps(&state, if ok { p.accent } else { p.dim }));
                         // ADR-038: say why its messages are not here yet.
@@ -1959,6 +1964,14 @@ mod tests {
             (Dialog::Members, "team · members"),
             (Dialog::InviteToGroup(String::new()), "Invite to the group"),
             (Dialog::RemoveMember([1; 32]), "Remove from the group"),
+            (
+                Dialog::Admin(crate::dialog::AdminChange::Make, [1; 32]),
+                "Make an admin",
+            ),
+            (
+                Dialog::Admin(crate::dialog::AdminChange::HandOver(false), [1; 32]),
+                "Hand the group over",
+            ),
             (Dialog::LeaveGroup, "Leave the group"),
             (Dialog::DeleteMessage(0), "Delete it for everyone"),
         ];

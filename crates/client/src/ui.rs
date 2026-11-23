@@ -16,7 +16,8 @@ use termchat_core::proto::Invite;
 use termchat_core::{fingerprint, safety_number};
 
 use crate::app::{
-    App, Compose, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY, Toast, Unlock,
+    AdminChange, App, Compose, Doc, Main, Popup, ROW_KEY, Screen, Share, TAB_KEY, TABS, TOAST_KEY,
+    Toast, Unlock,
 };
 use crate::data::{Contact, Status};
 use crate::form::Form;
@@ -645,7 +646,8 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             );
         }
         if g.is_admin() {
-            flag("admin".into(), t.mauve);
+            let main = g.main_admin() == Some(m.engine.me());
+            flag(if main { "main admin" } else { "admin" }.into(), t.mauve);
         }
         if g.left {
             flag("you are no longer in this group".into(), t.overlay0);
@@ -1562,6 +1564,7 @@ fn popup_pane(
         Popup::Members(at) => {
             let Some(g) = m.current_group() else { return };
             let me = m.engine.me();
+            let admins = g.admin_keys();
             let rows: Vec<(char, String)> = g
                 .members()
                 .iter()
@@ -1570,18 +1573,27 @@ fn popup_pane(
                     if x.ed25519 == me {
                         label.push_str("  (you)");
                     }
-                    if g.roster.as_ref().is_some_and(|r| r.admin == x.ed25519) {
-                        label.push_str("  admin");
+                    match admins.iter().position(|k| *k == x.ed25519) {
+                        Some(0) => label.push_str("  main admin"),
+                        Some(_) => label.push_str("  admin"),
+                        None => {}
                     }
                     ('·', format!("{label}  {}", &fingerprint(&x.ed25519)[..11]))
                 })
                 .collect();
             let mut lines = menu_rows(t, &rows, *at, 52);
             let mut buttons: Vec<Button> = Vec::new();
+            let main = g.is_admin() && admins.first() == Some(&me);
             if g.is_admin() {
                 lines.push(Line::from(""));
                 buttons.push(("a invite a contact", false, key(KeyCode::Char('a'))));
+            }
+            if main {
                 buttons.push(("x remove", false, key(KeyCode::Char('x'))));
+                buttons.push(("m admin on/off", false, key(KeyCode::Char('m'))));
+                buttons.push(("h hand over", false, key(KeyCode::Char('h'))));
+            } else if g.is_admin() {
+                buttons.push(("d step down", false, key(KeyCode::Char('d'))));
             }
             buttons.push(("esc close", false, esc));
             window(
@@ -1737,9 +1749,62 @@ fn popup_pane(
             ];
             window(f, t, h, "remove a device", lines, &buttons, 60, true);
         }
+        Popup::Admin(what, who) => {
+            let name = m
+                .current_group()
+                .and_then(|g| g.name_of(who))
+                .map_or_else(String::new, clean);
+            let (title, text) = match what {
+                AdminChange::Make => (
+                    "make an admin",
+                    format!(
+                        "Make {name} an admin?\nThey can invite their own contacts. Only you remove people,\nname the group and set its timer. Choose someone you trust:\nan admin can also cut a member off at the relay."
+                    ),
+                ),
+                AdminChange::Unmake => (
+                    "remove an admin",
+                    format!(
+                        "Take the admin role from {name}?\nThey stay a member. The group moves to a new queue,\nso the key they held opens nothing."
+                    ),
+                ),
+                AdminChange::StepDown => (
+                    "step down",
+                    "Stop being an admin?\nYou stay a member; the main admin moves the group."
+                        .to_string(),
+                ),
+                AdminChange::HandOver => (
+                    "hand the group over",
+                    format!(
+                        "Make {name} the main admin?\nYou can no longer remove people, name the group or set\nits timer. They move the group to a new queue."
+                    ),
+                ),
+            };
+            let lines = plain(&text);
+            let mut buttons = vec![("y yes", true, key(KeyCode::Char('y')))];
+            if *what == AdminChange::HandOver {
+                buttons = vec![
+                    ("y hand over, stay", true, key(KeyCode::Char('y'))),
+                    ("l hand over, leave", false, key(KeyCode::Char('l'))),
+                ];
+            }
+            buttons.push(("esc cancel", false, esc));
+            window(f, t, h, title, lines, &buttons, 66, true);
+        }
         Popup::LeaveGroup => {
-            let lines =
-                plain("Leave this group?\nThe others are told; the chat stays here, read-only.");
+            let mut text =
+                "Leave this group?\nThe others are told; the chat stays here, read-only."
+                    .to_string();
+            // ADR-042, section 4: who runs the group after us.
+            if let Some(g) = m.current_group() {
+                let admins = g.admin_keys();
+                if admins.first() == Some(&m.engine.me()) {
+                    match admins.get(1).and_then(|k| g.name_of(k)) {
+                        Some(n) => text.push_str(&format!("\n{} becomes the main admin.", clean(n))),
+                        None => text.push_str("\nNobody can change the group after you:\nmake someone an admin first, or hand it over."),
+                    }
+                }
+            }
+            let lines = plain(&text);
             let buttons = [
                 ("y leave", true, key(KeyCode::Char('y'))),
                 ("esc stay", false, esc),
