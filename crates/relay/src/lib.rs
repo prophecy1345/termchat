@@ -712,11 +712,24 @@ fn handle(
             }])
         }
 
-        ClientFrame::RemoveReader {
-            group_id,
-            token,
-            recv_id,
-        } => {
+        frame @ (ClientFrame::RemoveReader { .. } | ClientFrame::RemoveReaderAt { .. }) => {
+            let (group_id, token, recv_id) = match frame {
+                ClientFrame::RemoveReader {
+                    group_id,
+                    token,
+                    recv_id,
+                } => (group_id, token, Some(recv_id)),
+                // ADR-042: named by its send_id, found only in this group below.
+                ClientFrame::RemoveReaderAt {
+                    group_id,
+                    token,
+                    send_id,
+                } => (group_id, token, db(relay.db.recv_id(&send_id))?),
+                _ => return unknown(None),
+            };
+            let Some(recv_id) = recv_id else {
+                return unknown(None);
+            };
             if !db(relay.db.owns_group(&group_id, &token))?
                 || !db(relay.db.is_reader(&group_id, &recv_id))?
             {

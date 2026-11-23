@@ -590,6 +590,48 @@ async fn only_the_admin_changes_readers_and_a_removed_reader_hears_nothing() {
 }
 
 #[tokio::test]
+async fn adr_042_a_reader_is_removed_by_its_send_id_in_its_own_group_only() {
+    let url = start(Limits::default()).await;
+    let mut admin = Ws::new(&url).await;
+    let (g, other_g) = (admin.group().await, admin.group().await);
+    let r = admin.reader(&g).await;
+    let theirs = admin.reader(&other_g).await;
+    let at = |group_id, token, send_id| ClientFrame::RemoveReaderAt {
+        group_id,
+        token,
+        send_id,
+    };
+
+    // Not with a reader's token, not through another group, not the group's
+    // own send_id, nothing unknown: the same answer as no queue.
+    for frame in [
+        at(g.id, r.token, r.send_id),
+        at(g.id, g.token, theirs.send_id),
+        at(other_g.id, other_g.token, r.send_id),
+        at(g.id, g.token, g.send_id),
+        at(g.id, g.token, [9; 16]),
+    ] {
+        admin.send(frame).await;
+        assert_eq!(admin.recv().await, err(None, ErrorCode::UnknownQueue));
+    }
+
+    admin.send(at(g.id, g.token, r.send_id)).await;
+    assert_eq!(
+        admin.recv().await,
+        ServerFrame::ReaderRemoved { recv_id: r.recv_id }
+    );
+    let mut gone = Ws::new(&url).await;
+    gone.send(ClientFrame::Subscribe {
+        recv_id: r.recv_id,
+        token: r.token,
+    })
+    .await;
+    assert_eq!(gone.recv().await, err(None, ErrorCode::UnknownQueue));
+    // The other group's reader is untouched.
+    assert!(gone.subscribe(&theirs).await.is_empty());
+}
+
+#[tokio::test]
 async fn a_group_holds_at_most_32_readers() {
     let limits = Limits {
         queues_per_ip: Rate {

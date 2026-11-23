@@ -155,6 +155,13 @@ pub enum ClientFrame {
         group_id: QueueId,
         token: QueueToken,
     },
+    /// ADR-042: `RemoveReader` for a reader named by its `send_id`, which the
+    /// roster gives for every reader, those another admin made included.
+    RemoveReaderAt {
+        group_id: QueueId,
+        token: QueueToken,
+        send_id: QueueId,
+    },
 }
 
 /// Relay to client. `Error` stays variant 7, as in version 1, so an old
@@ -1620,6 +1627,11 @@ mod tests {
             ClientFrame::DeleteGroup {
                 group_id: [1; 16],
                 token: [2; 32],
+            },
+            ClientFrame::RemoveReaderAt {
+                group_id: [1; 16],
+                token: [2; 32],
+                send_id: [4; 16],
             },
         ] {
             assert_eq!(ClientFrame::decode(&f.encode()).unwrap(), f);
