@@ -193,6 +193,16 @@ What the relay sees: nothing new. Olm envelopes already appear in a reader's que
 
 Read sections 3 to 5 and A2 with this amendment: where they say the signer moves the group, the main admin does.
 
+## Amendment 3 (2026-11-23, the owner chose option A): the old queue on a move
+
+Found during implementation. Until now the main admin deleted the old queue right after a move (`DeleteGroup`), and that protected members: one who had not yet heard of the move could not write where the removed one would read it. With helpers this cannot stay: members a helper invited hear from the main admin through their reader (amendment 2), the reader lives in the old queue, and `DeleteGroup` would wipe the `GroupMove` before it is read.
+
+1. **Relay: a new frame `RemoveReaderAt { group_id, token, send_id }`.** The same as `RemoveReader`, but the reader is named by its `send_id`: the main admin knows it from the roster for every reader, those a helper made included, while the `recv_id` only for their own. The relay looks for the reader only in this group and only with the admin token. It learns nothing new: it knows the reader's `send_id` already.
+2. **A move:** the main admin removes the removed ones' readers at once (`RemoveReaderAt`), sends `GroupMove` (to contacts over the chat, to others through their reader in the old queue) and deletes the old queue once every remaining member has shown up in the new one (sent a key or a message), but **no later than 24 hours**.
+3. **Read first, then write:** after connecting to a group, a client sends what it has queued there only once it has read everything waiting in its reader. A member who fell behind a move gets the `GroupMove` first and writes to the new queue.
+4. **What remains:** a removed **admin** knows the old queue's token and, while it lives (up to 24 hours), can add a reader for themselves. They would read only what stragglers write there with the old Megolm session, and point 3 makes that nearly impossible. A removed ordinary member has no token and after `RemoveReaderAt` reads nothing.
+5. **An old relay** does not know `RemoveReaderAt` and answers with an error. The main admin then deletes the old queue at once, as before, and members a helper invited who are not the main admin's contacts drop out of the group. The main admin's app warns about this. The termchat.app relay is updated with the release (ADR-010).
+
 ## Owner's decisions (2026-11-23)
 
 1. The creator (main admin) cannot be removed: they only leave themselves.
