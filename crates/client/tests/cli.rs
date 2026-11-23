@@ -470,15 +470,32 @@ async fn a_server_identity_sends_and_receives_from_the_command_line() {
         .await,
     );
     assert_eq!(code, Some(0), "{err}");
-    let line: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    // ADR-041: a delivery receipt for the server's own message may come
+    // first, after its random delay; the answer is the message line.
+    let messages = |out: &str| -> Vec<serde_json::Value> {
+        out.lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v["kind"] == "message")
+            .collect()
+    };
+    let lines = messages(&out);
+    let line = lines.first().expect("the answer");
     assert_eq!(
         line["from"],
         "alice·".to_string() + &termchat_core::fingerprint(&phone.me())[..5]
     );
     assert_eq!(line["text"], "yes, restart[2J");
     assert!(!out.contains('\u{1b}'), "no escape sequence in the output");
-    let (code, out, _) = text(&termchat(&mut phone, &home, &["recv", "--password-file", pw]).await);
-    assert_eq!((code, out.as_str()), (Some(0), ""), "each message once");
+    let (code, out, _) = text(
+        &termchat(
+            &mut phone,
+            &home,
+            &["recv", "--json", "--password-file", pw],
+        )
+        .await,
+    );
+    assert_eq!(code, Some(0));
+    assert!(messages(&out).is_empty(), "each message once: {out}");
 
     // Wrong contact, wrong password, a password file others can read.
     let (code, _, err) = text(
