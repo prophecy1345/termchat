@@ -23,6 +23,7 @@ const MOVE_RETRY: Duration = Duration::from_secs(30);
 const RETIRE_AFTER: u64 = 24 * 3600;
 
 const GROUP_ACCESS_LOST: &str = "this device is not in the group";
+const CUT_OFF: &str = "the relay no longer knows your place in this group: an admin may have cut you off; ask the main admin";
 const GROUP_SAVE_FAILED: &str = "could not save the group message before sending";
 const GROUP_ENCRYPT_FAILED: &str = "could not encrypt the group message";
 
@@ -195,6 +196,7 @@ impl Engine {
         };
         // Until the relay's key count says the backlog is out.
         self.group_read.remove(&group.id);
+        self.group_subscribing.insert(group.id);
         let group = &self.data.groups[g];
         let push = group.push.clone();
         self.group_send(
@@ -1382,6 +1384,22 @@ impl Engine {
                 code: ErrorCode::NoKeys,
                 ..
             } => self.reclaim = Some(Instant::now() + RECLAIM_AFTER),
+            // ADR-042, A1: our reader is refused: an admin may have cut us
+            // off at the relay. shortcut: an earlier frame's unknown queue
+            // that lands while the subscribe waits is taken for it too.
+            ServerFrame::Error {
+                client_id: None,
+                code: ErrorCode::UnknownQueue,
+            } if self.group_subscribing.remove(&self.data.groups[g].id)
+                && !self.group_moving(g)
+                && !self.data.groups[g].left =>
+            {
+                self.group_system(g, CUT_OFF.into());
+                self.persist();
+            }
+            ServerFrame::Subscribed { .. } => {
+                self.group_subscribing.remove(&self.data.groups[g].id);
+            }
             ServerFrame::Error { code, .. } => self.note(format!("group: {}", why(code))),
             _ => {}
         }

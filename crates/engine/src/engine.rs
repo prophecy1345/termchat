@@ -255,6 +255,8 @@ pub struct Engine {
     /// Groups whose reader's backlog came in since the link came up: only
     /// then do we write to them (ADR-042, amendment 3).
     group_read: BTreeSet<proto::GroupId>,
+    /// Groups whose reader we asked to read and the relay has not answered.
+    group_subscribing: BTreeSet<proto::GroupId>,
     /// Links asked to delete their queue, until the relay confirms.
     /// With the `DeleteQueue` sent on it, to send again if a new link for
     /// the same contact and relay starts before this one is done.
@@ -652,6 +654,7 @@ impl Engine {
             group_writes: BTreeMap::new(),
             group_move_retries: BTreeMap::new(),
             group_read: BTreeSet::new(),
+            group_subscribing: BTreeSet::new(),
             retiring: Vec::new(),
             events,
             events_tx,

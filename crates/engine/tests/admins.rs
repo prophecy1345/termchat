@@ -406,3 +406,59 @@ async fn a_hand_over_to_a_member_and_a_helper_who_steps_down() {
     settle(&mut e).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_cut_off_at_the_relay_is_told() {
+    use futures_util::{SinkExt, StreamExt};
+    use termchat_proto::{ClientFrame, VERSION};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (mut e, url, dir) = world("cut").await;
+    group_with_helper(&mut e).await;
+    // Bob, a helper, uses the queue token to drop Carol's reader: the relay
+    // cannot tell (ADR-042, A1), but Carol's app can say so.
+    let (group_id, token) = e[BOB].data.groups[0].admin.unwrap();
+    let carol = e[CAROL].me();
+    let send_id = e[BOB].data.groups[0]
+        .members()
+        .iter()
+        .find(|m| m.ed25519 == carol)
+        .unwrap()
+        .reader;
+    let (mut ws, _) = tokio_tungstenite::connect_async(url.as_str())
+        .await
+        .unwrap();
+    for f in [
+        ClientFrame::Hello { version: VERSION },
+        ClientFrame::RemoveReaderAt {
+            group_id,
+            token,
+            send_id,
+        },
+    ] {
+        ws.send(Message::Binary(f.encode().into())).await.unwrap();
+    }
+    loop {
+        if let Some(Ok(Message::Binary(b))) = ws.next().await {
+            assert!(matches!(
+                ServerFrame::decode(&b).unwrap(),
+                ServerFrame::ReaderRemoved { .. }
+            ));
+            break;
+        }
+    }
+    // Carol comes back and her reader is refused.
+    e[CAROL].persist();
+    e[CAROL] = match Engine::unlock(&dir.join("carol"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(x) => x,
+        _ => panic!("carol's state"),
+    };
+    pump(&mut e, |e| {
+        e[CAROL].data.groups[0]
+            .messages
+            .iter()
+            .any(|m| m.text.contains("may have cut you off"))
+    })
+    .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
