@@ -647,22 +647,22 @@ impl Chat {
                             // Right to left: the last one stands first.
                             let helper = admins.iter().skip(1).any(|k| *k == m.ed25519);
                             if main && m.ed25519 != me {
-                                if ui.button("Remove…").clicked() {
+                                if ui.button("Remove").clicked() {
                                     remove = Some(m.ed25519);
                                 }
-                                if ui.button("Hand over…").clicked() {
+                                if ui.button("Hand over").clicked() {
                                     change = Some((AdminChange::HandOver(false), m.ed25519));
                                 }
                                 let (label, what) = if helper {
-                                    ("Remove admin…", AdminChange::Unmake)
+                                    ("Remove admin", AdminChange::Unmake)
                                 } else {
-                                    ("Make admin…", AdminChange::Make)
+                                    ("Make admin", AdminChange::Make)
                                 };
                                 if ui.button(label).clicked() {
                                     change = Some((what, m.ed25519));
                                 }
                             }
-                            if helper && m.ed25519 == me && ui.button("Step down…").clicked() {
+                            if helper && m.ed25519 == me && ui.button("Step down").clicked() {
                                 change = Some((AdminChange::StepDown, me));
                             }
                         });
