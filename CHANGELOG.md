@@ -3,6 +3,20 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.26.0
+
+- Delivered and read: two checks when your message is on a device of
+  theirs, two in the accent colour when they read it. Read receipts are
+  off by default and mutual: off, you neither send nor see them; delivery
+  receipts can be turned off too. Receipts wait a random few seconds, or
+  go with your next message, so their timing tells the relay less; never
+  in groups, never to a contact request (ADR-041). Contacts see them once
+  they update too.
+- Android: long press a chat or group in the list for its menu, without
+  opening it.
+- macOS desktop: the "New message" notification comes with the app's own
+  icon instead of Script Editor's.
+
 ## 0.25.0
 
 - `termchat hook` takes webhooks from Alertmanager, Grafana, Uptime Kuma,

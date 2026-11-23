@@ -1,0 +1,1 @@
+Delivered and read receipts: two checks when a message is on their phone, read receipts only if both turn them on (off by default). Long press a chat or group in the list for its menu.

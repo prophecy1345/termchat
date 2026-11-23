@@ -1477,6 +1477,10 @@ criteria = "safe-to-deploy"
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.objc2-user-notifications]]
+version = "0.3.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.once_cell]]
 version = "1.21.4"
 criteria = "safe-to-deploy"
