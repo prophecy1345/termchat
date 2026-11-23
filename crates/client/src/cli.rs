@@ -22,8 +22,9 @@ mod group;
 #[cfg(unix)]
 mod hook;
 mod run;
+mod unit;
 
-pub const COMMANDS: [&str; 15] = [
+pub const COMMANDS: [&str; 16] = [
     "init",
     "daemon",
     "invite",
@@ -39,6 +40,7 @@ pub const COMMANDS: [&str; 15] = [
     "hook",
     "page",
     "resolve",
+    "systemd-unit",
 ];
 
 const USAGE: &str = "usage:
@@ -61,6 +63,8 @@ const USAGE: &str = "usage:
   termchat page --to CONTACT [--then CONTACT ...] [--key KEY] [--every 5m]
                 [--escalate 15m] [--give-up 2h] TEXT   (repeats until ack CODE)
   termchat resolve --key KEY
+  termchat systemd-unit (CONTACT | --group NAME) [--password-file PATH]
+                                        (prints a unit that tells them when a unit fails)
   termchat hook --token-file PATH --route NAME=contact:CONTACT|group:GROUP [...]
                                         (monitoring webhooks; termchat hook --help)
 identity options: --password-file PATH | --password-stdin, --timeout SECS (default 60)
@@ -286,6 +290,15 @@ fn parse(args: &[String]) -> Result<Args, Fail> {
                 && a.key.as_ref().is_none_or(|k| !k.trim().is_empty())
         }
         "resolve" => n == 0 && a.key.as_ref().is_some_and(|k| !k.trim().is_empty()),
+        // PLAN D3.5: prints text, opens nothing.
+        "systemd-unit" => {
+            (n == 1) != a.group.is_some()
+                && !a.password_stdin
+                && a.wait.is_none()
+                && !a.follow
+                && !a.json
+                && a.timeout.is_none()
+        }
         // ADR-035: one recipient, a command, and no stdin taken from it.
         "run" => {
             n >= 1
@@ -348,6 +361,25 @@ async fn command(args: &[String]) -> Result<(), Fail> {
     let a = parse(args)?;
     if a.command == "run" {
         return run_job(a).await;
+    }
+    if a.command == "systemd-unit" {
+        let exe = std::env::current_exe().map_err(|e| Fail(1, e.to_string()))?;
+        let pw = a
+            .password_file
+            .as_ref()
+            .map(|p| std::path::absolute(p).unwrap_or_else(|_| p.clone()));
+        let home = std::path::absolute(data::home()).unwrap_or_else(|_| data::home());
+        let user = std::env::var("USER").ok();
+        let text = unit::unit(
+            a.positional.first().map(String::as_str),
+            a.group.as_ref(),
+            &exe,
+            &home,
+            user.as_deref(),
+            pw.as_deref(),
+        )?;
+        print!("{text}");
+        return Ok(());
     }
     execute(&a).await
 }

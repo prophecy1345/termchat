@@ -112,6 +112,7 @@ pub(super) fn validate_args(a: &Args) -> Result<(), Fail> {
             "send" => a.wait.is_none() && !a.follow && !a.json,
             "recv" => a.wait.is_none() || !a.follow,
             "run" => a.wait.is_none() && !a.follow && !a.json,
+            "systemd-unit" => a.wait.is_none() && !a.follow && !a.json,
             _ => false,
         }
     {

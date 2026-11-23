@@ -120,6 +120,19 @@ Add a `.timer` for a schedule. With cron, `crontab -u termchat-bot -e`:
 
 systemd's `LoadCredential=` does not fit: the copy it makes belongs to root, and termchat accepts only a password file of its own user.
 
+### When a unit fails
+
+`termchat systemd-unit` prints a unit that tells a contact or a group when any other unit fails. Run it as the account the identity belongs to: the unit takes that account, its `TERMCHAT_HOME` and the path of the `termchat` that ran. It opens no identity, reads no password and writes no file.
+
+```sh
+sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot \
+  termchat systemd-unit alice --password-file /etc/termchat-bot/pw \
+  | sudo tee /etc/systemd/system/termchat-failed@.service
+sudo systemctl daemon-reload
+```
+
+Then add `OnFailure=termchat-failed@%n.service` to the `[Unit]` section of each unit to watch. When one fails, alice gets "backup.service failed on myserver". Use `--group NAME` for a group. Without `--password-file` the unit needs `termchat daemon` running for that identity. A name with `"`, `\`, `%`, `$` or `'` cannot go into a unit: rename the contact or group first.
+
 One identity runs one command at a time: a second one at the same moment ends with code 1 and says the identity is open elsewhere. A daemon lifts that limit.
 
 ## A daemon, for a bot that answers

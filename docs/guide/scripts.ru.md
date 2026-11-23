@@ -120,6 +120,19 @@ ExecStart=/bin/sh -c 'df -h / | /usr/local/bin/termchat send alice --password-fi
 
 `LoadCredential=` из systemd не подходит: копия, которую он делает, принадлежит root, а termchat принимает только файл пароля своего пользователя.
 
+### Когда юнит упал
+
+`termchat systemd-unit` печатает юнит, который сообщает контакту или группе, что упал любой другой юнит. Запускайте его от учётной записи, которой принадлежит личность: юнит берёт эту учётную запись, её `TERMCHAT_HOME` и путь к запущенному `termchat`. Он не открывает личность, не читает пароль и не пишет файлов.
+
+```sh
+sudo -u termchat-bot env TERMCHAT_HOME=/var/lib/termchat-bot \
+  termchat systemd-unit alice --password-file /etc/termchat-bot/pw \
+  | sudo tee /etc/systemd/system/termchat-failed@.service
+sudo systemctl daemon-reload
+```
+
+Затем добавьте `OnFailure=termchat-failed@%n.service` в раздел `[Unit]` каждого юнита, за которым нужно следить. Когда он упадёт, alice получит «backup.service failed on myserver». Для группы — `--group NAME`. Без `--password-file` юниту нужен запущенный `termchat daemon` этой личности. Имя с `"`, `\`, `%`, `$` или `'` в юнит не попадёт: сначала переименуйте контакт или группу.
+
 Одна личность выполняет одну команду за раз: вторая в тот же момент завершится с кодом 1 и скажет, что личность открыта в другом месте. Служба снимает это ограничение.
 
 ## Служба для бота, который отвечает
