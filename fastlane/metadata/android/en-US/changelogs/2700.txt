@@ -1,0 +1,1 @@
+Several admins in a group: the main admin makes up to three more, who invite their own contacts. Only the main admin removes people and sets the timer; they hand the group over or leave, and the first admin made takes over.

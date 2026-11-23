@@ -3,6 +3,18 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.27.0
+
+- Several admins in a group: the main admin makes up to three more, who
+  invite their own contacts and can step down. Only the main admin
+  removes people, sets the timer and makes admins; nobody can remove the
+  main admin, who hands the group over or leaves, and then the admin made
+  first takes over. Each change is checked by every member against the
+  list in force, and a removed admin's key opens nothing once the group
+  moves (ADR-042). Every member needs this version first.
+- A member whose place in a group the relay no longer knows is told so:
+  an admin may have cut them off at the relay.
+
 ## 0.26.0
 
 - Delivered and read: two checks when your message is on a device of
