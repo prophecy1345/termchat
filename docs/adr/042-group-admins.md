@@ -178,6 +178,21 @@ A list takes effect only when the roster with the same `no` from the same `signe
 
 This changes section 7: instead of "a new kind of roster", `GroupAdmins` next to the old roster. An old client rejects a roster not signed by the creator, so the "all devices at level 6" rule stays. "No format rollback" is no longer needed: there is one format. Instead: while a group has an accepted `AdminList`, a roster without a matching list from the same signer is checked against the last accepted list, not against the old roster's `admin` field.
 
+## Amendment 2 (2026-11-23, approved by the owner): the reader channel and who moves the group
+
+Found during implementation. One to one, an admin talks to a member over their chat (`GroupMove`, `GroupLeave` on removal, `GroupInvite`), so only to contacts. The reader channel (Olm with a one-time key claimed from the reader, ADR-027, section 3) carries only `GroupKey` now. With one admin that was enough: they invited everyone, everyone is their contact. With helpers it is not: members a helper invited are not the main admin's contacts, so on a move the main admin could not send them `GroupMove` and they would drop out of the group.
+
+1. **The reader channel also carries `GroupMove`, `GroupLeave` (removal) and `GroupAdminKeys`.** The receiver accepts them only if the Olm sender is a device of an admin in the list in force, and for `GroupMove` and `GroupLeave` of the **main** admin. Anything else on this channel is dropped, as now. The sender's Olm key comes from the roster an admin signed (as for `GroupKey` now), so nothing new is trusted: a member already trusts the roster for others' keys.
+2. **Only the main admin in force moves the group.** Less code, and it closes A2 almost entirely: a helper cannot take the group away, because nobody accepts their `GroupMove`. Hence:
+   - **A helper steps down:** they sign the list without themselves and a roster. The main admin, accepting it, moves the group. Until then the former helper still knows the old queue's token. They left on their own, and the window lasts until the main admin's next connection.
+   - **Handing over:** the main admin signs a list and a roster with the successor first. If the successor was not a helper, the main admin first sends them `GroupAdminKeys`. The **successor** then moves the group: they sign the next roster, the former main admin no longer can.
+   - **The main admin leaves with `GroupResign`:** the successor moves the group, as in section 4.
+3. **Only the main admin sends `GroupAdminKeys`**, only to those in their new list, over their chat or the reader.
+
+What the relay sees: nothing new. Olm envelopes already appear in a reader's queue (key transfer), and a `GroupMove` looks like them in size and timing.
+
+Read sections 3 to 5 and A2 with this amendment: where they say the signer moves the group, the main admin does.
+
 ## Owner's decisions (2026-11-23)
 
 1. The creator (main admin) cannot be removed: they only leave themselves.
