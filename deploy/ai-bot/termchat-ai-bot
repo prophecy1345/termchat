@@ -26,6 +26,7 @@ import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULTS = {
@@ -53,16 +54,26 @@ def config():
         sys.exit("termchat-ai-bot: set AI_ALLOW to the fingerprints allowed to use the bot")
     key = env("AI_KEY")
     if env("AI_KEY_FILE"):
+        # Review 2026-11d, note 6: a key file others can read is refused, as
+        # termchat refuses such a password file.
+        if os.stat(env("AI_KEY_FILE")).st_mode & 0o077:
+            sys.exit("termchat-ai-bot: AI_KEY_FILE must be readable by its owner only (chmod 600)")
         with open(env("AI_KEY_FILE"), encoding="utf-8") as f:
             key = f.read().strip()
     extra = json.loads(env("AI_EXTRA", "{}"))
     if not isinstance(extra, dict):
         sys.exit("termchat-ai-bot: AI_EXTRA must be a JSON object")
     url, model = DEFAULTS[api]
+    url = env("AI_URL", url).rstrip("/")
+    # Plain http only to this machine (a local Ollama): elsewhere the key and
+    # the messages would go in the clear.
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if url.startswith("http://") and host not in ("localhost", "127.0.0.1", "::1"):
+        sys.exit("termchat-ai-bot: AI_URL must be https:// unless it is on this machine")
     return {
         "api": api,
         "allow": allow,
-        "url": env("AI_URL", url).rstrip("/"),
+        "url": url,
         "model": env("AI_MODEL", model),
         "key": key,
         "system": env("AI_SYSTEM", "You are a helpful assistant. Answer in plain text, no Markdown."),
