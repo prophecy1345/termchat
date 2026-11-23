@@ -757,6 +757,11 @@ impl std::fmt::Debug for ReaderGrant {
 /// Admins of one group, the main admin included (ADR-042).
 pub const MAX_GROUP_ADMINS: usize = 4;
 
+/// How far ahead of ours a roster or admin list may number itself (ADR-042,
+/// amendment 4): a member far behind still catches up, and nobody takes the
+/// last number.
+pub const MAX_ROSTER_STEP: u64 = 1024;
+
 /// Admin lists in one `GroupAdmins` (ADR-042): enough to catch up after a gap.
 pub const MAX_ADMIN_CHAIN: usize = 8;
 
@@ -881,6 +886,16 @@ impl Roster {
         check_group_name(&self.name)?;
         if self.members.len() > MAX_GROUP_MEMBERS {
             return Err(Error::TooLarge);
+        }
+        // Review 2026-11d, finding 2: one entry per key, as in admin and
+        // device lists; a double could never be removed.
+        let doubled = self
+            .members
+            .iter()
+            .enumerate()
+            .any(|(i, m)| self.members[..i].iter().any(|e| e.ed25519 == m.ed25519));
+        if doubled {
+            return Err(Error::Malformed);
         }
         self.members
             .iter()
@@ -2129,6 +2144,37 @@ mod tests {
         assert_eq!(
             GroupInner::from_padded(&group.to_padded().unwrap()).unwrap(),
             group
+        );
+    }
+
+    #[test]
+    fn review_2026_11d_a_roster_names_each_key_once() {
+        let member = |k: u8| RosterMember {
+            ed25519: [k; 32],
+            curve25519: [k; 32],
+            nickname: "m".into(),
+            reader: [k; 16],
+        };
+        let roster = |members: Vec<RosterMember>| {
+            with(Body::GroupRoster {
+                roster: Roster {
+                    group: [7; 16],
+                    no: 2,
+                    admin: [1; 32],
+                    name: "g".into(),
+                    members,
+                    expires_in: None,
+                    signature: [0; 64],
+                },
+            })
+            .to_padded()
+        };
+        assert!(roster(vec![member(1), member(2)]).is_ok());
+        let mut twice = member(1);
+        twice.reader = [9; 16];
+        assert_eq!(
+            roster(vec![member(1), member(2), twice]),
+            Err(Error::Malformed)
         );
     }
 
