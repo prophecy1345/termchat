@@ -27,6 +27,14 @@ termchat.app never puts a name or a text where the operating system keeps them.
 - **Desktop:** the system sound for new messages and, on macOS and Linux, a system notification that only says "New message" while the window is not in front, both in **Appearance**. Linux needs `notify-send` (package `libnotify-bin` or `libnotify`). Windows has no notification yet.
 - **Android:** see [Android](android.md): "termchat.app: New message", with no name and no text.
 
+## Receipts
+
+- **Delivery receipts** (on by default) tell a contact that their message is on your device: they see two checks. Off: you send none, and still see theirs.
+- **Read receipts** (off by default) tell them you read it while the chat was open, and show you when they read yours. It is mutual: off, you neither send nor see them.
+- **Terminal:** the notifications tab (**Ctrl+P**, **s**). **Desktop:** **Receipts** in Settings. **Android:** Settings → Notifications.
+
+A receipt is encrypted like a message, but its timing is visible: a small message goes back soon after one arrives, so over time the relay can tell which two queues talk and when the device is online ([threat model](../threat-model.md)). Turn delivery receipts off if that matters more than the checks.
+
 ## Mouse (terminal)
 
 The **interface** tab turns the mouse on or off. While it is on, the terminal's own text selection needs **Shift** held while dragging.

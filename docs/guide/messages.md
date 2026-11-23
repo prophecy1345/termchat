@@ -11,7 +11,7 @@ description: "Sending messages and documents in termchat.app, answering, editing
 
 Type and send: **Enter** in the terminal and the desktop app (**Shift+Enter** there starts a new line), **Send** on Android. A message holds up to 16 000 bytes: about 16 000 Latin or 8 000 Cyrillic characters. Pasted text is only text; it never acts as key presses.
 
-Next to your messages: `…` (terminal) or "sending" while it goes out, `✓` or "sent" once the relay has it, `✗` or "failed" with the reason.
+Next to your messages: `…` (terminal) or "sending" while it goes out, one check (`✓`) once the relay has it, `✗` or "failed" with the reason. In a chat, two checks (`✓✓`) say it is on a device of theirs, and two in the theme's accent colour that they read it. Their app sends these a few seconds to half a minute later, or with its next message; a contact on 0.25 or older sends none, and groups have none. Both can be turned off in [Settings](settings.md).
 
 If your contact is offline, the relay keeps the encrypted message for up to 14 days and hands it over when they come back.
 
