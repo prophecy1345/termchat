@@ -568,6 +568,26 @@ pub enum Body {
         files: Vec<u32>,
         read: bool,
     },
+    /// ADR-042: the group's admin lists, oldest first, each signed by an
+    /// admin of the list before it; the last one is current. Sent just before
+    /// the roster it came with, in the same channel.
+    GroupAdmins {
+        group: GroupId,
+        chain: Vec<AdminList>,
+    },
+    /// ADR-042: the main admin leaves the role, inside the group, before
+    /// their `GroupLeave`; the next admin puts it into their list.
+    GroupResign {
+        group: GroupId,
+        resign: Resign,
+    },
+    /// ADR-042: the group queue's admin token, over Olm to one admin's
+    /// primary device only; never inside the group, never in a `Copy`.
+    GroupAdminKeys {
+        group: GroupId,
+        roster_no: u64,
+        grant: AdminGrant,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -579,7 +599,7 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 30;
+const KNOWN_KINDS: u32 = 33;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
@@ -720,6 +740,92 @@ pub struct ReaderGrant {
 impl std::fmt::Debug for ReaderGrant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReaderGrant").finish_non_exhaustive()
+    }
+}
+
+/// Admins of one group, the main admin included (ADR-042).
+pub const MAX_GROUP_ADMINS: usize = 4;
+
+/// Admin lists in one `GroupAdmins` (ADR-042): enough to catch up after a gap.
+pub const MAX_ADMIN_CHAIN: usize = 8;
+
+/// Who may change a group (ADR-042): the main admin first, then the helpers
+/// in the order they were made. `no` is the roster it came with; `signer`
+/// is an admin of the list before, and the receiver checks their right.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminList {
+    pub group: GroupId,
+    pub no: u64,
+    pub signer: Ed25519Key,
+    pub admins: Vec<Ed25519Key>,
+    /// The main admin's word that they left, when their successor signs.
+    pub resign: Option<Resign>,
+    #[serde(with = "serde_big_array")]
+    pub signature: Signature,
+}
+
+impl AdminList {
+    /// What the signer signs: everything but the signature.
+    pub fn signed_bytes(&self) -> Vec<u8> {
+        let fields = (self.group, self.no, self.signer, &self.admins, &self.resign);
+        postcard::to_allocvec(&fields).unwrap_or_default()
+    }
+
+    fn check(&self) -> Result<(), Error> {
+        if self.admins.len() > MAX_GROUP_ADMINS {
+            return Err(Error::TooLarge);
+        }
+        let doubled = self
+            .admins
+            .iter()
+            .enumerate()
+            .any(|(i, a)| self.admins[..i].contains(a));
+        if self.admins.is_empty() || doubled {
+            return Err(Error::Malformed);
+        }
+        Ok(())
+    }
+}
+
+/// The main admin's word that they leave the role at roster `roster_no`
+/// (ADR-042), signed by their identity key. The group is the list's own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resign {
+    pub roster_no: u64,
+    #[serde(with = "serde_big_array")]
+    pub signature: Signature,
+}
+
+impl Resign {
+    /// What the main admin signs: the group and the roster number.
+    pub fn signed_bytes(&self, group: &GroupId) -> Vec<u8> {
+        postcard::to_allocvec(&(group, self.roster_no)).unwrap_or_default()
+    }
+}
+
+fn check_admin_chain(group: &GroupId, chain: &[AdminList]) -> Result<(), Error> {
+    if chain.len() > MAX_ADMIN_CHAIN {
+        return Err(Error::TooLarge);
+    }
+    chain.iter().try_for_each(AdminList::check)?;
+    let in_order = chain.windows(2).all(|w| w[0].no < w[1].no);
+    if chain.is_empty() || !in_order || chain.iter().any(|l| l.group != *group) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
+
+/// The admin token of a group queue (ADR-042), for another admin.
+/// `Debug` hides the token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminGrant {
+    pub queue: QueueId,
+    pub token: QueueToken,
+}
+
+impl std::fmt::Debug for AdminGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminGrant").finish_non_exhaustive()
     }
 }
 
@@ -891,7 +997,10 @@ impl GroupInner {
     fn check_body(&self) -> Result<(), Error> {
         match &self.body {
             // ADR-041: receipts are between two people, never in a group.
-            Body::Heartbeat { .. } | Body::Receipt { .. } => Err(Error::Malformed),
+            // ADR-042: every member would read the admin token.
+            Body::Heartbeat { .. } | Body::Receipt { .. } | Body::GroupAdminKeys { .. } => {
+                Err(Error::Malformed)
+            }
             body => check_body(body),
         }
     }
@@ -931,10 +1040,12 @@ fn check_body(body: &Body) -> Result<(), Error> {
         }
         Body::Unknown => Err(Error::Malformed),
         // One level: a copy of a copy is no message anyone sent.
+        // ADR-042: the admin token goes to the admin's primary device alone.
         Body::Copy { body, .. } => match **body {
-            Body::Copy { .. } | Body::Heartbeat { .. } | Body::Receipt { .. } => {
-                Err(Error::Malformed)
-            }
+            Body::Copy { .. }
+            | Body::Heartbeat { .. }
+            | Body::Receipt { .. }
+            | Body::GroupAdminKeys { .. } => Err(Error::Malformed),
             ref inner => check_body(inner),
         },
         Body::Receipt {
@@ -952,6 +1063,7 @@ fn check_body(body: &Body) -> Result<(), Error> {
             check_urls(relay_url, onion_url.as_deref())
         }
         Body::GroupRoster { roster } | Body::GroupMove { roster, .. } => roster.check(),
+        Body::GroupAdmins { group, chain } => check_admin_chain(group, chain),
         Body::GroupKey { key, .. } if key.0.len() > MAX_GROUP_KEY_BYTES => Err(Error::TooLarge),
         Body::LinkedContact { contact } => {
             check_nickname(&contact.nickname)?;
@@ -1186,15 +1298,10 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let receipt = Body::Receipt {
-            messages: vec![],
-            files: vec![],
-            read: false,
-        };
-        let raw = postcard::to_allocvec(&with(receipt)).unwrap();
+        let raw = postcard::to_allocvec(&with(admin_keys())).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
-        assert_eq!(raw[head.len()], 29);
+        assert_eq!(raw[head.len()], 32);
     }
 
     #[test]
@@ -1925,5 +2032,137 @@ mod tests {
             ..env
         };
         assert_eq!(Envelope::decode(&big.encode()), Err(Error::TooLarge));
+    }
+
+    fn admin_keys() -> Body {
+        Body::GroupAdminKeys {
+            group: [7; 16],
+            roster_no: 3,
+            grant: AdminGrant {
+                queue: [8; 16],
+                token: [9; 32],
+            },
+        }
+    }
+
+    fn admin_list(no: u64, admins: &[u8]) -> AdminList {
+        AdminList {
+            group: [7; 16],
+            no,
+            signer: [1; 32],
+            admins: admins.iter().map(|&a| [a; 32]).collect(),
+            resign: None,
+            signature: [3; 64],
+        }
+    }
+
+    fn admins(chain: Vec<AdminList>) -> Result<Vec<u8>, Error> {
+        with(Body::GroupAdmins {
+            group: [7; 16],
+            chain,
+        })
+        .to_padded()
+    }
+
+    #[test]
+    fn adr_042_admin_kinds_round_trip() {
+        let mut handed_over = admin_list(5, &[2, 3]);
+        handed_over.resign = Some(Resign {
+            roster_no: 4,
+            signature: [4; 64],
+        });
+        let full: Vec<u8> = (1..=MAX_GROUP_ADMINS as u8).collect();
+        let chain: Vec<AdminList> = (1..=MAX_ADMIN_CHAIN as u64)
+            .map(|no| admin_list(no, &full))
+            .collect();
+        for body in [
+            Body::GroupAdmins {
+                group: [7; 16],
+                chain: vec![admin_list(4, &[1, 2]), handed_over],
+            },
+            Body::GroupAdmins {
+                group: [7; 16],
+                chain,
+            },
+            Body::GroupResign {
+                group: [7; 16],
+                resign: Resign {
+                    roster_no: 4,
+                    signature: [4; 64],
+                },
+            },
+            admin_keys(),
+        ] {
+            let inner = with(body);
+            assert_eq!(
+                Inner::from_padded(&inner.to_padded().unwrap()).unwrap(),
+                inner
+            );
+        }
+        let group = GroupInner {
+            sender: [1; 32],
+            group: [7; 16],
+            body: Body::GroupResign {
+                group: [7; 16],
+                resign: Resign {
+                    roster_no: 4,
+                    signature: [4; 64],
+                },
+            },
+        };
+        assert_eq!(
+            GroupInner::from_padded(&group.to_padded().unwrap()).unwrap(),
+            group
+        );
+    }
+
+    #[test]
+    fn adr_042_a_bad_admin_chain_is_refused() {
+        assert_eq!(admins(vec![]), Err(Error::Malformed));
+        assert_eq!(admins(vec![admin_list(1, &[])]), Err(Error::Malformed));
+        assert_eq!(
+            admins(vec![admin_list(1, &[1, 2, 1])]),
+            Err(Error::Malformed)
+        );
+        let five: Vec<u8> = (1..=MAX_GROUP_ADMINS as u8 + 1).collect();
+        assert_eq!(admins(vec![admin_list(1, &five)]), Err(Error::TooLarge));
+        let long = (1..=MAX_ADMIN_CHAIN as u64 + 1)
+            .map(|no| admin_list(no, &[1]))
+            .collect();
+        assert_eq!(admins(long), Err(Error::TooLarge));
+        // Oldest first, each list newer than the one before.
+        let back = vec![admin_list(2, &[1]), admin_list(1, &[1])];
+        assert_eq!(admins(back), Err(Error::Malformed));
+        let same = vec![admin_list(2, &[1]), admin_list(2, &[1, 2])];
+        assert_eq!(admins(same), Err(Error::Malformed));
+        // Every list is of the group the message names.
+        let mut other = admin_list(2, &[1]);
+        other.group = [6; 16];
+        assert_eq!(
+            admins(vec![admin_list(1, &[1]), other]),
+            Err(Error::Malformed)
+        );
+    }
+
+    #[test]
+    fn adr_042_the_admin_token_stays_between_two_devices() {
+        // Inside the group every member would read it.
+        let group = GroupInner {
+            sender: [1; 32],
+            group: [7; 16],
+            body: admin_keys(),
+        };
+        assert_eq!(group.to_padded(), Err(Error::Malformed));
+        let raw = pad(postcard::to_allocvec(&group).unwrap());
+        assert_eq!(GroupInner::from_padded(&raw), Err(Error::Malformed));
+        // Nor to one's own linked devices.
+        let copy = with(Body::Copy {
+            contact: [5; 32],
+            body: Box::new(admin_keys()),
+        });
+        assert_eq!(copy.to_padded(), Err(Error::Malformed));
+        // And it does not show in logs.
+        let shown = format!("{:?}", admin_keys());
+        assert!(shown.ends_with("grant: AdminGrant { .. } }"), "{shown}");
     }
 }

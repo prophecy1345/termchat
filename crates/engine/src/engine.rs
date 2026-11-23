@@ -2261,6 +2261,10 @@ impl Engine {
                 return self.persist();
             }
             Body::GroupRoster { .. } => return self.persist(),
+            // ADR-042: not taken yet; this version still says level 5.
+            Body::GroupAdmins { .. } | Body::GroupResign { .. } | Body::GroupAdminKeys { .. } => {
+                return self.persist();
+            }
             // Pointing at messages waits for the request to be accepted.
             Body::Edit { .. } | Body::Delete { .. } | Body::React { .. } if got.request => {
                 return self.persist();
