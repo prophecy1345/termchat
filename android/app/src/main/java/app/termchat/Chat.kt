@@ -46,6 +46,13 @@ private const val MAX_FILE = 1 shl 20
 
 /** A picked document's name and bytes, at most 1 MiB (ADR-017): opaque, never opened. */
 internal fun readDocument(context: android.content.Context, uri: android.net.Uri): Pair<String, ByteArray> {
+    // Review 2026-11d, finding 5: another app's share could name our own
+    // private files (file://, or a provider of ours). Only another app's
+    // content goes out.
+    val authority = uri.authority.orEmpty()
+    require(uri.scheme == "content" && authority.isNotEmpty() && !authority.startsWith(context.packageName)) {
+        "this file cannot be shared"
+    }
     val r = context.contentResolver
     val name = r.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
         if (it.moveToFirst()) it.getString(0) else null
