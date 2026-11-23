@@ -1452,7 +1452,8 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
         last_author = Some(m.author);
         let mut mark = match &m.status {
             Status::Queued | Status::Sending(_) => " · sending".to_string(),
-            Status::Sent => " · sent".into(),
+            // ADR-041: drawn as checks after the time.
+            Status::Sent => String::new(),
             Status::Failed(why) => format!(" · failed: {why}"),
             _ => String::new(),
         };
@@ -1553,6 +1554,14 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         .small()
                         .color(colour),
                 );
+                if m.mine && m.status == Status::Sent {
+                    let (icon, tint, hint) = match (m.read, m.delivered) {
+                        (true, _) => (Icon::Checks, p.accent, "read"),
+                        (_, true) => (Icon::Checks, p.dim, "delivered"),
+                        _ => (Icon::Check, p.dim, "sent"),
+                    };
+                    crate::sprites::icon(ui, icon, 1.0, tint).on_hover_text(hint);
+                }
                 // In a group: each reaction once, how many, and who on hover.
                 if let (Some(g), Some(id)) = (v.group, m.id) {
                     let mut counts: Vec<(u8, Vec<String>)> = Vec::new();

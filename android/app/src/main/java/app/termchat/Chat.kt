@@ -435,6 +435,10 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
         } + if (msg.edited) " · edited" else ""
         Row(Modifier.padding(top = 3.dp, start = 2.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(meta, style = Tc.small.copy(color = if (failed) Tc.danger else Tc.dim))
+            // ADR-041: one check sent, two delivered, two in the accent colour read.
+            if (msg.mine && msg.status == "sent" && !msg.system) {
+                PixelIcon(if (msg.delivered || msg.read) "checks" else "check", if (msg.read) Tc.lime else Tc.dim, 12.dp)
+            }
             if (msg.counts.isNotEmpty()) {
                 // In a group: each reaction once, with how many chose it.
                 msg.counts.forEach {

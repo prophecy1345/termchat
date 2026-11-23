@@ -1051,6 +1051,17 @@ impl Chat {
                             );
                             ui.end_row();
                         }
+                        // ADR-041.
+                        ui.label("Receipts");
+                        ui.checkbox(&mut s.receipts, "Tell contacts their messages arrived")
+                            .on_hover_text("The relay can link your queues by the timing.");
+                        ui.end_row();
+                        ui.label("");
+                        ui.checkbox(
+                            &mut s.read_receipts,
+                            "Read receipts: send yours and see theirs (off: neither)",
+                        );
+                        ui.end_row();
                         ui.label("Lock after");
                         egui::ComboBox::from_id_salt("lock")
                             .width(220.0)

@@ -1165,6 +1165,14 @@ impl Main {
             1 => vec![
                 row("sound for new messages", s.sound),
                 row("system notification: \"termchat: new message\"", s.notify),
+                row(
+                    "tell contacts their messages arrived (✓✓; the relay can link your queues by timing)",
+                    s.receipts,
+                ),
+                row(
+                    "read receipts: send yours and see theirs (off: neither)",
+                    s.read_receipts,
+                ),
             ],
             2 => vec![row("mouse (off: the terminal selects text)", s.mouse)],
             _ => vec![
@@ -1270,9 +1278,12 @@ impl Main {
                     .map_or(s.theme.clone(), |t| t.0.into())
             }
             (1, 0) => s.sound = !s.sound,
-            (1, _) => s.notify = !s.notify,
+            (1, 1) => s.notify = !s.notify,
+            (1, 2) => s.receipts = !s.receipts,
+            (1, _) => s.read_receipts = !s.read_receipts,
             _ => s.mouse = !s.mouse,
         }
+        (self.engine.receipts, self.engine.read_receipts) = (s.receipts, s.read_receipts);
         if let Err(e) = s.save(&settings::path(&self.path)) {
             self.status = format!("cannot save settings: {e}");
         }

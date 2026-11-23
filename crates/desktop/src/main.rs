@@ -179,6 +179,8 @@ impl eframe::App for App {
         }
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         chat.notify = self.settings.notify;
+        chat.engine.receipts = self.settings.receipts;
+        chat.engine.read_receipts = self.settings.read_receipts;
         if chat.notify {
             badge::allow();
         }

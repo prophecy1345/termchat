@@ -73,6 +73,19 @@ class Model(private val context: Context) : Listener {
     /** Keep the relay connection while the app is in the background (ADR-012). */
     var stay by mutableStateOf(prefs.getBoolean("stay", false))
         private set
+    /** ADR-041: delivery receipts on, read receipts off and mutual, by default. */
+    var receipts by mutableStateOf(prefs.getBoolean("receipts", true))
+        private set
+    var readReceipts by mutableStateOf(prefs.getBoolean("read_receipts", false))
+        private set
+
+    fun receiptsOn(delivered: Boolean, read: Boolean) {
+        receipts = delivered
+        readReceipts = read
+        prefs.edit().putBoolean("receipts", delivered).putBoolean("read_receipts", read).apply()
+        account?.setReceipts(delivered, read)
+    }
+
     /** Minutes before the idle lock (ADR-021); plain, so the lock screen has it. */
     var lockMinutes by mutableIntStateOf(prefs.getInt("lock", 5).coerceIn(1, 30))
         private set
@@ -185,6 +198,7 @@ class Model(private val context: Context) : Listener {
 
     fun opened(a: Account) {
         account = a
+        a.setReceipts(receipts, readReceipts)
         if (a.push() != push) a.setPush(INSTANCE_DEFAULT, push)
         syncPush()
         lastInput = System.currentTimeMillis()

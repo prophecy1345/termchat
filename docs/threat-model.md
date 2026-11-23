@@ -88,6 +88,13 @@ that (ADR-023).
   reveal when a server is active or goes quiet through traffic timing. The
   relay sees encrypted messages and can delay or drop both heartbeats and
   alerts. The watcher needs a separate awake host and synchronized clocks.
+- **Delivery and read receipts** (ADR-041). A receipt is an encrypted
+  message like any other, but its timing has a shape: a small message
+  goes back a few seconds to half a minute after one arrives. Over time
+  this lets the relay link two queues as one conversation and see when the
+  contact's device is online. Read receipts, off by default, also show
+  roughly when they opened the chat. Turning delivery receipts off takes
+  this away for the messages you receive. No receipts in groups.
 - **Script approvals** (ADR-032). A response must come from the verified
   contact's primary device on its direct queue and match the current
   request's code. Anyone who can send as that device can approve a pending

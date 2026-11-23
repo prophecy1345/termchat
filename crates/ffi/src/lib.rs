@@ -136,6 +136,9 @@ pub struct MessageView {
     pub file_unsaved: bool,
     /// It can be answered and reacted to (ADR-025).
     pub pointable: bool,
+    /// Ours: on a device of theirs, and seen by them (ADR-041).
+    pub delivered: bool,
+    pub read: bool,
     /// Its text, or a received document still here, can go to another chat.
     pub forwardable: bool,
     pub edited: bool,
@@ -498,6 +501,8 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
                 .as_ref()
                 .is_some_and(|f| f.complete() && f.data.is_some()),
         pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
+        delivered: m.delivered,
+        read: m.read,
         forwardable: m.forwardable().is_some(),
         edited: m.edited,
         deleted: m.deleted,
@@ -660,6 +665,13 @@ impl Account {
     pub fn set_hurry_open(&self, on: bool) {
         let _rt = runtime().enter();
         self.lock().set_hurry_open(on);
+    }
+
+    /// ADR-041: send delivery receipts; send read receipts and show theirs.
+    /// The app keeps both with its other settings.
+    pub fn set_receipts(&self, delivered: bool, read: bool) {
+        let mut e = self.lock();
+        (e.receipts, e.read_receipts) = (delivered, read);
     }
 
     /// In a stable order: an index stays valid until a contact is deleted.

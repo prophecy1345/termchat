@@ -279,6 +279,16 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         else m.notifyOn(true)
     }
     MenuRow(
+        "Delivery receipts: ${if (m.receipts) "on" else "off"}",
+        "Contacts see two checks when their message is on your phone. " +
+            "The relay can link your conversation by the timing.",
+    ) { m.receiptsOn(!m.receipts, m.readReceipts) }
+    MenuRow(
+        "Read receipts: ${if (m.readReceipts) "on" else "off"}",
+        "Contacts see when you read their messages, and you see when they read yours. " +
+            "Off: neither.",
+    ) { m.receiptsOn(m.receipts, !m.readReceipts) }
+    MenuRow(
         "Stay connected in the background: ${if (m.stay) "on" else "off"}",
         "Messages arrive while the app is closed. Costs battery, shows a permanent " +
             "\"termchat.app is connected\" notice, and keeps your keys in memory: " +

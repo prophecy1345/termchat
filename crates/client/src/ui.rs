@@ -804,6 +804,9 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         }
         match &msg.status {
             Status::Queued | Status::Sending(_) => spans.push(Span::styled(" …", muted)),
+            // ADR-041: delivered, and read in the accent colour.
+            Status::Sent if msg.read => spans.push(Span::styled(" ✓✓", Style::new().fg(t.accent))),
+            Status::Sent if msg.delivered => spans.push(Span::styled(" ✓✓", muted)),
             Status::Sent => spans.push(Span::styled(" ✓", muted)),
             Status::Failed(why) => {
                 spans.push(Span::styled(format!(" ✗ {why}"), Style::new().fg(t.red)))

@@ -9,6 +9,8 @@ pub enum Icon {
     Document,
     Warning,
     Check,
+    /// Two checks: delivered, or read in the accent colour (ADR-041).
+    Checks,
     Edit,
     Reply,
     Close,
@@ -24,11 +26,12 @@ pub enum Icon {
 }
 
 /// All of them, in the order `ICONS` lists their names.
-pub const ALL: [Icon; 14] = [
+pub const ALL: [Icon; 15] = [
     Icon::Pin,
     Icon::Document,
     Icon::Warning,
     Icon::Check,
+    Icon::Checks,
     Icon::Edit,
     Icon::Reply,
     Icon::Close,
@@ -51,6 +54,7 @@ impl Icon {
             Icon::Document => "document",
             Icon::Warning => "warning",
             Icon::Check => "check",
+            Icon::Checks => "checks",
             Icon::Edit => "edit",
             Icon::Reply => "reply",
             Icon::Close => "close",
@@ -110,6 +114,13 @@ impl Icon {
                 ".1....1....", //
                 "..1..1.....", //
                 "...11......", //
+            ],
+            Icon::Checks => &[
+                "......1...1", //
+                ".....1...1.", //
+                "1...1...1..", //
+                ".1.1.1.1...", //
+                "..1...1....", //
             ],
             Icon::Edit => &[
                 "........11.", //
