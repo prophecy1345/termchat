@@ -25,7 +25,9 @@ below are strict on purpose.
    with `cargo deny` and `cargo vet`.
 8. **No `unwrap()` or `expect()`** in code that handles outside input. Errors go
    through `Result` and `thiserror`.
-9. **Text only.** No files, images, link previews or message formatting.
+9. **Text and documents (ADR-017).** Documents travel as opaque bytes. No
+   rendering, previews or opening of files, no images in the chat, no link
+   previews and no message formatting.
 10. **Promise nothing impossible.** Never write "unbreakable"; describe the
     threat model honestly, metadata leaks included.
 11. **Core without IO.** `core` and `proto` do not depend on tokio, the network
