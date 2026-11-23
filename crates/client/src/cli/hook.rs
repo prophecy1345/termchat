@@ -366,11 +366,15 @@ async fn handle(hook: &Hook, req: Request<Incoming>) -> Response<Full<Bytes>> {
     let path = req.uri().path().trim_start_matches('/').to_string();
     let status = respond(hook, &path, req).await;
     // The route and the outcome only: an alert's text stays out of logs.
-    eprintln!(
-        "termchat: hook /{} {}",
-        path.chars().take(64).collect::<String>(),
-        status.status().as_u16()
-    );
+    // Review 2026-11d, note 6: without the token, not even the path.
+    match status.status() {
+        StatusCode::UNAUTHORIZED => eprintln!("termchat: hook 401"),
+        code => eprintln!(
+            "termchat: hook /{} {}",
+            path.chars().take(64).collect::<String>(),
+            code.as_u16()
+        ),
+    }
     status
 }
 
