@@ -18,15 +18,15 @@ const en = {
   ],
   rows: [
     ["Phone number to sign up", "No", "Yes (a username can hide it from contacts)", "No", "No", "No"],
-    ["Encryption", "Olm (X3DH-style handshake, Double Ratchet) from vodozemac", "Signal Protocol", "Session protocol", "Double Ratchet with a post-quantum key exchange", "Bramble protocols"],
+    ["Encryption", "Olm (X3DH-style handshake, Double Ratchet) from vodozemac", "Signal Protocol with post-quantum key agreement (PQXDH) and, since 2025, a post-quantum ratchet (SPQR)", "Session protocol: no forward secrecy yet; a version 2 with it and post-quantum keys is in development", "Double Ratchet with a post-quantum key exchange", "Bramble protocols"],
     ["Servers", "A relay: the public one or your own, a single binary", "Signal's servers", "A network of community-run nodes", "Relays (SMP servers): public or your own", "None: peer to peer (an optional Mailbox)"],
     ["Tor", "Built in, with bridges", "Not built in (proxy support)", "Onion routing through its own network", "Optional (SOCKS proxy, .onion servers)", "Always"],
     ["What the server sees", "No user identifiers: a separate queue per contact; when queues are written and read; IP addresses unless Tor is on", "Phone numbers; sealed sender hides most senders", "Onion routing hides IP addresses from nodes", "No user identifiers; a separate queue per contact", "No server"],
-    ["Platforms", "Terminal, desktop (macOS, Linux, Windows), Android", "Android, iOS, desktop (linked to a phone)", "Android, iOS, desktop", "Android, iOS, desktop, terminal", "Android (desktop in beta)"],
+    ["Platforms", "Terminal, desktop (macOS, Linux, Windows), Android", "Android, iOS, desktop (linked to a phone)", "Android, iOS, desktop", "Android, iOS, desktop, terminal", "Android (desktop in beta); since July 2026 in maintenance mode: bug and security fixes only"],
     ["Groups and calls", "Small private groups by invite (up to 32 devices, up to 4 admins), no calls", "Yes", "Yes", "Yes", "Groups and forums, no calls"],
-    ["Several devices", "Up to 4, each with its own keys, linked with a code and a fingerprint check", "Up to 5 linked to a phone", "Yes, with the recovery password", "Desktop can use the phone's profile; no sync between devices", "No"],
+    ["Several devices", "Up to 4, each with its own keys, linked with a code and a fingerprint check", "Up to 5 linked devices: desktop, tablets and, since 2026, other phones, tied to one primary phone", "Yes, with the recovery password", "Desktop can use the phone's profile; no sync between devices", "No"],
     ["Scripts and bots", "Command line and a local daemon: a server writes to you and answers, monitoring webhooks page you until you acknowledge; no bot accounts", "No official API", "No official API", "Bot API through its terminal client", "Briar Headless (REST API)"],
-    ["Independent audit", "Not yet: four AI-assisted source reviews, published with their fixes (vodozemac, its crypto library, was audited in 2022)", "Protocol studied widely", "Yes", "Yes", "Yes"],
+    ["Independent audit", "Not yet: four AI-assisted source reviews, published with their fixes (vodozemac, its crypto library, was audited in 2022)", "Protocol studied widely", "Yes (Quarkslab, 2021)", "Yes (Trail of Bits, 2022 and 2024)", "Yes (Cure53, 2017; OTF, 2023)"],
     ["Licence", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
   ],
   when: "When termchat.app fits",
@@ -42,9 +42,9 @@ const en = {
   others: [
     "You need years of scrutiny and an audited codebase: Signal.",
     "You need calls, large groups or an iPhone app: Signal or SimpleX Chat.",
-    "You need the strongest metadata protection: Briar (no servers at all), or SimpleX Chat, which also has no user identifiers, puts each direction on a different server by default and has been audited.",
+    "You need the strongest metadata protection: Briar (no servers at all; in maintenance mode since July 2026), or SimpleX Chat, which also has no user identifiers, puts each direction on a different server by default and has been audited.",
   ],
-  note: "Compared on 19 November 2026 from each project's own documentation. Something wrong or out of date? Open an issue on GitHub.",
+  note: "Compared on 23 November 2026 from each project's own documentation. Something wrong or out of date? Open an issue on GitHub.",
 };
 const ru: typeof en = {
   title: "termchat.app, Signal, Session, SimpleX и Briar: сравнение мессенджеров без номера телефона",
@@ -56,15 +56,15 @@ const ru: typeof en = {
   ],
   rows: [
     ["Номер телефона для регистрации", "Нет", "Да (имя пользователя может скрыть его от контактов)", "Нет", "Нет", "Нет"],
-    ["Шифрование", "Olm (рукопожатие в духе X3DH, Double Ratchet) из vodozemac", "Signal Protocol", "Протокол Session", "Double Ratchet с постквантовым обменом ключами", "Протоколы Bramble"],
+    ["Шифрование", "Olm (рукопожатие в духе X3DH, Double Ratchet) из vodozemac", "Signal Protocol с постквантовым согласованием ключей (PQXDH) и с 2025 года постквантовым ратчетом (SPQR)", "Протокол Session: прямой секретности пока нет; версия 2 с ней и постквантовыми ключами в разработке", "Double Ratchet с постквантовым обменом ключами", "Протоколы Bramble"],
     ["Серверы", "Relay: публичный или свой, один бинарник", "Серверы Signal", "Сеть узлов, которые держит сообщество", "Relay (SMP-серверы): публичные или свои", "Нет: напрямую между устройствами (по желанию Mailbox)"],
     ["Tor", "Встроен, с мостами", "Не встроен (есть прокси)", "Луковая маршрутизация через свою сеть", "По желанию (SOCKS-прокси, .onion-серверы)", "Всегда"],
     ["Что видит сервер", "Нет идентификаторов пользователей: отдельная очередь на каждый контакт; когда в очереди пишут и читают; IP-адреса, если Tor выключен", "Номера телефонов; sealed sender скрывает большинство отправителей", "Луковая маршрутизация скрывает IP-адреса от узлов", "Нет идентификаторов пользователей; отдельная очередь на каждый контакт", "Сервера нет"],
-    ["Платформы", "Терминал, компьютер (macOS, Linux, Windows), Android", "Android, iOS, компьютер (привязан к телефону)", "Android, iOS, компьютер", "Android, iOS, компьютер, терминал", "Android (компьютер в бете)"],
+    ["Платформы", "Терминал, компьютер (macOS, Linux, Windows), Android", "Android, iOS, компьютер (привязан к телефону)", "Android, iOS, компьютер", "Android, iOS, компьютер, терминал", "Android (компьютер в бете); с июля 2026 в режиме поддержки: только исправления ошибок и безопасности"],
     ["Группы и звонки", "Маленькие приватные группы по приглашению (до 32 устройств, до 4 администраторов), без звонков", "Да", "Да", "Да", "Группы и форумы, без звонков"],
-    ["Несколько устройств", "До 4, у каждого свои ключи, привязка по коду со сверкой отпечатка", "До 5, привязанных к телефону", "Да, по паролю восстановления", "Компьютер может работать через профиль телефона; синхронизации между устройствами нет", "Нет"],
+    ["Несколько устройств", "До 4, у каждого свои ключи, привязка по коду со сверкой отпечатка", "До 5 привязанных устройств: компьютер, планшеты и с 2026 года другие телефоны, при одном основном телефоне", "Да, по паролю восстановления", "Компьютер может работать через профиль телефона; синхронизации между устройствами нет", "Нет"],
     ["Скрипты и боты", "Командная строка и локальная служба: сервер пишет вам и отвечает, вебхуки мониторинга вызывают вас, пока вы не подтвердите; без аккаунтов-ботов", "Официального API нет", "Официального API нет", "API для ботов через терминальный клиент", "Briar Headless (REST API)"],
-    ["Независимый аудит", "Пока нет: четыре ревью кода с помощью ИИ, опубликованы вместе с исправлениями (vodozemac, его криптобиблиотека, проверена в 2022)", "Протокол изучен широко", "Да", "Да", "Да"],
+    ["Независимый аудит", "Пока нет: четыре ревью кода с помощью ИИ, опубликованы вместе с исправлениями (vodozemac, его криптобиблиотека, проверена в 2022)", "Протокол изучен широко", "Да (Quarkslab, 2021)", "Да (Trail of Bits, 2022 и 2024)", "Да (Cure53, 2017; OTF, 2023)"],
     ["Лицензия", "AGPL-3.0", "AGPL-3.0", "GPL-3.0", "AGPL-3.0", "GPL-3.0"],
   ],
   when: "Когда подходит termchat.app",
@@ -80,9 +80,9 @@ const ru: typeof en = {
   others: [
     "Нужны годы проверки и код с аудитом: Signal.",
     "Нужны звонки, большие группы или приложение для iPhone: Signal или SimpleX Chat.",
-    "Нужна самая сильная защита метаданных: Briar (серверов нет вообще) или SimpleX Chat, где тоже нет идентификаторов пользователей, каждое направление по умолчанию идёт через свой сервер и был аудит.",
+    "Нужна самая сильная защита метаданных: Briar (серверов нет вообще; с июля 2026 в режиме поддержки) или SimpleX Chat, где тоже нет идентификаторов пользователей, каждое направление по умолчанию идёт через свой сервер и был аудит.",
   ],
-  note: "Сравнение сделано 19 ноября 2026 по документации самих проектов. Нашли ошибку или устаревшее? Откройте issue на GitHub.",
+  note: "Сравнение сделано 23 ноября 2026 по документации самих проектов. Нашли ошибку или устаревшее? Откройте issue на GitHub.",
 };
 const t = Astro.props.lang === "en" ? en : ru;
 ---
