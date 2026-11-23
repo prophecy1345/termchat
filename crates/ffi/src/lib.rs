@@ -994,6 +994,16 @@ impl Account {
         Ok(self.with_group(group, |e, g| e.leave_group(g))??)
     }
 
+    /// Clears group `group`'s history on this device; what is on its way stays.
+    pub fn clear_group_history(&self, group: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.clear_group_history(g))??)
+    }
+
+    /// Clears chat `index`'s history on this device; what is on its way stays.
+    pub fn clear_chat(&self, index: u32) -> Result<()> {
+        Ok(self.with(index, |e, i| e.clear_chat(i))??)
+    }
+
     /// The group on screen (`None`: none): its messages are read as they come.
     pub fn open_group(&self, group: Option<u32>) {
         let mut e = self.lock();

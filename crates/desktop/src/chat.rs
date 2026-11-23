@@ -770,6 +770,9 @@ impl Chat {
                         if ui.button("Members").clicked() {
                             next = Some(Dialog::Members);
                         }
+                        if ui.button("Clear history").clicked() {
+                            next = Some(Dialog::ClearHistory);
+                        }
                         if ui.button("Search").clicked() {
                             search = true;
                         }
@@ -1353,6 +1356,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
             Menu::Mute
         }
         _ if pick(ui, "Export…") => Menu::Open(Dialog::Export),
+        _ if pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
@@ -1982,6 +1986,7 @@ mod tests {
                 "Hand the group over",
             ),
             (Dialog::LeaveGroup, "Leave the group"),
+            (Dialog::ClearHistory, "Clear the history"),
             (Dialog::DeleteMessage(0), "Delete it for everyone"),
         ];
         for (d, want) in dialogs {

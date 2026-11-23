@@ -390,6 +390,12 @@ impl Engine {
     }
 }
 
+/// A message clearing a chat keeps: not sent yet, or a document still arriving.
+fn on_its_way(m: &Msg) -> bool {
+    matches!(m.status, Status::Queued | Status::Sending(_))
+        || m.file.as_ref().is_some_and(|f| !m.mine && !f.complete())
+}
+
 fn peer_addr_ok(ours: &str, relay_url: &str, onion_url: Option<&str>) -> bool {
     addr_ok(relay_url, onion_url) && (!loopback(relay_url) || loopback(ours))
 }
@@ -2792,6 +2798,28 @@ impl Engine {
         Ok(())
     }
 
+    /// Clears chat `i`'s history on this device: the contact and our other
+    /// devices keep theirs. What is on its way stays: a message not sent
+    /// yet, a document still coming in. Dropped messages are wiped.
+    pub fn clear_chat(&mut self, i: usize) -> Result<(), String> {
+        let c = self.data.contacts.get_mut(i).ok_or("no such chat")?;
+        c.messages.retain(on_its_way);
+        c.unread = 0;
+        self.persist();
+        Ok(())
+    }
+
+    /// As `clear_chat`, for group `g`, with its reactions.
+    pub fn clear_group_history(&mut self, g: usize) -> Result<(), String> {
+        let group = self.data.groups.get_mut(g).ok_or("no such group")?;
+        group.messages.retain(on_its_way);
+        let kept: Vec<u64> = group.messages.iter().filter_map(|m| m.id).collect();
+        group.reactions.retain(|(id, _, _)| kept.contains(id));
+        group.unread = 0;
+        self.persist();
+        Ok(())
+    }
+
     /// Our reaction to message `m` of chat `i`, or none (ADR-025).
     pub fn react(&mut self, i: usize, m: usize, reaction: Option<u8>) -> Result<(), String> {
         if reaction.is_some_and(|r| r >= proto::REACTIONS) {
@@ -3670,6 +3698,43 @@ mod tests {
             verified: true,
             ..Contact::default()
         }
+    }
+
+    #[tokio::test]
+    async fn clearing_a_chat_keeps_only_what_is_on_its_way() {
+        use data::{FileMsg, Msg};
+        let (mut e, dir) = offline("clear");
+        e.data.contacts.push(contact(9, "bob"));
+        let i = e.data.contacts.len() - 1;
+        let msg = |text: &str, status| {
+            let mut m = Msg::default();
+            m.text = text.into();
+            m.status = status;
+            m
+        };
+        let mut coming = msg("half.bin", Status::Received);
+        coming.file = Some(FileMsg {
+            id: 1,
+            name: "half.bin".into(),
+            size: 40_000,
+            done: 1,
+            data: Some(vec![1; 16_000]),
+        });
+        let c = &mut e.data.contacts[i];
+        c.messages = vec![
+            msg("read long ago", Status::Received),
+            msg("sent", Status::Sent),
+            msg("not sent yet", Status::Queued),
+            coming,
+        ];
+        c.unread = 3;
+        e.clear_chat(i).unwrap();
+        let c = &e.data.contacts[i];
+        let left: Vec<&str> = c.messages.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(left, ["not sent yet", "half.bin"]);
+        assert_eq!(c.unread, 0);
+        assert!(e.clear_chat(99).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

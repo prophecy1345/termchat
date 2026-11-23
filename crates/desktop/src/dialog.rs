@@ -107,6 +107,8 @@ pub enum Dialog {
     Admin(AdminChange, [u8; 32]),
     /// Leave the open group?
     LeaveGroup,
+    /// Clear the open chat's or group's history on this device?
+    ClearHistory,
     /// ADR-028: this device's link code, for the main device.
     LinkCode(String),
     /// Our devices.
@@ -1023,6 +1025,25 @@ impl Chat {
                         Ok(()) => "device removed".into(),
                         Err(e) => e,
                     };
+                    return false;
+                }
+                stay
+            }
+            Dialog::ClearHistory => {
+                ui.set_width(560.0);
+                ui.heading("Clear the history");
+                ui.add_space(6.0);
+                ui.label("Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.");
+                let (go, stay) = buttons(ui, p, "Clear");
+                if go {
+                    let done = match (self.open_group(), open) {
+                        (Some(g), _) => self.engine.clear_group_history(g),
+                        (None, Some(i)) => self.engine.clear_chat(i),
+                        (None, None) => Ok(()),
+                    };
+                    if let Err(e) = done {
+                        self.status = e;
+                    }
                     return false;
                 }
                 stay

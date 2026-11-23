@@ -1810,6 +1810,16 @@ fn popup_pane(
             buttons.push(("esc cancel", false, esc));
             window(f, t, h, title, lines, &buttons, 66, true);
         }
+        Popup::ClearHistory => {
+            let lines = plain(
+                "Delete every message here on this device?\nThe others, and your other devices, keep theirs.\nWhat is still on its way stays. This cannot be undone.",
+            );
+            let buttons = [
+                ("y clear", true, key(KeyCode::Char('y'))),
+                ("esc keep", false, esc),
+            ];
+            window(f, t, h, "clear the history", lines, &buttons, 60, true);
+        }
         Popup::LeaveGroup => {
             let mut text =
                 "Leave this group?\nThe others are told; the chat stays here, read-only."

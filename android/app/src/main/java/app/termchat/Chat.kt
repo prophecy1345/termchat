@@ -253,6 +253,9 @@ fun Chat(m: Model, index: UInt) {
     when (val d = dialog) {
         null -> {}
         "export" -> ExportChat(m, Place.Chat(index)) { dialog = null }
+        "clear" -> Confirm(m, "Clear the history?", "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
+            runCatching { a.clearChat(index) }.onFailure { m.note = it.message ?: "$it" }
+        }
         else -> ContactDialog(m, c, d) { dialog = null }
     }
     forwarding?.let { at -> ForwardTo(m, Place.Chat(index), at) { forwarding = null } }
@@ -345,6 +348,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 }
                 item("Search") { ask("search") }
                 item("Export…") { ask("export") }
+                item("Clear history") { ask("clear") }
                 item("Safety number") { ask("verify") }
                 item("Rename") { ask("rename") }
                 item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }

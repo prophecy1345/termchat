@@ -132,6 +132,9 @@ fun Group(m: Model, index: UInt) {
         "members" -> Members(m, g, { dialog = it }) { dialog = null }
         "invite" -> InviteToGroup(m, g) { dialog = null }
         "export" -> ExportChat(m, app.termchat.engine.Place.Group(index)) { dialog = null }
+        "clear" -> Confirm(m, "Clear the history?", "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
+            runCatching { a.clearGroupHistory(index) }.onFailure(fail)
+        }
         "leave" -> Confirm(m, "Leave the group?", leaveText(g), "Leave", { dialog = null }) {
             runCatching { a.leaveGroup(index) }.onFailure(fail)
         }
@@ -206,6 +209,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                 }
                 item("Members") { ask("members") }
                 item("Export…") { ask("export") }
+                item("Clear history") { ask("clear") }
                 if (g.admin) item("Invite") { ask("invite") }
                 if (g.mainAdmin) {
                     item("Disappearing: ${span(g.expiresIn)}") {

@@ -150,6 +150,8 @@ pub enum Popup {
     Admin(AdminChange, Ed25519Key),
     /// Leave the open group?
     LeaveGroup,
+    /// Clear the open chat's or group's history on this device?
+    ClearHistory,
     /// ADR-028: this device's link code, to paste on the main device.
     LinkCode(String),
     /// Our devices, with the highlighted row.
@@ -1124,6 +1126,7 @@ impl Main {
         rows.extend(self.place_rows());
         if self.current().is_some() || self.group_index().is_some() {
             rows.push(('e', "export this chat to a text file".into()));
+            rows.push(('w', "clear this chat's history here".into()));
         }
         rows
     }
@@ -1418,6 +1421,7 @@ impl Main {
                     None
                 }
                 Ok(Some('e')) => Some(Popup::Form(Form::new(Kind::Export))),
+                Ok(Some('w')) => Some(Popup::ClearHistory),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1779,6 +1783,19 @@ impl Main {
                 };
                 if let Err(e) = done {
                     self.status = e;
+                }
+                None
+            }
+            Popup::ClearHistory => {
+                if k.code == KeyCode::Char('y') {
+                    let done = match self.group_index() {
+                        Some(g) => self.engine.clear_group_history(g),
+                        None => self.engine.clear_chat(self.selected),
+                    };
+                    self.status = match done {
+                        Ok(()) => "history cleared on this device".into(),
+                        Err(e) => e,
+                    };
                 }
                 None
             }
