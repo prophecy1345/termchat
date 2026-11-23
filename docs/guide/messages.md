@@ -62,7 +62,7 @@ Archived chats sit above the others, under their own heading; pin a chat to keep
 
 ## Mute a chat or group
 
-**Ctrl+V** in the terminal, ⋮ → **Mute** in a chat or **Mute** in a group in the desktop app, ⋮ → **Mute** on Android: off → 1 hour → 1 day → always. A muted chat makes no sound and no notification; its unread count still grows, and a new contact request always alerts. On Android, a wake-up that arrives while the app is locked cannot tell which chat it is for, so it still says "New message".
+**Ctrl+V** in the terminal, ⋮ → **Mute** in a chat or **Mute** in a group in the desktop app, ⋮ → **Mute** on Android: off → 1 hour → 1 day → always; each tap takes the next step, and the menu stays open until you pick. In the list a muted chat or group has a struck bell beside its name, in the terminal a dim **~** before its count. A muted chat makes no sound and no notification; its unread count still grows, and a new contact request always alerts. On Android, a wake-up that arrives while the app is locked cannot tell which chat it is for, so it still says "New message".
 
 ## Export a chat
 

@@ -103,6 +103,7 @@ fun Chats(m: Model) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 if (c.pinned) PixelIcon("pin", Tc.lime)
                                 Text(c.name, style = Tc.mono.copy(color = if (c.blocked || c.archived) Tc.dim else Tc.text))
+                                if (c.mute != "off") PixelIcon("muted", Tc.dim)
                             }
                             val state = when {
                                 c.request -> "CONTACT REQUEST"
@@ -157,7 +158,7 @@ fun Chats(m: Model) {
                     // Under the row, at the right, clear of the screen edge (owner, 2026-11-23).
                     Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp)) {
                         DropdownMenu(held == "g${g.index}", { held = null }) {
-                            item("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
+                            KeepOpen("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
                             if (!g.left) item("Leave") { leaving = g.index }
                         }
                     }
@@ -169,7 +170,10 @@ fun Chats(m: Model) {
                     ) {
                         Avatar("# ${g.name}")
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(g.name, style = Tc.mono.copy(color = if (g.left) Tc.dim else Tc.text))
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(g.name, style = Tc.mono.copy(color = if (g.left) Tc.dim else Tc.text))
+                                if (g.mute != "off") PixelIcon("muted", Tc.dim)
+                            }
                             Text(groupState(g), style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
                         }
                         Column(horizontalAlignment = Alignment.End) {

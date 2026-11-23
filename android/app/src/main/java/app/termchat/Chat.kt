@@ -309,7 +309,8 @@ internal fun Sprite(r: Int, size: Dp) {
 @Composable
 internal fun ContactToggles(m: Model, c: ContactView, item: @Composable (String, () -> Unit) -> Unit) {
     val a = m.account ?: return
-    item("Mute: ${c.mute}") { runCatching { a.nextMute(c.index) }; m.changed() }
+    // The menu stays open: each tap picks the next span (owner, 2026-11-23).
+    KeepOpen("Mute: ${c.mute}") { runCatching { a.nextMute(c.index) }; m.changed() }
     item(if (c.pinned) "Unpin" else "Pin") { runCatching { a.setPinned(c.index, !c.pinned) }; m.changed() }
     item(if (c.archived) "Unarchive" else "Archive") { runCatching { a.setArchived(c.index, !c.archived) }; m.changed() }
     item(if (c.blocked) "Unblock" else "Block") { runCatching { a.setBlocked(c.index, !c.blocked) }; m.changed() }

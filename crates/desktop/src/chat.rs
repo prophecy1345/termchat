@@ -626,6 +626,9 @@ impl Chat {
                                 sprites::icon(ui, Icon::Pin, 1.0, p.accent).on_hover_text("pinned");
                             }
                             ui.label(RichText::new(name).monospace().color(colour));
+                            if termchat_engine::engine::muted(c.muted_until) {
+                                sprites::icon(ui, Icon::Muted, 1.0, p.dim).on_hover_text("muted");
+                            }
                         });
                         let (state, ok) = match self.engine.needs_invite(c) {
                             true => ("NEEDS A NEW INVITE", false),
@@ -668,7 +671,13 @@ impl Chat {
                     avatar(ui, p, &format!("# {name}"), 32.0);
                     ui.vertical(|ui| {
                         let colour = if group.left { p.dim } else { p.text };
-                        ui.label(RichText::new(&name).monospace().color(colour));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.label(RichText::new(&name).monospace().color(colour));
+                            if termchat_engine::engine::muted(group.muted_until) {
+                                sprites::icon(ui, Icon::Muted, 1.0, p.dim).on_hover_text("muted");
+                            }
+                        });
                         let (state, ok) = group_state(group);
                         ui.label(caps(&state, if ok { p.accent } else { p.dim }));
                     });

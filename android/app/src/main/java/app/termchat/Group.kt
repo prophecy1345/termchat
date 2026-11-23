@@ -213,7 +213,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                         m.changed()
                     }
                 }
-                item("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
+                KeepOpen("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
                 if (!g.left) item("Leave") { ask("leave") }
             }
         }

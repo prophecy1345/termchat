@@ -23,10 +23,12 @@ pub enum Icon {
     Folded,
     /// An open list section.
     Unfolded,
+    /// A muted chat or group: a bell, struck through.
+    Muted,
 }
 
 /// All of them, in the order `ICONS` lists their names.
-pub const ALL: [Icon; 15] = [
+pub const ALL: [Icon; 16] = [
     Icon::Pin,
     Icon::Document,
     Icon::Warning,
@@ -42,6 +44,7 @@ pub const ALL: [Icon; 15] = [
     Icon::Timer,
     Icon::Folded,
     Icon::Unfolded,
+    Icon::Muted,
 ];
 
 /// The side of the square every icon is centred in.
@@ -65,6 +68,7 @@ impl Icon {
             Icon::Timer => "timer",
             Icon::Folded => "folded",
             Icon::Unfolded => "unfolded",
+            Icon::Muted => "muted",
         }
     }
 
@@ -222,6 +226,19 @@ impl Icon {
                 ".1...1.", //
                 "..1.1..", //
                 "...1...", //
+            ],
+            Icon::Muted => &[
+                "1....1.....", //
+                ".1..111....", //
+                "..11...1...", //
+                "...1...1...", //
+                "..1.1...1..", //
+                "..1..1..1..", //
+                ".1....1..1.", //
+                "11111111111", //
+                "....111.1..", //
+                ".........1.", //
+                "..........1", //
             ],
         }
     }

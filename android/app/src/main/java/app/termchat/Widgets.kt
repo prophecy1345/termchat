@@ -221,3 +221,9 @@ fun Paperclip(color: Color) {
         drawPath(clip, color, style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round))
     })
 }
+
+/** A menu item that leaves its menu open: for a choice tapped through, as Mute's spans. */
+@androidx.compose.runtime.Composable
+internal fun KeepOpen(label: String, go: () -> Unit) {
+    androidx.compose.material3.DropdownMenuItem({ androidx.compose.material3.Text(label, style = Tc.mono) }, go)
+}

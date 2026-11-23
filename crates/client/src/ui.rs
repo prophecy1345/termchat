@@ -478,8 +478,18 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 1..=99 => c.unread.to_string(),
                 _ => "99+".into(),
             };
-            let label = fit(&name(m, c), width.saturating_sub(5 + badge.len()));
-            let pad = width.saturating_sub(4 + Span::raw(&label).width() + badge.len());
+            // Muted: a dim ~ before the count; the terminal keeps text for icons.
+            let quiet = if crate::engine::muted(c.muted_until) {
+                "~"
+            } else {
+                ""
+            };
+            let label = fit(
+                &name(m, c),
+                width.saturating_sub(5 + quiet.len() + badge.len()),
+            );
+            let pad =
+                width.saturating_sub(4 + Span::raw(&label).width() + quiet.len() + badge.len());
             let style = match (i == m.selected, c.archived) {
                 (true, _) => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
                 (false, true) => Style::new().fg(t.overlay0),
@@ -489,6 +499,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 Span::styled(format!(" {mark} "), Style::new().fg(colour)),
                 Span::styled(label, style),
                 Span::raw(" ".repeat(pad)),
+                Span::styled(quiet, Style::new().fg(t.overlay0)),
                 Span::styled(
                     badge,
                     Style::new().fg(t.accent).add_modifier(Modifier::BOLD),
@@ -509,8 +520,16 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             0 => format!("{}", g.members().len()),
             u => format!("{}·{u}", g.members().len()),
         };
-        let label = fit(&clean(g.name()), width.saturating_sub(5 + badge.len()));
-        let pad = width.saturating_sub(4 + Span::raw(&label).width() + badge.len());
+        let quiet = if crate::engine::muted(g.muted_until) {
+            "~"
+        } else {
+            ""
+        };
+        let label = fit(
+            &clean(g.name()),
+            width.saturating_sub(5 + quiet.len() + badge.len()),
+        );
+        let pad = width.saturating_sub(4 + Span::raw(&label).width() + quiet.len() + badge.len());
         let style = match n + gi == m.selected {
             true => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
             false => Style::new().fg(t.subtext0),
@@ -519,6 +538,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             Span::styled(" # ", Style::new().fg(colour)),
             Span::styled(label, style),
             Span::raw(" ".repeat(pad)),
+            Span::styled(quiet, Style::new().fg(t.overlay0)),
             Span::styled(badge, Style::new().fg(t.overlay1)),
         ]))
     }));
