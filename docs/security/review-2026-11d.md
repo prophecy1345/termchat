@@ -1,8 +1,11 @@
 # AI-assisted security review, November 2026 (fourth pass)
 
-Status: findings open; nothing was changed in the code. Findings 1 and 2
-need an amendment to [ADR-042](../adr/042-group-admins.md) before a fix
-(rule 2).
+Status: findings 1 to 5 fixed in 0.28.1, after amendment 4 to
+[ADR-042](../adr/042-group-admins.md); the proofs of concept are regression
+tests in `crates/engine/tests/review_2026_11d.rs`. Of the notes: the hook
+log, the AI bot's key file and plain-http check, `.gitignore` and the README
+links are fixed; a leave stopping the group is written into ADR-042 and the
+threat model; the rest stand as written.
 Reviewed commit: `b5a49c8` (0.28.0). Date: 2026-11-23.
 Earlier passes: [first](review-2026-11.md), [second](review-2026-11b.md),
 [third](review-2026-11c.md), and the [ADR-033 review](review-adr-033.md).
