@@ -41,6 +41,11 @@ below are strict on purpose.
     broadcasts or public groups. Message contents are never scanned or filtered,
     neither in the client nor on the relay (ADR-006). Abuse is handled with
     invites, contact requests, limits, blocking and reports.
+16. **Everything is a contact.** People, servers and bots reach a user only as
+    contacts added with an invite, each with keys and a safety number; a
+    group is a few contacts in one room. A feature that needs something else
+    to talk to the user (a channel, a bot API, a directory) is a red flag:
+    discuss it in an issue first.
 
 ## Layout
 

@@ -496,6 +496,10 @@ h2::before {
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
 }
 
+.cards.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .card {
   padding: 1.25rem;
   border: 1px solid var(--surface0);
@@ -676,6 +680,10 @@ footer .about {
 }
 
 @media (max-width: 40rem) {
+  .cards.two {
+    grid-template-columns: 1fr;
+  }
+
   .top {
     flex-direction: column;
     align-items: flex-start;

@@ -21,6 +21,20 @@ termchat.app is a free, non-commercial, open-source project created and maintain
 personal hobby. It has no advertising, subscriptions, paid features or commercial
 monetization. Anyone can run their own relay server.
 
+## Everything is a contact
+
+termchat.app has one kind of thing that talks to you: a contact. Someone you
+added with an invite, with keys of their own and a safety number you can
+compare. A friend is a contact. So is a server that tells you the backup
+failed (`termchat send`, `page`, `hook`), and so is an AI model, if you want
+one, running as a contact of its own instead of inside the app. A group is a
+few contacts in one room, by invitation only.
+
+So there is no bot platform, no channels, no directory and nothing to search:
+nobody reaches you unless you let them in. And every contact gets the same
+tools: verify, mute, block, report, disappearing messages, the same
+encryption.
+
 ## What it protects, and what it does not
 
 The goal is not "impossible to break" but "breaking the server is pointless".
