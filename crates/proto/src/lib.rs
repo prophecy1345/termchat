@@ -771,7 +771,7 @@ impl AdminList {
         postcard::to_allocvec(&fields).unwrap_or_default()
     }
 
-    fn check(&self) -> Result<(), Error> {
+    pub fn check(&self) -> Result<(), Error> {
         if self.admins.len() > MAX_GROUP_ADMINS {
             return Err(Error::TooLarge);
         }

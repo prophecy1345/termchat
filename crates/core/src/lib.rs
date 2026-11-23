@@ -37,6 +37,10 @@ const OTK_CONTEXT: &[u8] = b"termchat-otk-v1";
 /// ADR-027: what a group admin signs.
 const ROSTER_CONTEXT: &[u8] = b"termchat-roster-v1";
 const DEVICES_CONTEXT: &[u8] = b"termchat-devices-v1";
+/// ADR-042: what an admin signs for a group's admin list.
+const ADMINS_CONTEXT: &[u8] = b"termchat-admins-v1";
+/// ADR-042: what the main admin signs when leaving the role.
+const RESIGN_CONTEXT: &[u8] = b"termchat-resign-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -70,6 +74,9 @@ pub enum Error {
     TooManyRequests,
     #[error("random number generator failed")]
     Rng,
+    /// ADR-042: a group change its signer had no right to make.
+    #[error("not allowed")]
+    NotAllowed,
 }
 
 /// Keys to upload to the relay.
@@ -792,6 +799,27 @@ impl Client {
             .to_bytes()
     }
 
+    /// Our signature over a group's admin list (ADR-042).
+    pub fn sign_admins(&self, list: &proto::AdminList) -> Signature {
+        self.account
+            .sign([ADMINS_CONTEXT, &list.signed_bytes()].concat())
+            .to_bytes()
+    }
+
+    /// Our word that we leave the main admin's role at roster `roster_no`
+    /// (ADR-042).
+    pub fn sign_resign(&self, group: &proto::GroupId, roster_no: u64) -> proto::Resign {
+        let mut resign = proto::Resign {
+            roster_no,
+            signature: [0; 64],
+        };
+        resign.signature = self
+            .account
+            .sign([RESIGN_CONTEXT, &resign.signed_bytes(group)].concat())
+            .to_bytes();
+        resign
+    }
+
     /// Signs our device list (ADR-028). Only the primary can: its key is
     /// the identity the list is for.
     /// ADR-030: this device's word that it joins `identity` with its own
@@ -971,6 +999,80 @@ pub fn verify_roster(admin: &Ed25519Key, roster: &[u8], sig: &Signature) -> Resu
     verify_message(admin, &[ROSTER_CONTEXT, roster].concat(), sig)
 }
 
+/// Whether `next` may follow the admin list `admins`, in force since roster
+/// `no` of `group` (ADR-042, section 1). A group with one admin starts from
+/// `[creator]`. Rights are checked here, not taken on the signer's word:
+/// - the main admin (first) makes and removes helpers, appending new ones
+///   and keeping the others' order, or hands over: the successor first,
+///   the main admin gone, the other helpers in their order;
+/// - a helper steps down: the same list without them;
+/// - the next helper takes over with the main admin's signed resign from
+///   the roster just before: the same list without the main admin.
+///
+/// Whether everyone named is a member is the caller's to check.
+pub fn check_admin_change(
+    group: &proto::GroupId,
+    admins: &[Ed25519Key],
+    no: u64,
+    next: &proto::AdminList,
+) -> Result<(), Error> {
+    next.check()?;
+    let main = admins.first().ok_or(Error::NotAllowed)?;
+    if next.group != *group || next.no <= no || !admins.contains(&next.signer) {
+        return Err(Error::NotAllowed);
+    }
+    verify_message(
+        &next.signer,
+        &[ADMINS_CONTEXT, &next.signed_bytes()].concat(),
+        &next.signature,
+    )?;
+    let helpers = &admins[1..];
+    let without = |who: Ed25519Key| admins.iter().filter(move |a| **a != who);
+    let allowed = match &next.resign {
+        None if next.signer == *main => {
+            if next.admins[0] == *main {
+                // Kept helpers in their order, new ones after them.
+                let kept: Vec<_> = next.admins[1..]
+                    .iter()
+                    .filter(|a| helpers.contains(a))
+                    .collect();
+                let in_order = kept
+                    .iter()
+                    .copied()
+                    .eq(helpers.iter().filter(|h| next.admins.contains(h)));
+                let new_after = next.admins[1..]
+                    .iter()
+                    .skip(kept.len())
+                    .all(|a| !helpers.contains(a));
+                in_order && new_after
+            } else {
+                let successor = &next.admins[0];
+                !next.admins.contains(main)
+                    && next.admins[1..]
+                        .iter()
+                        .eq(helpers.iter().filter(|h| *h != successor))
+            }
+        }
+        None => next.signer != *main && next.admins.iter().eq(without(next.signer)),
+        Some(resign) => {
+            helpers.first() == Some(&next.signer)
+                && resign.roster_no.checked_add(1) == Some(next.no)
+                && next.admins.iter().eq(without(*main))
+                && verify_message(
+                    main,
+                    &[RESIGN_CONTEXT, &resign.signed_bytes(group)].concat(),
+                    &resign.signature,
+                )
+                .is_ok()
+        }
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(Error::NotAllowed)
+    }
+}
+
 /// Whether a device list is well formed and signed by its identity (ADR-028).
 pub fn verify_devices(list: &DeviceList) -> Result<(), Error> {
     list.check()?;
@@ -1073,5 +1175,117 @@ mod tests {
         t.accept(u64::MAX).unwrap();
         assert_eq!(t.missing.len(), MAX_MISSING);
         assert_eq!(t.missed(), u64::MAX - 4);
+    }
+
+    const GROUP: proto::GroupId = [7; 16];
+
+    fn key(c: &Client) -> Ed25519Key {
+        c.identity().ed25519
+    }
+
+    fn list(by: &Client, no: u64, admins: &[&Client]) -> proto::AdminList {
+        let mut l = proto::AdminList {
+            group: GROUP,
+            no,
+            signer: key(by),
+            admins: admins.iter().map(|c| key(c)).collect(),
+            resign: None,
+            signature: [0; 64],
+        };
+        l.signature = by.sign_admins(&l);
+        l
+    }
+
+    fn change(now: &[&Client], next: &proto::AdminList) -> Result<(), Error> {
+        let now: Vec<_> = now.iter().map(|c| key(c)).collect();
+        check_admin_change(&GROUP, &now, 3, next)
+    }
+
+    #[test]
+    fn adr_042_only_the_main_admin_makes_and_removes_helpers() {
+        let [a, b, c, d] = [(); 4].map(|_| Client::default());
+        assert_eq!(change(&[&a], &list(&a, 4, &[&a, &b])), Ok(()));
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&a, &c])), Ok(()));
+        assert_eq!(change(&[&a, &b], &list(&a, 4, &[&a, &b, &c, &d])), Ok(()));
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&a, &c, &d])), Ok(()));
+        // The order of helpers is the order of succession: only appended.
+        let no = Err(Error::NotAllowed);
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&a, &c, &b])), no);
+        assert_eq!(change(&[&a, &c], &list(&a, 4, &[&a, &d, &c])), no);
+        // A helper neither makes, removes nor reorders anyone but themselves.
+        assert_eq!(change(&[&a, &b], &list(&b, 4, &[&a, &b, &c])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&b, 4, &[&a, &b])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&b, 4, &[&a, &c, &b])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&b, 4, &[&a, &c])), Ok(()));
+        // Nobody else signs at all.
+        assert_eq!(change(&[&a, &b], &list(&d, 4, &[&a, &b, &d])), no);
+    }
+
+    #[test]
+    fn adr_042_nobody_but_the_main_admin_removes_them() {
+        let [a, b, c, d] = [(); 4].map(|_| Client::default());
+        let no = Err(Error::NotAllowed);
+        assert_eq!(change(&[&a, &b], &list(&b, 4, &[&b])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&b, 4, &[&b, &a, &c])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&c, 4, &[&b, &c])), no);
+        // Handing over: the successor first, the main admin gone.
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&c, &b])), Ok(()));
+        assert_eq!(change(&[&a, &b], &list(&a, 4, &[&d, &b])), Ok(()));
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&b, &a, &c])), no);
+        assert_eq!(change(&[&a, &b, &c], &list(&a, 4, &[&c])), no);
+        // The last admin cannot step down without a successor.
+        let empty = proto::AdminList {
+            admins: vec![],
+            ..list(&a, 4, &[&a])
+        };
+        assert_eq!(
+            change(&[&a], &empty),
+            Err(Error::Proto(proto::Error::Malformed))
+        );
+    }
+
+    #[test]
+    fn adr_042_the_next_helper_takes_over_only_with_the_main_admins_word() {
+        let [a, b, c] = [(); 3].map(|_| Client::default());
+        let with = |by: &Client, no: u64, resign: proto::Resign| {
+            let mut l = list(by, no, &[&b, &c]);
+            l.resign = Some(resign);
+            l.signature = by.sign_admins(&l);
+            l
+        };
+        let now = [&a, &b, &c];
+        assert_eq!(change(&now, &with(&b, 5, a.sign_resign(&GROUP, 4))), Ok(()));
+        let no = Err(Error::NotAllowed);
+        // For the roster right before, not an older or a later one.
+        assert_eq!(change(&now, &with(&b, 6, a.sign_resign(&GROUP, 4))), no);
+        assert_eq!(change(&now, &with(&b, 5, a.sign_resign(&GROUP, 3))), no);
+        // Of this group, by the main admin, taken by the next helper.
+        assert_eq!(change(&now, &with(&b, 5, a.sign_resign(&[6; 16], 4))), no);
+        assert_eq!(change(&now, &with(&b, 5, b.sign_resign(&GROUP, 4))), no);
+        assert_eq!(change(&now, &with(&c, 5, a.sign_resign(&GROUP, 4))), no);
+        // The rest stay as they were.
+        let mut reordered = with(&b, 5, a.sign_resign(&GROUP, 4));
+        reordered.admins = vec![key(&c), key(&b)];
+        reordered.signature = b.sign_admins(&reordered);
+        assert_eq!(change(&now, &reordered), no);
+    }
+
+    #[test]
+    fn adr_042_a_list_is_signed_for_this_group_and_newer() {
+        let [a, b] = [(); 2].map(|_| Client::default());
+        let mut tampered = list(&a, 4, &[&a, &b]);
+        tampered.admins.reverse();
+        assert_eq!(change(&[&a, &b], &tampered), Err(Error::BadSignature));
+        // Another context: a roster signature is no admin list.
+        let mut roster_sig = list(&a, 4, &[&a, &b]);
+        roster_sig.signature = a.sign_roster(&roster_sig.signed_bytes());
+        assert_eq!(change(&[&a], &roster_sig), Err(Error::BadSignature));
+        let no = Err(Error::NotAllowed);
+        assert_eq!(change(&[&a], &list(&a, 3, &[&a, &b])), no);
+        let mut other = list(&a, 4, &[&a, &b]);
+        other.group = [6; 16];
+        other.signature = a.sign_admins(&other);
+        assert_eq!(change(&[&a], &other), no);
+        assert_eq!(check_admin_change(&GROUP, &[], 3, &list(&a, 4, &[&a])), no);
     }
 }
