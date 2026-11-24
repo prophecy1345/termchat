@@ -58,6 +58,17 @@ Body::Note { body: Box<Body> } // appended at the end of `Body`
 - **A group of one:** Megolm, a roster and a group queue for something that has no other member.
 - **Copying old notes to a newly linked device:** a bulk transfer of history that chats do not have either; it can come later for both, in its own ADR.
 
+## Amendment 1 (2026-11-24): keeping Notes in order
+
+Proposed by the owner, 2026-11-24: in Telegram "Saved Messages" turns into a heap nobody can find anything in. Borrowing from Raindrop.io what fits a messenger:
+
+1. **Tags from the text.** A word starting with `#` (letters, digits, `_` and `-`, compared without case) is a tag. Tags are part of the note, so they reach our other devices with it; nothing new on the wire.
+2. **Filters**, one at a time: **All**, **Untagged** (the inbox: notes with no tag), **Favorites**, **Links** (a note with an `http://`, `https://` or `www.` address), and one per tag with its count. Worked out on the device from what it holds.
+3. **Favorites (★).** A note is a favorite while our own reaction is set on it. Starring sends `Note { React }` to our other devices, so `Note` may now carry `React` as well; the receiving device takes it only for one of our notes. The apps draw it as a star, not as a reaction.
+4. **Notes stands apart from the contacts**: its own row above the Contacts heading in every app, never counted or listed with people.
+
+Not taken from Raindrop: previews or fetched titles of links. Fetching a page would tell the site, and whoever watches the network, what you saved (rule 9). Folders (collections) wait until tags prove too little; they need a field of their own on the wire.
+
 ## Implementation notes (2026-11-24)
 
 - **Notes is a contact that is no one** (`notes`, key `NOTES_KEY`, all 0xff), so every chat feature works on it in all three apps. It has no identity slot, so no queue, key or session is ever made for it; sending to it marks the note sent and passes it to our devices.
