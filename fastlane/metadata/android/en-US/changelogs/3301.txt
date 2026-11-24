@@ -1,0 +1,1 @@
+Notes menus now fit a chat with yourself: search, export, disappearing timer and clear history, also on a long press on the Notes row. A note offers Delete instead of Delete for both, without answers or reactions.

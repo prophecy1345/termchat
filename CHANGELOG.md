@@ -3,6 +3,13 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.33.1
+
+- Notes menus fit a chat with yourself: Search, Export, the disappearing
+  timer and Clear history, also on a long press on its row on Android. A
+  note offers Delete instead of Delete for both, and no answer or
+  reactions. In the terminal, s stars a picked note.
+
 ## 0.33.0
 
 - Notes (ADR-046): a chat with yourself for links, drafts and reminders.
