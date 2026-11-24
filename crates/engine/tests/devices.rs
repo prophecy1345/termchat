@@ -992,6 +992,32 @@ async fn notes_go_to_our_other_device_and_nowhere_else() {
     .await;
     assert_eq!(e[1].note_tags(), [("reading".to_string(), 1)]);
 
+    // ADR-046 amendment 2: a note written while the laptop did not read
+    // notes yet, and its star, reach it once it says it does.
+    let laptop_device = e[0].data.contacts.iter().position(|c| c.own).unwrap();
+    e[0].data.contacts[laptop_device].understands = 0;
+    e[0].send(phone, "missed #later").unwrap();
+    let m = e[0].data.contacts[phone].messages.len() - 1;
+    e[0].toggle_star(m).unwrap();
+    e[0].tick();
+    assert!(!notes(&e[1]).iter().any(|t| t == "missed #later"));
+    let phone_device = e[1].data.contacts.iter().position(|c| c.own).unwrap();
+    e[1].data.contacts[phone_device].told = 0;
+    // As after an update: the laptop starts again and says its level.
+    assert!(e[1].persist());
+    e[1] = match termchat_engine::Engine::unlock(&dir.join("new"), PASSWORD.as_bytes()).unwrap() {
+        termchat_engine::Unlocked::Open(x) => x,
+        termchat_engine::Unlocked::Wiped => panic!("wiped"),
+    };
+    pump(&mut e, |e| {
+        let i = e[1].notes().unwrap();
+        e[1].data.contacts[i]
+            .messages
+            .iter()
+            .any(|m| m.text == "missed #later" && m.my_reaction.is_some())
+    })
+    .await;
+
     // Bob, a contact, has seen none of it.
     let alice = e[0].me();
     let i = e[2].index(&alice).unwrap();

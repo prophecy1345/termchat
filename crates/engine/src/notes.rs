@@ -61,6 +61,10 @@ pub fn note_shown(m: &Msg, filter: &NoteFilter) -> bool {
 /// identity by accident.
 pub const NOTES_KEY: Ed25519Key = [0xff; 32];
 
+/// Amendment 2: at most this many messages to catch a device up, the
+/// relay's burst for one queue.
+const CATCH_UP_NOTES: usize = 30;
+
 impl Engine {
     /// Index of the Notes chat.
     pub fn notes(&self) -> Option<usize> {
@@ -164,6 +168,59 @@ impl Engine {
             }
         }
         self.persist();
+    }
+
+    /// ADR-046 amendment 2: our device `d` reads notes from now; send it
+    /// those written since it was linked, which it could not take before.
+    pub(super) fn catch_up_notes(&mut self, d: usize) {
+        let Some(i) = self.notes() else { return };
+        let (key, since, now) = (
+            self.data.contacts[d].key,
+            self.data.contacts[d].added_at,
+            now(),
+        );
+        let mut kept: Vec<(Body, Option<Body>)> = Vec::new();
+        let mut count = 0;
+        // Newest first while counting, so the cap drops the oldest.
+        for m in self.data.contacts[i].messages.iter().rev() {
+            let gone = m.expires_at.is_some_and(|end| end <= now);
+            // A queued note goes with the next flush; documents are not in Notes.
+            let Some(id) = m.id.filter(|_| !(m.deleted || gone || m.at < since)) else {
+                continue;
+            };
+            if m.status == Status::Queued || m.file.is_some() {
+                continue;
+            }
+            let star = m.my_reaction.map(|r| Body::React {
+                target: Ref { id, theirs: false },
+                reaction: Some(r),
+            });
+            count += 1 + usize::from(star.is_some());
+            if count > CATCH_UP_NOTES {
+                break;
+            }
+            let expires_in = m
+                .expires_at
+                .map(|end| u32::try_from(end - now).unwrap_or(u32::MAX));
+            let body = Body::Message {
+                id,
+                sent_at: m.at,
+                expires_in,
+                reply_to: m.reply_to,
+                text: m.text.clone(),
+            };
+            kept.push((body, star));
+        }
+        kept.reverse();
+        let (notes, stars): (Vec<_>, Vec<_>) = kept.into_iter().unzip();
+        for body in notes.into_iter().chain(stars.into_iter().flatten()) {
+            let note = Body::Note {
+                body: Box::new(body),
+            };
+            if let Err(e) = self.transmit(&key, note) {
+                return self.note(e);
+            }
+        }
     }
 
     /// A note from one of our own devices, filed into the Notes chat.

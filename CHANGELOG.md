@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.33.2
+
+- Notes written while your other device was not updated yet now reach it
+  once it is (ADR-046, amendment 2): up to the 30 newest written since it
+  was linked, with their stars. Notes lost on 0.33.0 and 0.33.1 before
+  this do not come back.
+- A deleted note disappears instead of leaving "message deleted".
+
 ## 0.33.1
 
 - Notes menus fit a chat with yourself: Search, Export, the disappearing

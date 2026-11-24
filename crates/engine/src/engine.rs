@@ -2311,7 +2311,14 @@ impl Engine {
             Body::Understands { level } => {
                 let c = &mut self.data.contacts[i];
                 let news = level > c.understands;
+                // ADR-046 amendment 2: one of our devices reads notes from now.
+                let reads_notes =
+                    c.own && c.understands < proto::NOTES_LEVEL && level >= proto::NOTES_LEVEL;
                 c.understands = level;
+                if reads_notes && !got.request {
+                    self.catch_up_notes(i);
+                }
+                let c = &mut self.data.contacts[i];
                 if news {
                     c.told = 0;
                     if !got.request {

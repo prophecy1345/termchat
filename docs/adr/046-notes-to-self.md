@@ -69,7 +69,7 @@ Proposed by the owner, 2026-11-24: in Telegram "Saved Messages" turns into a hea
 
 Not taken from Raindrop: previews or fetched titles of links. Fetching a page would tell the site, and whoever watches the network, what you saved (rule 9). Folders (collections) wait until tags prove too little; they need a field of their own on the wire.
 
-## Amendment 2 (2026-11-24, proposed): notes missed while a device was not ready
+## Amendment 2 (2026-11-24, accepted by the owner): notes missed while a device was not ready
 
 Found by the owner on 0.33.0. A note goes only to our devices that already said they read notes (`Understands` level 9). If none has, the note is still marked sent and is never sent again. So the notes written on the phone between its update and the moment it heard that the computer was updated too never reach the computer. Devices are rarely updated in the same minute, so this hits nearly everyone who links two.
 
