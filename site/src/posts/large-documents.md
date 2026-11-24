@@ -34,7 +34,7 @@ While a file travels, both apps keep its bytes in a spool next to the encrypted 
 
 ## What it costs
 
-- **Speed.** 25 MiB takes about **10 minutes**, 4 MiB about a minute and a half. Without file storage the relay paces messages per queue (one a second), and that is the price.
+- **Speed.** 25 MiB takes about **10 minutes**, 4 MiB about a minute and a half. Without file storage the relay paces messages per queue (one a second), and that is the price. (Since 0.30: about 2 minutes, see [the 0.30 post](/blog/view-images/).)
 - **Metadata.** Parts travel in a 64 KB size class used for nothing else, so the relay can tell that a large document is moving between two queues, roughly how big it is (to about 64 KB) and when the receiver asked for it. It still does not know who the two queues belong to, the file's name or what is in it. This is in the [threat model](https://github.com/prophecy1345/termchat/blob/main/docs/threat-model.md).
 - **Versions.** Both sides need 0.29 and their relay too. To an older contact the app sends up to 1 MiB, as before.
 - **Groups** stay at 1 MiB for now: a group shares one queue, so parts for one member would reach all of them.
