@@ -26,7 +26,7 @@ class Share(val text: String?, val name: String?, val bytes: ByteArray?)
 sealed interface Screen {
     data object Start : Screen
     data object Chats : Screen
-    data class Chat(val index: UInt) : Screen
+    data class Chat(val index: UInt, val ask: String? = null) : Screen
     data class Group(val index: UInt) : Screen
     data object Invite : Screen
     data object Add : Screen

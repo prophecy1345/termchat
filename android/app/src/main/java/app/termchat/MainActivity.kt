@@ -84,7 +84,7 @@ private fun Root(m: Model) {
         when (val s = m.screen) {
             Screen.Start -> Start(m)
             Screen.Chats -> Chats(m)
-            is Screen.Chat -> Chat(m, s.index)
+            is Screen.Chat -> Chat(m, s.index, s.ask)
             is Screen.Group -> Group(m, s.index)
             Screen.Invite -> Invite(m)
             Screen.Add -> Add(m)

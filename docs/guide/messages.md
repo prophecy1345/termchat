@@ -9,12 +9,12 @@ description: "Sending messages and documents in termchat.app, answering, editing
 
 ## Notes to yourself
 
-**Notes** is a chat with yourself: links to read later, addresses, drafts. It is always in the chat list, labelled "only on your devices"; pin it to keep it on top. Write, answer, edit and delete as in any chat; search and export work too.
+**Notes** is a chat with yourself: links to read later, addresses, drafts. It has its own row above your contacts, labelled "only on your devices". Write, edit, delete and forward notes; its menu holds only what fits a chat with yourself: **Search**, **Export**, the disappearing timer and **Clear history** (on Android also on a long press on its row). Notes cannot be answered or reacted to, and Notes itself is not renamed, muted, pinned or archived.
 
 - **On one device nothing leaves it.** Notes stay in the encrypted state file and never go on the wire.
 - **With linked devices** each note, edit and delete reaches your other devices, end-to-end encrypted, directly between them. A contact can never write into your Notes.
 - A newly linked device sees notes written from then on, not older ones; a device offline for more than 14 days misses what was written meanwhile.
-- **Keep it in order:** write `#tags` in a note (`#work`, `#read-later`). Over Notes a row of filters shows **All**, **Untagged** (notes with no tag), **Favorites**, **Links** and each tag with its count. Star a note to keep it in Favorites: **Star** under it on the desktop, the long-press menu on Android, **Shift+↑** then **Ctrl+P**, **s** in the terminal (**Ctrl+P**, **f** steps through the filters there). Tags and stars reach your other devices too. Links are never opened or previewed.
+- **Keep it in order:** write `#tags` in a note (`#work`, `#read-later`). Over Notes a row of filters shows **All**, **Untagged** (notes with no tag), **Favorites**, **Links** and each tag with its count. Star a note to keep it in Favorites: **Star** under it on the desktop, the long-press menu on Android, **Shift+↑** then **s** in the terminal (**Ctrl+P**, **f** steps through the filters there). Tags and stars reach your other devices too. Links are never opened or previewed.
 - Documents in Notes are not supported yet.
 
 ## Sending

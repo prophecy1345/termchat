@@ -927,6 +927,7 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     if let Some(at) = m.picked {
         // Only one's own messages can be edited or deleted.
         let hint = match msgs.get(at).is_some_and(|p| p.mine) {
+            _ if in_notes => " e edit · d delete · s star · f forward · ↑↓ · esc ",
             true => " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ",
             false => " ↵ answer · 1–7 react · ↑↓ · esc ",
         };
@@ -1862,9 +1863,14 @@ fn popup_pane(
             window(f, t, h, title, lines, &buttons, 66, true);
         }
         Popup::ClearHistory => {
-            let lines = plain(
-                "Delete every message here on this device?\nThe others, and your other devices, keep theirs.\nWhat is still on its way stays. This cannot be undone.",
-            );
+            let lines = plain(match m.current().is_some_and(|c| c.notes) {
+                true => {
+                    "Delete every note here on this device?\nYour other devices keep theirs.\nThis cannot be undone."
+                }
+                false => {
+                    "Delete every message here on this device?\nThe others, and your other devices, keep theirs.\nWhat is still on its way stays. This cannot be undone."
+                }
+            });
             let buttons = [
                 ("y clear", true, key(KeyCode::Char('y'))),
                 ("esc keep", false, esc),
@@ -1938,9 +1944,12 @@ fn popup_pane(
             window(f, t, h, "wipe everything", lines, &buttons, 60, true);
         }
         Popup::Unsend(_) => {
-            let lines = plain(
-                "Delete this message for both of you?\nTheir app removes it; a copy or screenshot they made stays.",
-            );
+            let lines = plain(match m.current().is_some_and(|c| c.notes) {
+                true => "Delete this note?\nIt goes from your other devices too.",
+                false => {
+                    "Delete this message for both of you?\nTheir app removes it; a copy or screenshot they made stays."
+                }
+            });
             let buttons = [
                 ("y delete", true, key(KeyCode::Char('y'))),
                 ("esc keep", false, esc),

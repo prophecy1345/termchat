@@ -1044,7 +1044,15 @@ impl Main {
         let rich = group.is_some() || self.engine.rich(i);
         let target = id.map(|id| Ref { id, theirs: !mine });
         let not_ours = "only your own messages can be changed";
+        // ADR-046: a note answers no one and takes a star, not a reaction.
+        let note = group.is_none() && self.current().is_some_and(|c| c.notes);
         match k.code {
+            KeyCode::Char('s') if note => {
+                if let Err(e) = self.engine.toggle_star(at) {
+                    self.status = e;
+                }
+            }
+            KeyCode::Char('r' | '1'..='9') | KeyCode::Enter if note => {}
             KeyCode::Up => self.picked = Some(all[pos.saturating_sub(1)]),
             KeyCode::Down => self.picked = all.get(pos + 1).copied(),
             KeyCode::Esc => self.picked = None,
@@ -1169,7 +1177,8 @@ impl Main {
 
     /// Pin and archive for the open chat, in both menus.
     fn place_rows(&self) -> Vec<(char, String)> {
-        let Some(c) = self.current() else {
+        // ADR-046: Notes has its own row, never pinned or archived.
+        let Some(c) = self.current().filter(|c| !c.notes) else {
             return Vec::new();
         };
         vec![
@@ -1348,7 +1357,10 @@ impl Main {
         } else {
             "not verified"
         };
-        items.push(('l', "send a file".into()));
+        // ADR-046: documents in Notes come later.
+        if !c.notes {
+            items.push(('l', "send a file".into()));
+        }
         if let Some(m) = self.engine.unsaved_file(self.selected) {
             let offered = c.messages[m].file.as_ref().is_some_and(|f| f.offered());
             let what = if offered {
@@ -1393,7 +1405,6 @@ impl Main {
                 items.push(('s', "star or unstar the picked note".into()));
             }
             items.push(('t', format!("disappearing: {}", timer_step(c.expires_in))));
-            items.extend(self.place_rows());
             return items;
         }
         if !self.engine.is_request(&c.key) {

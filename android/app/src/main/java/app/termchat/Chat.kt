@@ -82,20 +82,21 @@ private data class Compose(val at: UInt, val edit: Boolean, val label: String)
 
 /** One chat (ADR-011, section 5). */
 @Composable
-fun Chat(m: Model, index: UInt) {
+fun Chat(m: Model, index: UInt, ask: String? = null) {
     val a = m.account ?: return
     @Suppress("UNUSED_EXPRESSION") m.version
     val c = a.contacts().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.messages(index) }.getOrDefault(emptyList())
     // The draft comes back when the chat opens again, also after a lock.
     var text by remember(index) { mutableStateOf(runCatching { a.draft(index) }.getOrDefault("")) }
-    var dialog by remember { mutableStateOf<String?>(null) }
+    // Asked from the list's long press on Notes: a dialog, or search.
+    var dialog by remember { mutableStateOf(ask?.takeIf { it != "search" }) }
     // ponytail: by index, so a message that expires meanwhile shifts it; ids if that bites.
     var compose by remember(index) { mutableStateOf<Compose?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
     // Search runs here, over what is already on the phone; `null` is off.
-    var query by remember(index) { mutableStateOf<String?>(null) }
+    var query by remember(index) { mutableStateOf(if (ask == "search") "" else null) }
     DisposableEffect(index) {
         a.open(index)
         // After a lock `a` is destroyed; calling it would crash the app.
@@ -322,7 +323,7 @@ fun Chat(m: Model, index: UInt) {
     when (val d = dialog) {
         null -> {}
         "export" -> ExportChat(m, Place.Chat(index)) { dialog = null }
-        "clear" -> Confirm(m, "Clear the history?", "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
+        "clear" -> Confirm(m, "Clear the history?", if (c.notes) "Delete every note here on this device? Your other devices keep theirs. This cannot be undone." else "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
             runCatching { a.clearChat(index) }.onFailure { m.note = it.message ?: "$it" }
         }
         "introduce" -> Introduce(m, index) { dialog = null }
@@ -334,8 +335,8 @@ fun Chat(m: Model, index: UInt) {
             onDismissRequest = { unsend = null },
             containerColor = Tc.surface,
             shape = corner,
-            title = { Text("Delete the message?", style = Tc.name) },
-            text = { Text("It goes for both of you. Their app removes it; a copy or screenshot they made stays.", style = Tc.mono) },
+            title = { Text(if (c.notes) "Delete the note?" else "Delete the message?", style = Tc.name) },
+            text = { Text(if (c.notes) "It goes from your other devices too." else "It goes for both of you. Their app removes it; a copy or screenshot they made stays.", style = Tc.mono) },
             confirmButton = {
                 Flat("Delete", color = Tc.danger) {
                     runCatching { a.deleteMessage(index, at) }.onFailure { m.note = it.message ?: "$it" }
@@ -386,7 +387,17 @@ internal fun ContactToggles(m: Model, c: ContactView, item: @Composable (String,
     KeepOpen("Mute: ${c.mute}") { runCatching { a.nextMute(c.index) }; m.changed() }
     item(if (c.pinned) "Unpin" else "Pin") { runCatching { a.setPinned(c.index, !c.pinned) }; m.changed() }
     item(if (c.archived) "Unarchive" else "Archive") { runCatching { a.setArchived(c.index, !c.archived) }; m.changed() }
-    if (!c.notes) item(if (c.blocked) "Unblock" else "Block") { runCatching { a.setBlocked(c.index, !c.blocked) }; m.changed() }
+    item(if (c.blocked) "Unblock" else "Block") { runCatching { a.setBlocked(c.index, !c.blocked) }; m.changed() }
+}
+
+/** ADR-046: all Notes needs, in its menu and on a long press in the list. */
+@Composable
+internal fun NotesMenu(m: Model, c: ContactView, item: @Composable (String, () -> Unit) -> Unit, ask: (String) -> Unit) {
+    val a = m.account ?: return
+    item("Search") { ask("search") }
+    item("Export") { ask("export") }
+    item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
+    item("Clear history") { ask("clear") }
 }
 
 @Composable
@@ -417,16 +428,16 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 val item = @Composable { label: String, go: () -> Unit ->
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
-                item("Search") { ask("search") }
-                item("Export") { ask("export") }
-                item("Clear history") { ask("clear") }
-                if (!c.request && !c.notes) item("Introduce") { ask("introduce") }
-                if (!c.notes) item("Safety number") { ask("verify") }
-                item("Rename") { ask("rename") }
-                item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
-                item("No history: ${if (c.noHistory) "on" else "off"}") { runCatching { a.setNoHistory(c.index, !c.noHistory) }; m.changed() }
-                ContactToggles(m, c, item)
-                if (!c.notes) {
+                if (c.notes) NotesMenu(m, c, item, ask) else {
+                    item("Search") { ask("search") }
+                    item("Export") { ask("export") }
+                    item("Clear history") { ask("clear") }
+                    if (!c.request) item("Introduce") { ask("introduce") }
+                    item("Safety number") { ask("verify") }
+                    item("Rename") { ask("rename") }
+                    item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
+                    item("No history: ${if (c.noHistory) "on" else "off"}") { runCatching { a.setNoHistory(c.index, !c.noHistory) }; m.changed() }
+                    ContactToggles(m, c, item)
                     item("Report to the relay operator") { ask("report") }
                     item("Delete") { ask("delete") }
                 }
@@ -491,7 +502,8 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                             ) { Sprite(r, 28.dp) }
                         }
                     }
-                    item("Answer", "answer")
+                    // ADR-046: a note answers no one.
+                    if (star == null) item("Answer", "answer")
                 }
                 // ADR-046 amendment 1: in Notes, our reaction is a star.
                 star?.let { go -> if (msg.mine && !msg.deleted) DropdownMenuItem({ Text(if (msg.myReaction != null) "Unstar" else "Star", style = Tc.mono) }, { menu = false; go() }) }
@@ -499,7 +511,7 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                 if (msg.forwardable) item("Forward", "forward")
                 if (rich && msg.pointable && msg.mine) {
                     item("Edit", "edit")
-                    item(if (group) "Delete for everyone" else "Delete for both", "delete")
+                    item(if (group) "Delete for everyone" else if (star != null) "Delete" else "Delete for both", "delete")
                 }
             }
         }

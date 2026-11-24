@@ -1498,7 +1498,12 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         "not verified"
     };
     let pick = |ui: &mut egui::Ui, label: &str| ui.button(label).clicked();
+    // ADR-046: Notes is no one to mute, name, pin, verify, block or delete.
     let next = match () {
+        _ if c.notes && pick(ui, "Search") => Menu::Search,
+        _ if c.notes && pick(ui, "Export") => Menu::Open(Dialog::Export),
+        _ if c.notes && pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
+        _ if c.notes => return None,
         _ if pick(ui, "Search") => Menu::Search,
         _ if pick(
             ui,
@@ -1512,12 +1517,10 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         }
         _ if pick(ui, "Export") => Menu::Open(Dialog::Export),
         _ if pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
-        _ if !request && !c.notes && pick(ui, "Introduce") => Menu::Open(Dialog::Introduce),
+        _ if !request && pick(ui, "Introduce") => Menu::Open(Dialog::Introduce),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
-        _ if !c.notes && pick(ui, &format!("Safety number ({verified})")) => {
-            Menu::Open(Dialog::Verify)
-        }
+        _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
         _ if pick(ui, "Rename") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
         }
@@ -1532,8 +1535,6 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         {
             Menu::NoHistory
         }
-        // ADR-046: Notes is no one to block, report or delete.
-        _ if c.notes => return None,
         _ if pick(ui, if c.blocked { "Unblock" } else { "Block" }) => Menu::Block,
         _ if pick(ui, "Report") => Menu::Report,
         _ if pick(ui, if request { "Reject request" } else { "Delete" }) => {
@@ -1673,32 +1674,39 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 })
                 .response;
             let pointable = v.rich && m.id.is_some() && !m.deleted;
+            // ADR-046: a note answers no one and takes no reactions.
+            let note = v.filter.is_some();
             if pointable {
                 let r = bubble
                     .interact(egui::Sense::click())
-                    .on_hover_text(match m.mine {
-                        true => "Double-click: answer. Right-click: react, forward, edit, delete",
-                        false => "Double-click: answer. Right-click: react, forward",
+                    .on_hover_text(match (note, m.mine) {
+                        (true, _) => "Right-click: forward, edit, delete",
+                        (false, true) => {
+                            "Double-click: answer. Right-click: react, forward, edit, delete"
+                        }
+                        (false, false) => "Double-click: answer. Right-click: react, forward",
                     });
                 // As in most desktop messengers.
-                if r.double_clicked() {
+                if r.double_clicked() && !note {
                     act = Some(Act::Reply(n));
                 }
                 r.context_menu(|ui| {
-                    ui.horizontal(|ui| {
-                        for r in 0..REACTIONS {
-                            let on = my_reaction == Some(r);
-                            let hint = REACTION_NAMES[usize::from(r)];
-                            if sprite(ui, p, r, 2.0, on).on_hover_text(hint).clicked() {
-                                act = Some(Act::React(n, r));
-                                ui.close();
+                    if !note {
+                        ui.horizontal(|ui| {
+                            for r in 0..REACTIONS {
+                                let on = my_reaction == Some(r);
+                                let hint = REACTION_NAMES[usize::from(r)];
+                                if sprite(ui, p, r, 2.0, on).on_hover_text(hint).clicked() {
+                                    act = Some(Act::React(n, r));
+                                    ui.close();
+                                }
                             }
+                        });
+                        ui.separator();
+                        if ui.button("Answer").clicked() {
+                            act = Some(Act::Reply(n));
+                            ui.close();
                         }
-                    });
-                    ui.separator();
-                    if ui.button("Answer").clicked() {
-                        act = Some(Act::Reply(n));
-                        ui.close();
                     }
                     if m.forwardable().is_some() && ui.button("Forward").clicked() {
                         act = Some(Act::Forward(n));
@@ -1710,6 +1718,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                     }
                     let delete = match v.group {
                         Some(_) => "Delete for everyone",
+                        None if note => "Delete",
                         None => "Delete for both",
                     };
                     if m.mine && ui.button(delete).clicked() {

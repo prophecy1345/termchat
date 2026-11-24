@@ -90,9 +90,12 @@ fun Chats(m: Model) {
                     // Under the row, at the right, clear of the screen edge (owner, 2026-11-23).
                     Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp)) {
                         DropdownMenu(held == c.fingerprint, { held = null }) {
-                            item("Rename") { dialog = c to "rename" }
-                            ContactToggles(m, c, item)
-                            item("Delete") { dialog = c to "delete" }
+                            if (c.notes) NotesMenu(m, c, item) { m.screen = Screen.Chat(c.index, it) }
+                            else {
+                                item("Rename") { dialog = c to "rename" }
+                                ContactToggles(m, c, item)
+                                item("Delete") { dialog = c to "delete" }
+                            }
                         }
                     }
                     Row(

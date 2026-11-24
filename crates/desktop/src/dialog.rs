@@ -1071,7 +1071,11 @@ impl Chat {
                 ui.set_width(560.0);
                 ui.heading("Clear the history");
                 ui.add_space(6.0);
-                ui.label("Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.");
+                let notes = open.is_some_and(|i| self.engine.data.contacts[i].notes);
+                ui.label(match notes {
+                    true => "Delete every note here on this device? Your other devices keep theirs. This cannot be undone.",
+                    false => "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.",
+                });
                 let (go, stay) = buttons(ui, p, "Clear");
                 if go {
                     let done = match (self.open_group(), open) {
@@ -1115,8 +1119,16 @@ impl Chat {
             }
             Dialog::DeleteMessage(m) => {
                 let Some(i) = open else { return false };
-                ui.heading("Delete the message");
-                ui.label("Delete it for both of you? Their app removes it; a copy or screenshot they made stays.");
+                match self.engine.data.contacts[i].notes {
+                    true => {
+                        ui.heading("Delete the note");
+                        ui.label("It goes from your other devices too.");
+                    }
+                    false => {
+                        ui.heading("Delete the message");
+                        ui.label("Delete it for both of you? Their app removes it; a copy or screenshot they made stays.");
+                    }
+                }
                 let (go, stay) = buttons(ui, p, "Delete");
                 if go {
                     if let Err(e) = self.engine.delete_message(i, *m) {

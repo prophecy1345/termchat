@@ -72,9 +72,10 @@ Not taken from Raindrop: previews or fetched titles of links. Fetching a page wo
 ## Implementation notes (2026-11-24)
 
 - **Notes is a contact that is no one** (`notes`, key `NOTES_KEY`, all 0xff), so every chat feature works on it in all three apps. It has no identity slot, so no queue, key or session is ever made for it; sending to it marks the note sent and passes it to our devices.
-- **Not pinned by default**, so it does not move the people in the list; it sorts by its last note like any chat, and pinning keeps it on top.
+- **Not pinned**: the apps draw it on a row of its own above the people (amendment 1).
 - **Documents are not in Notes yet:** a document we send is dropped once sent, and Notes needs a copy kept here to save later. That comes in a follow-up.
 - A device holding only Notes still counts as new and can be linked.
+- **Menus fit a chat with yourself** (owner, 2026-11-24, after 0.33.0): Search, Export, the disappearing timer and Clear history; no answer or reactions on a note, "Delete" instead of "Delete for both"; no mute, rename, pin, archive or sending a file. The long press on its row on Android offers the same.
 
 ## Dependencies
 
