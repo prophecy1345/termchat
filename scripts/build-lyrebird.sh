@@ -19,6 +19,10 @@ if [ "$1" = android ]; then
     cgo=1
 fi
 # anet (snowflake) needs -checklinkname=0 with Go 1.23 and later.
+# The module proxy has dropped downloads mid-stream (F-Droid builds, 0.31
+# and 0.32): on any proxy error fetch from the source instead. go.sum still
+# checks every module's hash, so nothing else can come in.
+GOPROXY=${GOPROXY:-https://proxy.golang.org|direct} \
 GOTOOLCHAIN=go1.27.2 GOFLAGS=-mod=readonly CGO_ENABLED=$cgo GOOS=$1 GOARCH=$2 \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -checklinkname=0" \
     -o "$out" ./cmd/lyrebird
