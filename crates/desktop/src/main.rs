@@ -8,6 +8,7 @@ mod dialog;
 mod logo;
 mod sprites;
 mod synth;
+mod viewer;
 
 use std::path::PathBuf;
 use std::time::Duration;

@@ -663,6 +663,7 @@ impl Engine {
                 name: name.to_string(),
                 size,
                 done: 0,
+                picture: false,
                 data: Some(bytes),
                 large: None,
             }),
@@ -741,6 +742,15 @@ impl Engine {
         let msg = self.data.groups.get(g)?.messages.get(m)?;
         let f = msg.file.as_ref().filter(|f| !msg.mine && f.complete())?;
         Some((f.name.clone(), f.data.clone()?))
+    }
+
+    /// ADR-044: the bytes of received image `m` of group `g`, to decode.
+    pub fn group_image_bytes(&self, g: usize, m: usize) -> Result<Vec<u8>, String> {
+        let msg = self.data.groups.get(g).and_then(|g| g.messages.get(m));
+        if !msg.is_some_and(|msg| !msg.mine && msg.file.as_ref().is_some_and(FileMsg::viewable)) {
+            return Err("no image to show".into());
+        }
+        Ok(self.group_file_bytes(g, m).ok_or("no image to show")?.1)
     }
 
     /// The newest received document of group `g` that waits to be saved.

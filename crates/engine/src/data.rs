@@ -657,6 +657,9 @@ pub struct FileMsg {
     /// ADR-043: offered, sent on request, its bytes in the spool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub large: Option<Large>,
+    /// ADR-044: received, and it starts with an image signature.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub picture: bool,
 }
 
 /// ADR-043: where a document sent on request stands.
@@ -691,6 +694,11 @@ impl FileMsg {
     /// Its bytes are still on this device, in the state file or the spool.
     pub fn held(&self) -> bool {
         self.data.is_some() || self.large.as_ref().is_some_and(|l| l.held)
+    }
+
+    /// ADR-044: a received image that can be viewed now: whole and held.
+    pub fn viewable(&self) -> bool {
+        self.picture && self.complete() && self.held()
     }
 
     /// ADR-043: an offer the receiver has not answered yet.
@@ -856,6 +864,7 @@ fn take_into(
         name: name.clone(),
         size,
         done: 1,
+        picture: crate::picture::is_image(&data),
         data: Some(data),
         large: None,
     };
@@ -1427,6 +1436,7 @@ mod tests {
             name: "report.pdf".into(),
             size: bytes.len() as u32,
             done: 0,
+            picture: false,
             data: Some(bytes),
             large: None,
         }
@@ -1689,6 +1699,7 @@ mod tests {
                 name: "a.txt".into(),
                 size: 2,
                 done: 1,
+                picture: false,
                 data,
                 large: None,
             });

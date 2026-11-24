@@ -88,6 +88,24 @@ fn hex(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// ADR-044: an image for the viewer, RGBA, not premultiplied, at most
+/// `picture::MAX_SHOWN` on the longest side.
+#[derive(uniffi::Record)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+fn picture(bytes: &[u8]) -> std::result::Result<Picture, String> {
+    let p = termchat_engine::picture::decode(bytes)?;
+    Ok(Picture {
+        width: p.width,
+        height: p.height,
+        rgba: p.rgba.to_vec(),
+    })
+}
+
 #[derive(uniffi::Record)]
 pub struct ContactView {
     pub index: u32,
@@ -146,6 +164,8 @@ pub struct MessageView {
     pub file_unsaved: bool,
     /// ADR-043: a document offered to us, not asked for or declined yet.
     pub file_offered: bool,
+    /// ADR-044: a received image that can be viewed now.
+    pub file_picture: bool,
     /// It can be answered and reacted to (ADR-025).
     pub pointable: bool,
     /// Ours: on a device of theirs, and seen by them (ADR-041).
@@ -518,6 +538,7 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
         file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
         file_unsaved: !m.mine && m.file.as_ref().is_some_and(|f| f.complete() && f.held()),
         file_offered: !m.mine && m.file.as_ref().is_some_and(|f| f.offered()),
+        file_picture: !m.mine && m.file.as_ref().is_some_and(|f| f.viewable()),
         pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
         delivered: m.delivered,
         read: m.read,
@@ -916,6 +937,13 @@ impl Account {
         Ok(self.with_group(group, |e, g| e.send_group_file(g, &name, bytes))??)
     }
 
+    /// ADR-044: received group image `msg`, decoded within limits. Call it
+    /// off the main thread; the engine stays unlocked while it decodes.
+    pub fn view_group_image(&self, group: u32, msg: u32) -> Result<Picture> {
+        let bytes = self.with_group(group, |e, g| e.group_image_bytes(g, msg as usize))??;
+        Ok(picture(&bytes)?)
+    }
+
     /// The bytes of received group document `msg`, for "Save as".
     pub fn group_file_bytes(&self, group: u32, msg: u32) -> Result<Option<Vec<u8>>> {
         self.with_group(group, |e, g| {
@@ -1074,6 +1102,13 @@ impl Account {
     /// 25 MiB it is offered and goes when they ask (ADR-043).
     pub fn send_file(&self, index: u32, name: String, bytes: Vec<u8>) -> Result<()> {
         Ok(self.with(index, |e, i| e.send_file(i, &name, bytes))??)
+    }
+
+    /// ADR-044: received image `msg`, decoded within limits. Call it off the
+    /// main thread; the engine stays unlocked while it decodes.
+    pub fn view_image(&self, index: u32, msg: u32) -> Result<Picture> {
+        let bytes = self.with(index, |e, i| e.image_bytes(i, msg as usize))??;
+        Ok(picture(&bytes)?)
     }
 
     /// Asks the contact for offered document `msg` (ADR-043).

@@ -106,6 +106,7 @@ impl Engine {
                 name: name.to_string(),
                 size,
                 done: 0,
+                picture: false,
                 data: None,
                 large: Some(Large {
                     held: true,
@@ -293,6 +294,7 @@ impl Engine {
                         name,
                         size,
                         done: 0,
+                        picture: false,
                         data: None,
                         large: Some(Large::default()),
                     }),
@@ -383,6 +385,9 @@ impl Engine {
             return;
         };
         f.done += 1;
+        if index == 0 {
+            f.picture = crate::picture::is_image(data);
+        }
         let (next, whole) = (f.done, f.complete());
         if whole || next % ACK_EVERY == 0 {
             let _ = self.transmit(&key, Body::FileAck { id, next });
@@ -534,6 +539,7 @@ mod tests {
                 name: "a.pdf".into(),
                 size: 2 << 20,
                 done,
+                picture: false,
                 data: None,
                 large: Some(Large {
                     held,

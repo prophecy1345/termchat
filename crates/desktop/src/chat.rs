@@ -173,6 +173,8 @@ pub struct Chat {
     /// One line: the last note from the engine.
     pub(crate) status: String,
     pub(crate) dialog: Option<Dialog>,
+    /// ADR-044: the received image open over the chat.
+    pub(crate) viewer: Option<crate::viewer::Viewer>,
     /// What SEND does with the text (ADR-025).
     compose: Compose,
     /// Put the cursor in the field, at the end of its text, next frame.
@@ -205,6 +207,8 @@ enum Act {
     /// ADR-043: ask for an offered document, or turn it down.
     Download(usize),
     Decline(usize),
+    /// ADR-044: open a received image.
+    View(usize),
     Forward(usize),
     Reply(usize),
     Edit(usize),
@@ -224,6 +228,7 @@ impl Chat {
             last_tick: Instant::now(),
             status: String::new(),
             dialog: None,
+            viewer: None,
             compose: Compose::New,
             focus_input: false,
             linking: false,
@@ -484,6 +489,7 @@ impl Chat {
             .show(ui, |ui| self.chat(ui, p));
         self.toasts(ui.ctx(), p);
         self.dialogs(ui.ctx(), p, s);
+        self.viewer(ui.ctx(), p);
         lock
     }
 
@@ -892,6 +898,20 @@ impl Chat {
         };
         match act {
             Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
+            Act::View(n) => {
+                let bytes = match at {
+                    Open::Chat(i) => self.engine.image_bytes(i, n),
+                    Open::Group(g) => self.engine.group_image_bytes(g, n),
+                };
+                let name = msgs.get(n).map(|m| m.text.clone()).unwrap_or_default();
+                match bytes {
+                    Ok(bytes) => {
+                        let name = termchat_engine::engine::clean_text(&name);
+                        self.viewer = Some(crate::viewer::Viewer::open(n, name, bytes));
+                    }
+                    Err(e) => self.status = e,
+                }
+            }
             Act::Download(n) => {
                 if let Open::Chat(i) = at
                     && let Err(e) = self.engine.download_file(i, n)
@@ -1630,6 +1650,11 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 .file
                 .as_ref()
                 .is_some_and(|f| !m.mine && f.complete() && f.held());
+            // ADR-044: decoded only on this click.
+            let image = m.file.as_ref().is_some_and(|f| !m.mine && f.viewable());
+            if image && ui.link(RichText::new("View").color(p.accent)).clicked() {
+                act = Some(Act::View(n));
+            }
             if unsaved && ui.link(RichText::new("Save…").color(p.accent)).clicked() {
                 act = Some(Act::Save(n));
             }
@@ -1854,6 +1879,7 @@ mod tests {
                         data: Some(b"hello".to_vec()),
                         id: 0,
                         large: None,
+                        picture: false,
                     });
                     m
                 },

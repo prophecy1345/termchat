@@ -223,6 +223,31 @@ async fn large_documents_go_only_when_asked_and_leave_nothing_behind() {
     assert_eq!(spooled(&dir, "bob"), 0);
     assert!(alice.download_file(0, m).is_err());
 
+    // ADR-044: a received image can be viewed while it is held; the
+    // large document above, not an image, never could.
+    let mut png = Vec::new();
+    image::ImageEncoder::write_image(
+        image::codecs::png::PngEncoder::new(&mut png),
+        &[200u8; 5 * 4 * 4],
+        5,
+        4,
+        image::ExtendedColorType::Rgba8,
+    )
+    .unwrap();
+    bob.send_file(0, "photo.dat", png).unwrap();
+    pump(&mut alice, &mut bob, |a, _| a.unsaved_file(0).is_some()).await;
+    let m = alice.unsaved_file(0).unwrap();
+    let p = termchat_engine::picture::decode(&alice.image_bytes(0, m).unwrap()).unwrap();
+    assert_eq!((p.width, p.height, p.rgba.len()), (5, 4, 80));
+    let first = alice.data.contacts[0]
+        .messages
+        .iter()
+        .position(|m| m.text == "scan.pdf")
+        .unwrap();
+    assert!(alice.image_bytes(0, first).is_err());
+    alice.discard_file(0, m);
+    assert!(alice.image_bytes(0, m).is_err());
+
     // Over the new limit.
     let huge = vec![0; termchat_core::proto::MAX_LARGE_FILE_BYTES as usize + 1];
     assert!(bob.send_file(0, "huge.bin", huge).is_err());

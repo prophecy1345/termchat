@@ -7,6 +7,7 @@ pub mod engine;
 pub mod icons;
 pub mod notify;
 pub mod password;
+pub mod picture;
 pub mod reactions;
 mod relay;
 pub mod settings;

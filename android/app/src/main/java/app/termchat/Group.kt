@@ -49,6 +49,8 @@ fun Group(m: Model, index: UInt) {
         m.changed()
     }
     var saving by remember { mutableStateOf<UInt?>(null) }
+    // ADR-044: the received image open in the viewer.
+    var viewing by remember { mutableStateOf<UInt?>(null) }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val msg = saving ?: return@rememberLauncherForActivityResult
         saving = null
@@ -61,6 +63,15 @@ fun Group(m: Model, index: UInt) {
         m.changed()
     }
 
+    viewing?.let { at ->
+        val name = messages.getOrNull(at.toInt())?.fileName ?: "image"
+        ImageViewer(
+            name,
+            load = { a.viewGroupImage(index, at) },
+            onSave = { viewing = null; saving = at; save.launch(name) },
+            onClose = { viewing = null },
+        )
+    }
     Column(Modifier.fillMaxSize()) {
         GroupHeader(m, g) { dialog = it }
         Line()
@@ -85,7 +96,7 @@ fun Group(m: Model, index: UInt) {
                             m.changed()
                         }
                     }
-                }, group = true) { keep ->
+                }, group = true, view = { viewing = at }) { keep ->
                     if (keep) {
                         saving = at
                         save.launch(msg.fileName ?: "file")

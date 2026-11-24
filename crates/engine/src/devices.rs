@@ -1142,6 +1142,7 @@ impl Engine {
                         name,
                         size,
                         done: total,
+                        picture: false,
                         data: None,
                         large: None,
                     }),

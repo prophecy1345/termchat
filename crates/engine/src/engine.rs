@@ -2974,6 +2974,7 @@ impl Engine {
                 name: name.to_string(),
                 size,
                 done: 0,
+                picture: false,
                 data: Some(bytes),
                 large: None,
             }),
@@ -3080,6 +3081,16 @@ impl Engine {
             Some(_) => Some((f.name.clone(), self.large_bytes(i, m)?)),
             None => Some((f.name.clone(), f.data.clone()?)),
         }
+    }
+
+    /// ADR-044: the bytes of received image `m` of contact `i`, to decode
+    /// with `picture::decode` off the interface thread.
+    pub fn image_bytes(&self, i: usize, m: usize) -> Result<Vec<u8>, String> {
+        let msg = self.data.contacts.get(i).and_then(|c| c.messages.get(m));
+        if !msg.is_some_and(|msg| !msg.mine && msg.file.as_ref().is_some_and(FileMsg::viewable)) {
+            return Err("no image to show".into());
+        }
+        Ok(self.file_bytes(i, m).ok_or("no image to show")?.1)
     }
 
     /// The newest received file of contact `i` that waits to be saved.
@@ -3782,6 +3793,7 @@ mod tests {
             name: "half.bin".into(),
             size: 40_000,
             done: 1,
+            picture: false,
             data: Some(vec![1; 16_000]),
             large: None,
         });
@@ -4314,6 +4326,7 @@ mod tests {
             name: "half.pdf".into(),
             size: 32_000,
             done: 1,
+            picture: false,
             data: Some(vec![0; 16_000]),
             large: None,
         });

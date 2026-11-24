@@ -13,6 +13,8 @@ libfuzzer-sys = "0.4"
 termchat-proto = { path = "../crates/proto" }
 # ADR-039: the webhook body parser; no Tor needed for it.
 termchat = { path = "../crates/client", default-features = false }
+# ADR-044: the image decoder with its limits.
+termchat-engine = { path = "../crates/engine", default-features = false }
 
 # Not part of the main workspace: needs nightly.
 [workspace]
@@ -44,3 +46,9 @@ path = "fuzz_targets/group.rs"
 [[bin]]
 name = "alert"
 path = "fuzz_targets/alert.rs"
+
+[[bin]]
+name = "picture"
+path = "fuzz_targets/picture.rs"
+test = false
+doc = false

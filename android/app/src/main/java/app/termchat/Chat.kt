@@ -113,6 +113,8 @@ fun Chat(m: Model, index: UInt) {
     }
     // The received document being saved: its bytes go where the user picked, then are forgotten.
     var saving by remember { mutableStateOf<UInt?>(null) }
+    // ADR-044: the received image open in the viewer.
+    var viewing by remember { mutableStateOf<UInt?>(null) }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val msg = saving ?: return@rememberLauncherForActivityResult
         saving = null
@@ -126,6 +128,15 @@ fun Chat(m: Model, index: UInt) {
         m.changed()
     }
 
+    viewing?.let { at ->
+        val name = messages.getOrNull(at.toInt())?.fileName ?: "image"
+        ImageViewer(
+            name,
+            load = { a.viewImage(index, at) },
+            onSave = { viewing = null; saving = at; save.launch(name) },
+            onClose = { viewing = null },
+        )
+    }
     Column(Modifier.fillMaxSize()) {
         Header(m, c) { if (it == "search") query = "" else dialog = it }
         Line()
@@ -167,7 +178,7 @@ fun Chat(m: Model, index: UInt) {
                     runCatching { a.downloadFile(index, at) }.onFailure { m.note = it.message ?: "$it" }
                     m.changed()
                 }
-                Bubble(msg, c.rich, act, download = download) { keep ->
+                Bubble(msg, c.rich, act, download = download, view = { viewing = at }) { keep ->
                     if (keep) {
                         saving = at
                         save.launch(msg.fileName ?: "file")
@@ -374,7 +385,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
@@ -440,6 +451,8 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
         }
         if (msg.fileUnsaved) {
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                // ADR-044: decoded only on this tap, by the Rust engine.
+                if (msg.filePicture) Flat("View", color = Tc.lime) { view() }
                 Flat("Save", color = Tc.lime) { file(true) }
                 Flat("Discard", color = Tc.dim) { file(false) }
             }
