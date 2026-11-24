@@ -663,6 +663,11 @@ pub enum Body {
         nickname: String,
         invite: Invite,
     },
+    /// ADR-046: a note to self, from one of our devices to another: a
+    /// `Message`, `Edit`, `Delete` or `File` chunk.
+    Note {
+        body: Box<Body>,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -674,14 +679,17 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 42;
+const KNOWN_KINDS: u32 = 43;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
 /// copies that name their chat (ADR-030), 5 = receipts (ADR-041), 6 = several
 /// group admins (ADR-042), 7 = documents on request (ADR-043), 8 =
-/// introductions (ADR-045).
-pub const UNDERSTANDS: u16 = 8;
+/// introductions (ADR-045), 9 = notes to self (ADR-046).
+pub const UNDERSTANDS: u16 = 9;
+
+/// The level from which our own device takes notes (ADR-046).
+pub const NOTES_LEVEL: u16 = 9;
 
 /// The level from which a contact takes introductions (ADR-045).
 pub const INTRO_LEVEL: u16 = 8;
@@ -1127,7 +1135,8 @@ impl GroupInner {
             | Body::IntroAsk { .. }
             | Body::IntroGrant { .. }
             | Body::IntroDecline { .. }
-            | Body::IntroOffer { .. } => Err(Error::Malformed),
+            | Body::IntroOffer { .. }
+            | Body::Note { .. } => Err(Error::Malformed),
             body => check_body(body),
         }
     }
@@ -1181,7 +1190,8 @@ fn check_body(body: &Body) -> Result<(), Error> {
             | Body::IntroAsk { .. }
             | Body::IntroGrant { .. }
             | Body::IntroDecline { .. }
-            | Body::IntroOffer { .. } => Err(Error::Malformed),
+            | Body::IntroOffer { .. }
+            | Body::Note { .. } => Err(Error::Malformed),
             ref inner => check_body(inner),
         },
         Body::Receipt {
@@ -1262,6 +1272,13 @@ fn check_body(body: &Body) -> Result<(), Error> {
             }
             Ok(())
         }
+        // ADR-046: what a note can be, one level deep.
+        Body::Note { body } => match **body {
+            Body::Message { .. } | Body::Edit { .. } | Body::Delete { .. } | Body::File { .. } => {
+                check_body(body)
+            }
+            _ => Err(Error::Malformed),
+        },
         Body::IntroAsk { nickname, .. } => check_nickname(nickname),
         Body::IntroGrant { invite, .. } => invite.check(),
         Body::IntroOffer {
@@ -1474,7 +1491,7 @@ mod tests {
         let last = Body::IntroDecline { intro: 1 };
         let raw = postcard::to_allocvec(&with(last)).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
-        assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 2);
+        assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 3);
         let raw = postcard::to_allocvec(&with(Body::IntroOffer {
             intro: 1,
             nickname: "c".into(),
@@ -1492,8 +1509,13 @@ mod tests {
             },
         }))
         .unwrap();
+        assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 2);
+        let note = Body::Note {
+            body: Box::new(Body::Delete { id: 1 }),
+        };
+        let raw = postcard::to_allocvec(&with(note)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
-        assert_eq!(raw[head.len()], 41);
+        assert_eq!(raw[head.len()], 42);
     }
 
     #[test]
@@ -1573,6 +1595,72 @@ mod tests {
         assert_eq!(large_chunks(MAX_LARGE_FILE_BYTES), 410);
         assert_eq!(large_chunk_len(LARGE_CHUNK as u32 + 1, 1), Some(1));
         assert_eq!(large_chunk_len(LARGE_CHUNK as u32, 1), None);
+    }
+
+    #[test]
+    fn adr_046_notes_carry_four_kinds_one_level_deep() {
+        let msg = Body::Message {
+            id: 1,
+            sent_at: 2,
+            expires_in: None,
+            reply_to: None,
+            text: "buy milk".into(),
+        };
+        for inner in [
+            msg.clone(),
+            Body::Edit {
+                id: 1,
+                text: "x".into(),
+            },
+            Body::Delete { id: 1 },
+        ] {
+            let note = with(Body::Note {
+                body: Box::new(inner),
+            });
+            assert_eq!(
+                Inner::from_padded(&note.to_padded().unwrap()).unwrap(),
+                note
+            );
+        }
+        let long = Body::Message {
+            id: 1,
+            sent_at: 2,
+            expires_in: None,
+            reply_to: None,
+            text: "a".repeat(MAX_TEXT_BYTES + 1),
+        };
+        for bad in [
+            Body::Note {
+                body: Box::new(Body::Note {
+                    body: Box::new(msg.clone()),
+                }),
+            },
+            Body::Note {
+                body: Box::new(Body::Goodbye),
+            },
+            Body::Note {
+                body: Box::new(long),
+            },
+        ] {
+            assert!(with(bad.clone()).to_padded().is_err());
+            let raw = pad(postcard::to_allocvec(&with(bad)).unwrap());
+            assert!(Inner::from_padded(&raw).is_err());
+        }
+        let group = GroupInner {
+            sender: [1; 32],
+            group: [3; 16],
+            body: Body::Note {
+                body: Box::new(msg.clone()),
+            },
+        };
+        assert!(group.to_padded().is_err());
+        let copy = Body::Copy {
+            contact: [4; 32],
+            body: Box::new(Body::Note {
+                body: Box::new(msg),
+            }),
+        };
+        assert!(with(copy).to_padded().is_err());
     }
 
     #[test]

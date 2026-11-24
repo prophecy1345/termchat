@@ -76,7 +76,10 @@ async fn strangers(dir: &Path) -> (Box<Engine>, Box<Engine>) {
     pump(&mut alice, &mut bob, |a, _| a.data.invite_queue.is_some()).await;
     settle(&mut alice, &mut bob).await;
     bob.add(&alice.invite().unwrap(), false).unwrap();
-    pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
+    pump(&mut alice, &mut bob, |a, _| {
+        a.data.contacts.iter().any(|c| !c.notes)
+    })
+    .await;
     settle(&mut alice, &mut bob).await;
     (alice, bob)
 }

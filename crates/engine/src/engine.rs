@@ -29,6 +29,9 @@ mod intro;
 pub use intro::{IntroAnswer, PendingIntro};
 #[path = "large.rs"]
 mod large;
+#[path = "notes.rs"]
+mod notes;
+pub use notes::NOTES_KEY;
 #[path = "receipts.rs"]
 mod receipts;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
@@ -701,6 +704,7 @@ impl Engine {
             engine.core_at(slot).mark_members(|k| peers.contains(k));
         }
         engine.drop_unproven_devices();
+        engine.ensure_notes();
         engine.start_links(true)?;
         Ok(engine)
     }
@@ -736,6 +740,11 @@ impl Engine {
     /// would tie the two together.
     fn slot_for(&self, contact: &Ed25519Key) -> Option<usize> {
         let i = self.index(contact)?;
+        // ADR-046: Notes is no one's contact, so nothing on the wire for it:
+        // no queue, no keys, no session.
+        if self.data.contacts[i].notes {
+            return None;
+        }
         match self.data.contacts[i].profile {
             None => Some(0),
             Some(key) => self.slot_of(&key),
@@ -763,7 +772,8 @@ impl Engine {
     /// ADR-023: a contact from before anonymous queues, with no address
     /// either way. Only a new invite brings them back.
     pub fn needs_invite(&self, c: &Contact) -> bool {
-        c.mine.is_none()
+        !c.notes
+            && c.mine.is_none()
             && c.theirs.is_none()
             && c.their_invite.is_none()
             && !c.left
@@ -1495,6 +1505,9 @@ impl Engine {
 
     /// Something to send to contact `i`: flush with a session, claim a key without.
     fn deliver(&mut self, i: usize) {
+        if self.data.contacts[i].notes {
+            return self.flush_notes(i);
+        }
         let key = self.data.contacts[i].key;
         match self.has_session(&key) {
             true => self.flush(i),
@@ -2045,11 +2058,15 @@ impl Engine {
             if self.index(&v).is_some_and(|o| self.data.contacts[o].own) {
                 // ADR-030: only a copy that names the chat whose queue it came
                 // in; a bare one, or one for another chat, a relay moved here.
-                if let Body::Copy { contact, body } = got.body
-                    && contact == k
-                    && let Some(i) = self.index(&k)
-                {
-                    self.own_copy(i, *body);
+                match got.body {
+                    Body::Copy { contact, body } if contact == k => {
+                        if let Some(i) = self.index(&k) {
+                            self.own_copy(i, *body);
+                        }
+                    }
+                    // ADR-046: a note from another device of ours.
+                    Body::Note { body } => self.note_in(*body),
+                    _ => {}
                 }
                 return self.persist();
             }
@@ -2213,6 +2230,12 @@ impl Engine {
                 }
                 self.happened.push(alert(false));
             }
+            // ADR-046: notes come only from our own devices.
+            Body::Note { body } if self.data.contacts[i].own => {
+                self.note_in(*body);
+                return self.persist();
+            }
+            Body::Note { .. } => return self.persist(),
             // ADR-045: introductions, between accepted contacts only.
             Body::IntroAsk { .. }
             | Body::IntroGrant { .. }
@@ -2595,7 +2618,7 @@ impl Engine {
     /// Sends `text` (shown to the user first) to the relay operator and blocks
     /// contact `i`. The relay learns only the text, not who wrote it (ADR-023).
     pub fn report(&mut self, i: usize, text: String) {
-        let Some(c) = self.data.contacts.get(i) else {
+        let Some(c) = self.data.contacts.get(i).filter(|c| !c.notes) else {
             return;
         };
         if let Some(q) = c.mine.clone() {
@@ -2615,7 +2638,7 @@ impl Engine {
     /// so they cannot put a byte in it; unblocking makes a new one and tells
     /// them its address (ADR-023).
     pub fn block(&mut self, i: usize, on: bool) {
-        let Some(c) = self.data.contacts.get_mut(i) else {
+        let Some(c) = self.data.contacts.get_mut(i).filter(|c| !c.notes) else {
             return;
         };
         c.blocked = on;
@@ -2639,7 +2662,8 @@ impl Engine {
     /// request is remembered, so it cannot simply ask again. An incognito
     /// contact takes its identity with it: a goodbye first (ADR-014).
     pub fn delete(&mut self, i: usize) {
-        let Some(c) = self.data.contacts.get(i) else {
+        // ADR-046: Notes can be cleared, never deleted.
+        let Some(c) = self.data.contacts.get(i).filter(|c| !c.notes) else {
             return;
         };
         let (key, profile, quiet) = (c.key, c.profile, c.blocked || c.left);
@@ -2672,6 +2696,10 @@ impl Engine {
     /// Contact `i`, if we may write to them.
     fn writable(&self, i: usize) -> Result<&Contact, String> {
         let c = self.data.contacts.get(i).ok_or("add a contact first")?;
+        // ADR-046: always writable, never on the wire to anyone else.
+        if c.notes {
+            return Ok(c);
+        }
         // Our own devices (ADR-028) are no one to write to.
         if c.own {
             return Err("add a contact first".into());
@@ -2789,7 +2817,9 @@ impl Engine {
     /// Whether chat `i` can answer, edit, delete and react (ADR-025): their
     /// app has said it reads these.
     pub fn rich(&self, i: usize) -> bool {
-        self.data.contacts[i].understands >= RICH_LEVEL
+        // ADR-046: Notes answers to no older app.
+        let c = &self.data.contacts[i];
+        c.notes || c.understands >= RICH_LEVEL
     }
 
     /// Message `m` of chat `i` as something to point at (ADR-025).
@@ -2970,6 +3000,11 @@ impl Engine {
 
     pub fn send_file(&mut self, i: usize, name: &str, bytes: Vec<u8>) -> Result<(), String> {
         let c = self.writable(i)?;
+        // shortcut: Notes keep text only for now; documents in Notes need a
+        // copy kept here to save (mine are dropped once sent). ADR-046 later.
+        if c.notes {
+            return Err("documents in Notes are not supported yet".into());
+        }
         let name = name.trim();
         proto::check_file_name(name).map_err(|_| "this file name cannot be sent")?;
         if bytes.is_empty() {
@@ -3557,6 +3592,9 @@ impl Engine {
     /// unverified contact, or one whose name collides with another contact or with
     /// ours, also shows the start of its fingerprint: "Alice·48213" (ADR-007).
     pub fn name(&self, c: &Contact) -> String {
+        if c.notes {
+            return "Notes".into();
+        }
         let base = |c: &Contact| self.base_name(c);
         let fp = termchat_core::fingerprint(&c.key);
         let name = base(c);
@@ -3819,7 +3857,7 @@ mod tests {
     async fn clearing_a_chat_keeps_only_what_is_on_its_way() {
         use data::{FileMsg, Msg};
         let (mut e, dir) = offline("clear");
-        e.data.contacts.push(contact(9, "bob"));
+        e.data.push_person(contact(9, "bob"));
         let i = e.data.contacts.len() - 1;
         let msg = |text: &str, status| {
             let mut m = Msg::default();
@@ -3992,8 +4030,8 @@ mod tests {
         let (mut e, dir) = offline("safety-qr");
         let mut c = contact(1, "bob");
         c.verified = false;
-        e.data.contacts.push(c);
-        e.data.contacts.push(contact(2, "carol"));
+        e.data.push_person(c);
+        e.data.push_person(contact(2, "carol"));
         let code = e.safety_code(0).unwrap();
         assert!(
             code.starts_with("TERMCHAT-SAFETY:") && code.len() == 16 + 60,
@@ -4045,7 +4083,7 @@ mod tests {
         let mut notice = line(false, "⚠ 1 message missing", 180);
         notice.status = Status::System;
         c.messages.push(notice);
-        e.data.contacts.push(c);
+        e.data.push_person(c);
         let (name, text) = e.export_chat(0).unwrap();
         assert!(
             name.starts_with("termchat-bob-") && name.ends_with(".txt"),
@@ -4081,10 +4119,12 @@ mod tests {
             c.messages.push(said(at));
             c.pinned = pinned;
             c.archived = archived;
-            e.data.contacts.push(c);
+            e.data.push_person(c);
         }
         e.resort();
-        let order: Vec<u8> = e.data.contacts.iter().map(|c| c.key[0]).collect();
+        // ADR-046: Notes, pinned too, is left out here.
+        let people = e.data.contacts.iter().filter(|c| !c.notes);
+        let order: Vec<u8> = people.map(|c| c.key[0]).collect();
         assert_eq!(order, [4, 3, 2, 1]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4092,8 +4132,8 @@ mod tests {
     #[tokio::test]
     async fn muted_chats_and_groups_stay_quiet() {
         let (mut e, dir) = offline("mute");
-        e.data.contacts.push(contact(1, "loud"));
-        e.data.contacts.push(contact(2, "quiet"));
+        e.data.push_person(contact(1, "loud"));
+        e.data.push_person(contact(2, "quiet"));
         let g = e.create_group("ops").unwrap();
         e.data.contacts[1].muted_until = Some(u64::MAX);
         e.data.groups[g].muted_until = next_mute(None);
@@ -4179,14 +4219,14 @@ mod tests {
             signature: [0; 64],
         };
         devices.signature = server.sign_devices(&devices).unwrap();
-        e.data.contacts.push(Contact {
+        e.data.push_person(Contact {
             key: server_key,
             verified: true,
             theirs: Some(address.clone()),
             their_devices: Some(devices),
             ..Contact::default()
         });
-        e.data.contacts.push(contact(9, "other"));
+        e.data.push_person(contact(9, "other"));
         let pulse = |client: &mut Client, sent_at| {
             client
                 .encrypt(&me.ed25519, Body::Heartbeat { sent_at })
@@ -4315,7 +4355,7 @@ mod tests {
     async fn the_command_line_finds_exactly_one_contact() {
         let (mut e, dir) = offline("find");
         for (k, n) in [(1, "Alice"), (2, "Bob"), (3, "Bob"), (4, "server-01")] {
-            e.data.contacts.push(contact(k, n));
+            e.data.push_person(contact(k, n));
         }
         assert_eq!(e.find("alice"), Ok(0), "case does not matter");
         assert_eq!(e.find("  server-01 "), Ok(3));
@@ -4345,8 +4385,8 @@ mod tests {
     #[tokio::test]
     async fn recv_takes_each_new_message_once_and_files_only_whole() {
         let (mut e, dir) = offline("take");
-        e.data.contacts.push(contact(1, "Alice"));
-        e.data.contacts.push(contact(2, "Bob"));
+        e.data.push_person(contact(1, "Alice"));
+        e.data.push_person(contact(2, "Bob"));
         let msg = |text: &str, at, unfetched| Msg {
             mine: false,
             text: text.into(),

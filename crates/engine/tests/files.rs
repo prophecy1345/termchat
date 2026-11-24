@@ -91,7 +91,7 @@ async fn documents_travel_both_ways_but_not_before_acceptance() {
     // Sent while the request is still open: alice drops it unread.
     bob.send_file(0, "early.txt", b"too soon".to_vec()).unwrap();
     pump(&mut alice, &mut bob, |a, b| {
-        !a.data.contacts.is_empty()
+        a.data.contacts.iter().any(|c| !c.notes)
             && b.data.contacts[0]
                 .messages
                 .iter()
@@ -159,7 +159,10 @@ async fn large_documents_go_only_when_asked_and_leave_nothing_behind() {
     let settle = Instant::now() + Duration::from_secs(1);
     pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
     bob.add(&alice.invite().unwrap(), false).unwrap();
-    pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
+    pump(&mut alice, &mut bob, |a, _| {
+        a.data.contacts.iter().any(|c| !c.notes)
+    })
+    .await;
     alice.accept(0);
     // Both sides must know the other reads offers (ADR-043, level 7).
     pump(&mut alice, &mut bob, |a, b| {

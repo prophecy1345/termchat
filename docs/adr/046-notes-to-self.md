@@ -58,6 +58,13 @@ Body::Note { body: Box<Body> } // appended at the end of `Body`
 - **A group of one:** Megolm, a roster and a group queue for something that has no other member.
 - **Copying old notes to a newly linked device:** a bulk transfer of history that chats do not have either; it can come later for both, in its own ADR.
 
+## Implementation notes (2026-11-24)
+
+- **Notes is a contact that is no one** (`notes`, key `NOTES_KEY`, all 0xff), so every chat feature works on it in all three apps. It has no identity slot, so no queue, key or session is ever made for it; sending to it marks the note sent and passes it to our devices.
+- **Not pinned by default**, so it does not move the people in the list; it sorts by its last note like any chat, and pinning keeps it on top.
+- **Documents are not in Notes yet:** a document we send is dropped once sent, and Notes needs a copy kept here to save later. That comes in a follow-up.
+- A device holding only Notes still counts as new and can be linked.
+
 ## Dependencies
 
 None new.

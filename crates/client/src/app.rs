@@ -1353,6 +1353,12 @@ impl Main {
             ]),
             None => {}
         }
+        // ADR-046: Notes is no one to verify, introduce, block, report or delete.
+        if c.notes {
+            items.push(('t', format!("disappearing: {}", timer_step(c.expires_in))));
+            items.extend(self.place_rows());
+            return items;
+        }
         if !self.engine.is_request(&c.key) {
             items.push(('o', "introduce to someone".into()));
         }

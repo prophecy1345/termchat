@@ -1460,10 +1460,12 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         }
         _ if pick(ui, "Export") => Menu::Open(Dialog::Export),
         _ if pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
-        _ if !request && pick(ui, "Introduce") => Menu::Open(Dialog::Introduce),
+        _ if !request && !c.notes && pick(ui, "Introduce") => Menu::Open(Dialog::Introduce),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
-        _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
+        _ if !c.notes && pick(ui, &format!("Safety number ({verified})")) => {
+            Menu::Open(Dialog::Verify)
+        }
         _ if pick(ui, "Rename") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
         }
@@ -1478,6 +1480,8 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         {
             Menu::NoHistory
         }
+        // ADR-046: Notes is no one to block, report or delete.
+        _ if c.notes => return None,
         _ if pick(ui, if c.blocked { "Unblock" } else { "Block" }) => Menu::Block,
         _ if pick(ui, "Report") => Menu::Report,
         _ if pick(ui, if request { "Reject request" } else { "Delete" }) => {
@@ -1809,6 +1813,8 @@ fn caps(text: &str, colour: Color32) -> RichText {
 /// The line under a name in the list, and whether it is good news.
 fn list_state(c: &Contact, request: bool) -> (&'static str, bool) {
     match () {
+        // ADR-046.
+        _ if c.notes => ("ONLY ON YOUR DEVICES", true),
         _ if request => ("CONTACT REQUEST", false),
         _ if c.left => ("LEFT", false),
         _ if c.blocked => ("BLOCKED", false),
@@ -1831,6 +1837,7 @@ fn group_state(g: &Group) -> (String, bool) {
 /// The line under the name in the chat header.
 fn chat_state(c: &Contact) -> (&'static str, bool) {
     match () {
+        _ if c.notes => ("ONLY ON YOUR DEVICES", true),
         _ if c.left => ("LEFT", false),
         _ if c.blocked => ("BLOCKED", false),
         _ if c.verified => ("ENCRYPTED · VERIFIED", true),
@@ -1897,7 +1904,7 @@ mod tests {
             unfetched: false,
             ..Default::default()
         };
-        engine.data.contacts.push(Contact {
+        engine.data.push_person(Contact {
             key: [1; 32],
             petname: Some("Alice Smith".into()),
             unread: 2,
@@ -1964,7 +1971,15 @@ mod tests {
         };
         let shown = texts(&frame(&mut chat));
         assert!(shown.contains("Pick a contact"), "{shown}");
-        assert!(shown.contains("Contacts  1") && shown.contains("NOT VERIFIED"));
+        // ADR-046: Notes is there too, pinned.
+        assert!(
+            shown.contains("Contacts  2") && shown.contains("NOT VERIFIED"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("Notes") && shown.contains("ONLY ON YOUR DEVICES"),
+            "{shown}"
+        );
 
         chat.select([1; 32]);
         // As after an update: this version's notes are not read yet.
@@ -1992,7 +2007,8 @@ mod tests {
         }
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
-        chat.act(Open::Chat(0), Act::Reply(0));
+        let alice = chat.engine.index(&[1; 32]).unwrap();
+        chat.act(Open::Chat(alice), Act::Reply(0));
         let shown = texts(&frame(&mut chat));
         assert!(shown.contains("Answering: hi there"), "{shown}");
         // Icons are sprites, never an emoji or a stand-in glyph.

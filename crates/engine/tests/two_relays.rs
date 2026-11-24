@@ -74,7 +74,10 @@ async fn each_side_keeps_its_queue_on_its_own_relay() {
     let until = Instant::now() + Duration::from_secs(1);
     pump(&mut alice, &mut bob, |_, _| Instant::now() > until).await;
     bob.add(&alice.invite().unwrap(), false).unwrap();
-    pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
+    pump(&mut alice, &mut bob, |a, _| {
+        a.data.contacts.iter().any(|c| !c.notes)
+    })
+    .await;
     alice.accept(0);
     pump(&mut alice, &mut bob, |a, b| a.rich(0) && b.rich(0)).await;
 

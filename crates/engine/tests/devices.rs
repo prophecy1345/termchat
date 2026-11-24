@@ -486,12 +486,12 @@ async fn linked_devices_meet_each_other_and_see_each_others_copies() {
             && has(&e[0], &bob, "from the laptop, seen on the tablet", true)
     })
     .await;
-    // None of our devices shows up as a person.
+    // None of our devices shows up as a person: Bob and Notes (ADR-046).
     assert!(
         e.iter()
             .take(2)
             .chain(e.iter().skip(3))
-            .all(|x| x.data.people() == 1)
+            .all(|x| x.data.people() == 2)
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -911,5 +911,77 @@ async fn the_admins_device_joins_once_the_last_old_member_updates() {
             .is_some_and(|g| g.reader.is_some() && !g.left)
     })
     .await;
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Notes chat's texts, as each device shows them.
+fn notes(e: &Engine) -> Vec<String> {
+    let i = e.notes().unwrap();
+    e.data.contacts[i]
+        .messages
+        .iter()
+        .map(|m| m.text.clone())
+        .collect()
+}
+
+/// ADR-046: notes reach our other device both ways, edits and deletes too,
+/// and never a contact.
+#[tokio::test(flavor = "multi_thread")]
+async fn notes_go_to_our_other_device_and_nowhere_else() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-notes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let level = termchat_core::proto::NOTES_LEVEL;
+    pump(&mut e, |e| {
+        e[..2].iter().all(|x| {
+            x.data
+                .contacts
+                .iter()
+                .filter(|c| c.own)
+                .all(|c| c.understands >= level)
+                && x.data.contacts.iter().any(|c| c.own)
+        })
+    })
+    .await;
+
+    let (phone, laptop) = (e[0].notes().unwrap(), e[1].notes().unwrap());
+    assert!(e[0].send_file(phone, "a.txt", vec![1]).is_err());
+    e[0].send(phone, "buy milk").unwrap();
+    pump(&mut e, |e| notes(&e[1]) == ["buy milk"]).await;
+    e[1].send(laptop, "call mum").unwrap();
+    pump(&mut e, |e| notes(&e[0]) == ["buy milk", "call mum"]).await;
+
+    let m = e[1].data.contacts[laptop]
+        .messages
+        .iter()
+        .position(|m| m.text == "buy milk")
+        .unwrap();
+    e[1].edit_message(laptop, m, "buy oat milk").unwrap();
+    pump(&mut e, |e| notes(&e[0]) == ["buy oat milk", "call mum"]).await;
+    let m = e[0].data.contacts[phone]
+        .messages
+        .iter()
+        .position(|m| m.text == "call mum")
+        .unwrap();
+    e[0].delete_message(phone, m).unwrap();
+    pump(&mut e, |e| {
+        notes(&e[1]).get(1).is_some_and(String::is_empty)
+    })
+    .await;
+
+    // Bob, a contact, has seen none of it.
+    let alice = e[0].me();
+    let i = e[2].index(&alice).unwrap();
+    assert!(
+        e[2].data.contacts[i]
+            .messages
+            .iter()
+            .all(|m| !m.text.contains("milk") && !m.text.contains("mum"))
+    );
+    assert!(
+        e[2].notes()
+            .is_some_and(|n| e[2].data.contacts[n].messages.is_empty())
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -123,6 +123,8 @@ pub struct ContactView {
     pub fingerprint: String,
     pub unread: u32,
     pub verified: bool,
+    /// ADR-046: the Notes chat, kept on your own devices.
+    pub notes: bool,
     pub blocked: bool,
     pub left: bool,
     /// They asked; Accept or delete.
@@ -618,6 +620,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         fingerprint: termchat_core::fingerprint(&c.key),
         unread: u32::try_from(c.unread).unwrap_or(u32::MAX),
         verified: c.verified,
+        notes: c.notes,
         blocked: c.blocked,
         left: c.left,
         request: e.is_request(&c.key),

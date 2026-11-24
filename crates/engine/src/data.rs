@@ -428,6 +428,9 @@ pub struct Invites {
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Contact {
     pub key: Ed25519Key,
+    /// ADR-046: the Notes chat, no one's; its key is `NOTES_KEY`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub notes: bool,
     /// Local name; never sent anywhere.
     pub petname: Option<String>,
     /// Safety number compared out of band.
@@ -1027,9 +1030,13 @@ impl Data {
         self.contacts.iter().take_while(|c| !c.own).count()
     }
 
-    /// Adds a person before our own devices; their index.
+    /// Adds a person before Notes and our own devices; their index.
     pub fn push_person(&mut self, c: Contact) -> usize {
-        let at = self.people();
+        let at = self
+            .contacts
+            .iter()
+            .take_while(|c| !c.own && !c.notes)
+            .count();
         self.contacts.insert(at, c);
         at
     }

@@ -106,6 +106,7 @@ fun Chats(m: Model) {
                                 if (c.mute != "off") PixelIcon("muted", Tc.dim)
                             }
                             val state = when {
+                                c.notes -> "ONLY ON YOUR DEVICES"
                                 c.request -> "CONTACT REQUEST"
                                 c.left -> "LEFT"
                                 c.blocked -> "BLOCKED"
@@ -115,7 +116,7 @@ fun Chats(m: Model) {
                                 !c.verified -> "NOT VERIFIED"
                                 else -> "ENCRYPTED"
                             }
-                            Text(state, style = Tc.caps.copy(color = if (c.verified && !c.left && c.index !in invitedBy) Tc.lime else Tc.warn))
+                            Text(state, style = Tc.caps.copy(color = if (c.notes || (c.verified && !c.left && c.index !in invitedBy)) Tc.lime else Tc.warn))
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(age(c.lastAt), style = Tc.small)

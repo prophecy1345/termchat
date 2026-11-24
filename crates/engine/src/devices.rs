@@ -28,7 +28,10 @@ impl Engine {
     /// A new device's link code, to paste or scan on the primary. Only a
     /// device with nobody on it yet can be linked.
     pub fn link_code(&mut self) -> Result<String, String> {
-        if !self.is_primary() || self.data.devices.is_some() || !self.data.contacts.is_empty() {
+        if !self.is_primary()
+            || self.data.devices.is_some()
+            || self.data.contacts.iter().any(|c| !c.notes)
+        {
             return Err("only a new device, with no contacts yet, can be linked".into());
         }
         let code = new_code();

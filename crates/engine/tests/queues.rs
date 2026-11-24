@@ -95,7 +95,7 @@ fn texts(e: &Engine) -> Vec<String> {
 }
 
 fn got(text: &'static str) -> impl Fn(&Engine) -> bool {
-    move |e| !e.data.contacts.is_empty() && texts(e).iter().any(|t| t == text)
+    move |e| e.data.contacts.iter().any(|c| !c.notes) && texts(e).iter().any(|t| t == text)
 }
 
 /// Alice hands Bob an invite, Bob asks, Alice accepts.
@@ -119,7 +119,7 @@ async fn meet_with(url: &str, name: &str, shared: bool) -> (Box<Engine>, Box<Eng
     let invite = alice.invite().unwrap();
     bob.add(&invite, false).unwrap();
     pump(&mut alice, &mut bob, |a, _| {
-        !a.data.contacts.is_empty() && a.data.contacts[0].theirs.is_some()
+        a.data.contacts.iter().any(|c| !c.notes) && a.data.contacts[0].theirs.is_some()
     })
     .await;
     alice.accept(0);
@@ -238,7 +238,10 @@ async fn an_incognito_invite_comes_once_its_queue_exists() {
         })
         .unwrap();
     bob.add(&invite, false).unwrap();
-    pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
+    pump(&mut alice, &mut bob, |a, _| {
+        a.data.contacts.iter().any(|c| !c.notes)
+    })
+    .await;
     let c = &alice.data.contacts[0];
     assert_eq!(c.profile, Some(alice.data.profiles[0].key));
     let _ = std::fs::remove_dir_all(d);
@@ -280,7 +283,7 @@ async fn a_contact_who_lost_us_learns_our_name_again() {
     let url = start_relay().await;
     let (mut alice, mut bob, d) = meet(&url, "lost").await;
     bob.delete(0);
-    assert!(bob.data.contacts.is_empty());
+    assert!(bob.data.contacts.iter().all(|c| c.notes));
     let invite = alice.invite().unwrap();
     bob.add(&invite, false).unwrap();
     pump(&mut alice, &mut bob, |_, b| {
@@ -309,7 +312,7 @@ async fn an_acceptance_that_did_not_go_out_goes_after_unlock() {
     let invite = alice.invite().unwrap();
     bob.add(&invite, false).unwrap();
     pump(&mut alice, &mut bob, |a, _| {
-        !a.data.contacts.is_empty() && a.data.contacts[0].theirs.is_some()
+        a.data.contacts.iter().any(|c| !c.notes) && a.data.contacts[0].theirs.is_some()
     })
     .await;
     // Accepted and saved, but nothing sent: as if the link never started.
@@ -355,7 +358,7 @@ async fn no_gap_is_reported_when_the_asker_restarts_before_the_accept() {
     };
     bob.connect_now().unwrap();
     pump(&mut alice, &mut bob, |a, _| {
-        !a.data.contacts.is_empty() && a.data.contacts[0].theirs.is_some()
+        a.data.contacts.iter().any(|c| !c.notes) && a.data.contacts[0].theirs.is_some()
     })
     .await;
     alice.accept(0);

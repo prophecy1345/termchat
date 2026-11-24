@@ -7,6 +7,15 @@ description: "Sending messages and documents in termchat.app, answering, editing
 
 Русская версия: [messages.ru.md](messages.ru.md).
 
+## Notes to yourself
+
+**Notes** is a chat with yourself: links to read later, addresses, drafts. It is always in the chat list, labelled "only on your devices"; pin it to keep it on top. Write, answer, edit and delete as in any chat; search and export work too.
+
+- **On one device nothing leaves it.** Notes stay in the encrypted state file and never go on the wire.
+- **With linked devices** each note, edit and delete reaches your other devices, end-to-end encrypted, directly between them. A contact can never write into your Notes.
+- A newly linked device sees notes written from then on, not older ones; a device offline for more than 14 days misses what was written meanwhile.
+- Documents in Notes are not supported yet.
+
 ## Sending
 
 Type and send: **Enter** in the terminal and the desktop app (**Shift+Enter** there starts a new line), **Send** on Android. A message holds up to 16 000 bytes: about 16 000 Latin or 8 000 Cyrillic characters. Pasted text is only text; it never acts as key presses.

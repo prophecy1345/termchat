@@ -469,6 +469,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 _ if request => ("?", t.yellow),
                 _ if m.engine.needs_invite(c) => ("↻", t.peach),
                 _ if c.unread > 0 => ("●", t.accent),
+                _ if c.notes => ("✎", t.teal),
                 _ if !c.verified => ("!", t.peach),
                 _ if c.pinned => ("^", t.accent),
                 _ => (" ", t.overlay0),
@@ -690,7 +691,9 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         if m.engine.chat_connecting(&c.key) {
             flag("connecting…".into(), t.yellow);
         }
-        if !c.verified {
+        if c.notes {
+            flag("only on your devices".into(), t.teal);
+        } else if !c.verified {
             flag("! not verified (Ctrl+F)".into(), t.peach);
         }
         if let Some(s) = c.expires_in {
