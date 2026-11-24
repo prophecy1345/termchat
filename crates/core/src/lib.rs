@@ -16,7 +16,10 @@ use vodozemac::{Curve25519PublicKey, Ed25519PublicKey, Ed25519Signature};
 use zeroize::Zeroizing;
 
 pub use fingerprint::{fingerprint, safety_number};
-pub use store::{FileKey, KdfParams, create as create_file_key, opens_duress, rekey, set_duress};
+pub use store::{
+    FileKey, KdfParams, RECORD_OVERHEAD, create as create_file_key, open_record, opens_duress,
+    rekey, seal_record, set_duress,
+};
 pub use termchat_proto as proto;
 
 use proto::{

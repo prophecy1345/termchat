@@ -146,6 +146,44 @@ pub fn seal(key: &FileKey, plaintext: &[u8]) -> Result<Vec<u8>, Error> {
     Ok([key.header.as_slice(), &nonce, &body].concat())
 }
 
+/// ADR-043: bytes a spool record adds to what it holds.
+pub const RECORD_OVERHEAD: usize = NONCE + 16;
+const RECORD_AAD: &[u8] = b"termchat-spool-v1";
+
+/// ADR-043: one spool record under the state file's data key, the same AEAD
+/// as the state file. `aad` names the record (transfer and part), so records
+/// cannot be swapped or moved between transfers. Survives `rekey`.
+pub fn seal_record(key: &FileKey, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
+    let nonce = random::<NONCE>()?;
+    let body = aead(key.dek.as_slice())?
+        .encrypt(
+            &XNonce::from(nonce),
+            Payload {
+                msg: plaintext,
+                aad: &[RECORD_AAD, aad].concat(),
+            },
+        )
+        .map_err(|_| Error::CorruptState)?;
+    Ok([nonce.as_slice(), &body].concat())
+}
+
+pub fn open_record(key: &FileKey, aad: &[u8], record: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+    if record.len() < RECORD_OVERHEAD {
+        return Err(Error::CorruptState);
+    }
+    let (nonce, body) = record.split_at(NONCE);
+    aead(key.dek.as_slice())?
+        .decrypt(
+            &XNonce::from(arr(nonce)),
+            Payload {
+                msg: body,
+                aad: &[RECORD_AAD, aad].concat(),
+            },
+        )
+        .map(Zeroizing::new)
+        .map_err(|_| Error::CorruptState)
+}
+
 /// The first slot's salt: random per file, so it tells one backup from another
 /// without opening it (ADR-003). `None` if the file is too short.
 pub fn file_id(file: &[u8]) -> Option<[u8; SALT]> {
@@ -251,6 +289,31 @@ mod tests {
         t: 1,
         p: 1,
     };
+
+    #[test]
+    fn adr_043_records_open_only_as_sealed() {
+        let mut key = create(b"correct horse", FAST).unwrap();
+        let rec = seal_record(&key, b"id1.0", b"part").unwrap();
+        assert_eq!(rec.len(), 4 + RECORD_OVERHEAD);
+        assert_eq!(
+            open_record(&key, b"id1.0", &rec).unwrap().as_slice(),
+            b"part"
+        );
+        // Another part's name, a flipped bit, a short record, another file.
+        assert!(open_record(&key, b"id1.1", &rec).is_err());
+        let mut bad = rec.clone();
+        bad[30] ^= 1;
+        assert!(open_record(&key, b"id1.0", &bad).is_err());
+        assert!(open_record(&key, b"id1.0", &rec[..RECORD_OVERHEAD - 1]).is_err());
+        let other = create(b"correct horse", FAST).unwrap();
+        assert!(open_record(&other, b"id1.0", &rec).is_err());
+        // A new password keeps the data key, so the spool stays readable.
+        rekey(&mut key, b"battery staple").unwrap();
+        assert_eq!(
+            open_record(&key, b"id1.0", &rec).unwrap().as_slice(),
+            b"part"
+        );
+    }
 
     #[test]
     fn roundtrip_and_wrong_password() {
