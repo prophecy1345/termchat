@@ -135,6 +135,20 @@ Then add `OnFailure=termchat-failed@%n.service` to the `[Unit]` section of each 
 
 One identity runs one command at a time: a second one at the same moment ends with code 1 and says the identity is open elsewhere. A daemon lifts that limit.
 
+## In Docker
+
+`deploy/cli.Dockerfile` builds a 15 MB image of `termchat` alone, for a sidecar in Compose or a Kubernetes CronJob. The identity lives in `/data`: mount a volume there, never bake one into the image.
+
+```sh
+docker build -f deploy/cli.Dockerfile -t termchat .
+docker volume create termchat
+docker run --rm -i -v termchat:/data termchat init --nickname build-box --password-stdin < pw
+docker run --rm -i -v termchat:/data termchat invite --password-stdin < pw
+docker run --rm -i -v termchat:/data termchat send alice "deploy done" --password-stdin < pw
+```
+
+Pass the password as a Docker or Kubernetes secret file with `--password-file`, never in an environment variable. A long-running `termchat daemon` or `termchat hook` works the same way, with the volume kept.
+
 ## A daemon, for a bot that answers
 
 Each command above unlocks the identity and connects to the relay anew: over Tor that is 10–30 seconds a command. `termchat daemon` does it once and stays (ADR-029). While it runs, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` and `add` for the same `TERMCHAT_HOME` go through it without a password, and several can run at a time, and `run` checks and reports through it. When no daemon runs, they work as before. `watch` and `ask` work only through a daemon.

@@ -135,6 +135,20 @@ sudo systemctl daemon-reload
 
 Одна личность выполняет одну команду за раз: вторая в тот же момент завершится с кодом 1 и скажет, что личность открыта в другом месте. Служба снимает это ограничение.
 
+## В Docker
+
+`deploy/cli.Dockerfile` собирает образ одного `termchat` размером 15 МБ — для sidecar в Compose или CronJob в Kubernetes. Личность лежит в `/data`: подключите туда том и никогда не запекайте её в образ.
+
+```sh
+docker build -f deploy/cli.Dockerfile -t termchat .
+docker volume create termchat
+docker run --rm -i -v termchat:/data termchat init --nickname build-box --password-stdin < pw
+docker run --rm -i -v termchat:/data termchat invite --password-stdin < pw
+docker run --rm -i -v termchat:/data termchat send alice "deploy done" --password-stdin < pw
+```
+
+Пароль передавайте файлом-секретом Docker или Kubernetes через `--password-file`, никогда через переменную окружения. Долгоживущие `termchat daemon` и `termchat hook` работают так же, с тем же томом.
+
 ## Служба для бота, который отвечает
 
 Каждая команда выше заново расшифровывает личность и подключается к relay: через Tor это 10–30 секунд на команду. `termchat daemon` делает это один раз и остаётся (ADR-029). Пока она работает, `send`, `send-file`, `recv`, `groups`, `contacts`, `invite` и `add` для того же `TERMCHAT_HOME` идут через неё: без пароля, с ответом за секунду и по нескольку сразу. `run` проверяет получателя и отправляет отчёт через неё. Если службы нет, всё работает как раньше. `watch` и `ask` работают только через неё.
