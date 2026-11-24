@@ -254,6 +254,14 @@ that (ADR-023).
   picker to a cloud folder is erased by a wipe only while the app still has
   access to it, and the provider may keep its own copies. Keep backups on
   storage you control.
+- **Viewing an image** (ADR-044). On the desktop and Android a received image
+  is decoded when you click View, by the engine's Rust decoder with limits
+  (25 MiB in, 8192 pixels a side, 40 megapixels, 256 MiB of memory), never
+  by a system decoder and never without that click. A hostile image still
+  reaches the decoder if you view it: memory-safe Rust rules out the buffer
+  overflows behind known attacks, but a bug in it cannot be excluded. On
+  Android the pixels may stay in memory after the viewer closes, until it is
+  reused.
 - **Saved documents and what opens them** (ADR-017). termchat.app never opens
   a received file, but the program that later opens it may have holes, and
   the file may be harmful. A saved file lives outside the encrypted state, so

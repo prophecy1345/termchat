@@ -38,7 +38,7 @@ const en = {
   cta: { install: "Install", github: "GitHub", download: "Download", sponsor: "Sponsor" },
   whatTitle: "What it is",
   what: [
-    ["Text and documents, in a terminal, a window and on Android", "A chat where you already work, a desktop app if you prefer a window, and an app for your phone, all on the same engine. Files are opaque bytes, never opened or previewed; no inline images, no link previews, no formatting: less to leak, less to exploit."],
+    ["Text and documents, in a terminal, a window and on Android", "A chat where you already work, a desktop app if you prefer a window, and an app for your phone, all on the same engine. Files are opaque bytes, never opened or previewed; a received image opens only when you click View, decoded by our own Rust code. No inline images, no link previews, no formatting: less to leak, less to exploit."],
     ["No one to sign up with", "No phone number, email or name. Your identity is a key pair made on your device, plus a nickname only your contacts see."],
     ["A server that knows nothing", "The relay passes along envelopes it cannot open, between anonymous queues. Seizing it gives ciphertext and random queue IDs, nothing more."],
     ["Everything is a contact", "A friend, a server that reports a failed backup, an AI model if you want one: each is a contact you added with an invite, with keys you can verify. A group is a few contacts in one room. No bot platform, no channels, no directory: nobody reaches you unless you let them in."],
@@ -191,7 +191,7 @@ const ru: typeof en = {
   cta: { install: "Установить", github: "GitHub", download: "Скачать", sponsor: "Поддержать" },
   whatTitle: "Что это",
   what: [
-    ["Текст и документы в терминале, в окне и на Android", "Чат там, где вы и так работаете, приложение с окном, если оно вам удобнее, и приложение для телефона — всё на одном движке. Файлы — непрозрачные байты, приложение их не открывает и не показывает превью; без картинок в чате, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
+    ["Текст и документы в терминале, в окне и на Android", "Чат там, где вы и так работаете, приложение с окном, если оно вам удобнее, и приложение для телефона — всё на одном движке. Файлы — непрозрачные байты, приложение их не открывает и не показывает превью; полученная картинка открывается, только когда вы нажмёте View, и декодируется нашим кодом на Rust. Без картинок в ленте чата, превью ссылок и разметки: меньше утечек и меньше поводов для атак."],
     ["Не нужно регистрироваться", "Ни телефона, ни email, ни имени. Ваша личность — пара ключей, созданная на устройстве, и ник, который видят только ваши контакты."],
     ["Сервер ничего не знает", "Relay передаёт конверты, которые не может открыть, между анонимными очередями. Изъятие сервера даст шифртекст и случайные ID очередей, не больше."],
     ["Всё — контакт", "Друг, сервер, который сообщает о сломанной резервной копии, модель ИИ, если она нужна: каждый — контакт, добавленный по приглашению, с ключами, которые можно сверить. Группа — несколько контактов в одной комнате. Ни платформы для ботов, ни каналов, ни каталога: до вас не достучится никто, кого вы не впустили."],

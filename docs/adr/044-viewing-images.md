@@ -62,6 +62,11 @@ None. The View button is the decision, made per image.
 - **Animated GIF and video**: more decoder, more surface, little gain.
 - **A setting to turn viewing on**: the per-image tap is already an explicit choice; a setting adds no protection.
 
+## Implementation notes (2026-11-24)
+
+- Only the final, scaled pixels are wiped when dropped. The full-size buffer the decoder makes before scaling, and the texture on the desktop's GPU, are freed but not overwritten.
+- `image` was already in the desktop app through eframe; it is new for the engine, so for Android and the terminal binary. `cargo vet` needed exemptions for `color_quant`, `gif` and `image-webp`.
+
 ## Dependencies
 
 - **`image`**, default features off, `png`, `jpeg`, `gif`, `webp` only, in `engine`. Justified in the commit, checked with `cargo deny` and `cargo vet`.

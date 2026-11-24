@@ -50,7 +50,9 @@ Files of up to 25 MiB, end-to-end encrypted like messages. Up to 1 MiB a file go
 - **Offered:** a file over 1 MiB first shows as "offered". **Ctrl+G** in the terminal asks for it (type `DISCARD` to decline instead); the desktop app and Android have **Download** and **Decline** under it. An offer nobody answers is dropped after 7 days.
 - **Receive:** the file waits in the chat as "unsaved". **Ctrl+G** in the terminal saves the newest one into a folder you type (`~/Downloads` by default; the folder must exist), or discards it if you type `DISCARD`. The desktop app has **Save…** under it (**Choose…** picks the folder), Android **Save** and **Discard**.
 
-termchat.app never opens, previews or renders a file, and never overwrites one when saving. Files from contacts can be harmful: check before you open them. A saved file lives outside termchat.app, and wiping does not erase it.
+**View an image** (desktop and Android): a received PNG, JPEG, GIF or WebP gets **View** under it while it waits unsaved. Only that click decodes it, inside termchat.app, with limits; zoom with the wheel or a pinch, Esc or back closes. The first frame of a GIF only; nothing is cached or written to disk. Once you save or discard the file, View goes with it.
+
+Apart from that, termchat.app never opens, previews or renders a file, and never overwrites one when saving. Files from contacts can be harmful: check before you open them. A saved file lives outside termchat.app, and wiping does not erase it.
 
 ## Disappearing messages and no history
 
