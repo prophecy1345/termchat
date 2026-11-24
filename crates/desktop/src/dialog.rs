@@ -109,6 +109,8 @@ pub enum Dialog {
     LeaveGroup,
     /// Clear the open chat's or group's history on this device?
     ClearHistory,
+    /// ADR-045: introduce the open contact to another.
+    Introduce,
     /// ADR-028: this device's link code, for the main device.
     LinkCode(String),
     /// Our devices.
@@ -1027,6 +1029,43 @@ impl Chat {
                     return false;
                 }
                 stay
+            }
+            Dialog::Introduce => {
+                let Some(i) = open else { return false };
+                let name = self.engine.name(&self.engine.data.contacts[i]);
+                ui.set_width(560.0);
+                ui.heading(format!("Introduce {name}"));
+                ui.add_space(6.0);
+                ui.label(format!(
+                    "Pick who they should meet. That person is asked first and sees \
+                     {name}'s nickname and fingerprint; {name} hears of it only if they agree."
+                ));
+                ui.add_space(6.0);
+                let mut picked = None;
+                egui::ScrollArea::vertical()
+                    .max_height(320.0)
+                    .show(ui, |ui| {
+                        for (k, c) in self.engine.data.contacts.iter().enumerate() {
+                            if k == i
+                                || c.own
+                                || c.blocked
+                                || c.left
+                                || self.engine.is_request(&c.key)
+                            {
+                                continue;
+                            }
+                            if ui.button(self.engine.name(c)).clicked() {
+                                picked = Some(k);
+                            }
+                        }
+                    });
+                if let Some(k) = picked {
+                    match self.engine.introduce_contacts(i, k) {
+                        Ok(()) => return false,
+                        Err(e) => self.status = e,
+                    }
+                }
+                !ui.button("Cancel").clicked()
             }
             Dialog::ClearHistory => {
                 ui.set_width(560.0);

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
 use termchat_core::proto::{REACTIONS, Ref};
 use termchat_engine::data::{Contact, Group, Msg, Status};
+use termchat_engine::engine::{IntroAnswer, PendingIntro};
 use termchat_engine::engine::{
     OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
 };
@@ -982,6 +983,8 @@ impl Chat {
         let mut accept = false;
         let mut next = None;
         let mut join = None;
+        // ADR-045: our answer to an introduction in this chat.
+        let mut intro: Option<(u64, Option<IntroAnswer>, bool)> = None;
         egui::Panel::top("chat-header")
             .frame(
                 egui::Frame::new()
@@ -1036,6 +1039,55 @@ impl Chat {
                         }
                     });
                 }
+                // ADR-045: an introduction waiting for our answer.
+                match self.engine.pending_intro(i) {
+                    Some(PendingIntro::Ask {
+                        id,
+                        nickname,
+                        fingerprint,
+                    }) => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "wants to introduce you to {nickname}·{fingerprint}"
+                                ))
+                                .color(p.warn),
+                            );
+                            if ui.button("Allow").clicked() {
+                                intro = Some((id, Some(IntroAnswer::Allow), false));
+                            }
+                            if ui
+                                .button("Allow incognito")
+                                .on_hover_text("They meet a new identity of yours, not this one")
+                                .clicked()
+                            {
+                                intro = Some((id, Some(IntroAnswer::AllowIncognito), false));
+                            }
+                            if ui.button("Decline").clicked() {
+                                intro = Some((id, Some(IntroAnswer::Decline), false));
+                            }
+                        });
+                    }
+                    Some(PendingIntro::Offer {
+                        id,
+                        nickname,
+                        fingerprint,
+                    }) => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("introduces {nickname}·{fingerprint}"))
+                                    .color(p.warn),
+                            );
+                            if ui.button("Add").clicked() {
+                                intro = Some((id, None, true));
+                            }
+                            if ui.button("Ignore").clicked() {
+                                intro = Some((id, None, false));
+                            }
+                        });
+                    }
+                    None => {}
+                }
                 let waiting = c.hidden.len() + c.held_back as usize;
                 if request && waiting > 0 {
                     ui.label(
@@ -1046,6 +1098,16 @@ impl Chat {
             });
         if accept {
             self.engine.accept(i);
+        }
+        let answered = match intro {
+            Some((id, Some(a), _)) => self.engine.answer_intro(i, id, a).map(|_| None),
+            Some((id, None, add)) => self.engine.answer_offer(i, id, add),
+            None => Ok(None),
+        };
+        match answered {
+            Ok(Some(j)) => self.open = Some(self.engine.data.contacts[j].key),
+            Ok(None) => {}
+            Err(e) => self.status = e,
         }
         match join {
             Some((n, true)) => match self.engine.accept_group(n) {
@@ -1398,6 +1460,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         }
         _ if pick(ui, "Export") => Menu::Open(Dialog::Export),
         _ if pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
+        _ if !request && pick(ui, "Introduce") => Menu::Open(Dialog::Introduce),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),

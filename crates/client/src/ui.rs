@@ -1628,6 +1628,25 @@ fn popup_pane(
                 false,
             );
         }
+        Popup::Introduce(to) => {
+            let rows: Vec<(char, String)> = m
+                .introducible()
+                .iter()
+                .map(|&k| ('·', name(m, &m.engine.data.contacts[k])))
+                .collect();
+            let lines = match rows.is_empty() {
+                true => plain("Nobody to introduce them to yet."),
+                false => {
+                    let mut lines = plain(
+                        "They are asked first and see this contact's nickname and fingerprint.",
+                    );
+                    lines.extend(menu_rows(t, &rows, *to, 52));
+                    lines
+                }
+            };
+            let buttons = [("↵ introduce", true, key(KeyCode::Enter)), cancel];
+            window(f, t, h, "introduce to", lines, &buttons, 56, false);
+        }
         Popup::Forward { to, .. } => {
             let mut rows: Vec<(char, String)> = (0..m.engine.data.people())
                 .map(|i| ('·', name(m, &m.engine.data.contacts[i])))

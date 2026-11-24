@@ -75,6 +75,11 @@ Alice is trusted as far as an introducer can be: she sees nothing of the new con
 - **Bob asked first, then Carol:** reveals Carol to Bob before she agreed; Carol's consent matters more, because her address is what is shared.
 - **Introductions in groups:** a group already brings its members together on the admin's invitation (ADR-027).
 
+## Implementation notes (2026-11-24)
+
+- `IntroAsk` carries Bob's Ed25519 key (`key`), not his whole `Identity`: the fingerprint and the match against his request need only that, and the engine keeps no other part of a contact's identity at hand.
+- The menu item is **Introduce** (no ellipsis, CONTRIBUTING rule 17); in the terminal it is **o** in the chat menu.
+
 ## Dependencies
 
 None new.

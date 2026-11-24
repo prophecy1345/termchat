@@ -391,8 +391,16 @@ impl Invite {
             return Err(Error::UnsupportedVersion);
         }
         let invite: Self = decode_exact(&bytes)?;
-        check_urls(&invite.relay_url, invite.onion_url.as_deref())?;
+        invite.check()?;
         Ok(invite)
+    }
+
+    /// What an invite inside a message must pass too (ADR-045).
+    pub fn check(&self) -> Result<(), Error> {
+        if self.version != INVITE_VERSION {
+            return Err(Error::UnsupportedVersion);
+        }
+        check_urls(&self.relay_url, self.onion_url.as_deref())
     }
 }
 
@@ -634,6 +642,27 @@ pub enum Body {
         index: u16,
         data: Vec<u8>,
     },
+    /// ADR-045: the introducer asks the receiver to meet contact `key`.
+    IntroAsk {
+        intro: u64,
+        nickname: String,
+        key: Ed25519Key,
+    },
+    /// ADR-045: yes, with a one-time invite made for this introduction.
+    IntroGrant {
+        intro: u64,
+        invite: Invite,
+    },
+    /// ADR-045: no.
+    IntroDecline {
+        intro: u64,
+    },
+    /// ADR-045: the introducer passes the invite on to the other contact.
+    IntroOffer {
+        intro: u64,
+        nickname: String,
+        invite: Invite,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -645,13 +674,17 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 38;
+const KNOWN_KINDS: u32 = 42;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
 /// copies that name their chat (ADR-030), 5 = receipts (ADR-041), 6 = several
-/// group admins (ADR-042), 7 = documents on request (ADR-043).
-pub const UNDERSTANDS: u16 = 7;
+/// group admins (ADR-042), 7 = documents on request (ADR-043), 8 =
+/// introductions (ADR-045).
+pub const UNDERSTANDS: u16 = 8;
+
+/// The level from which a contact takes introductions (ADR-045).
+pub const INTRO_LEVEL: u16 = 8;
 
 /// The level from which a contact takes `FileOffer` (ADR-043).
 pub const LARGE_FILES_LEVEL: u16 = 7;
@@ -1090,7 +1123,11 @@ impl GroupInner {
             | Body::FileWant { .. }
             | Body::FileAck { .. }
             | Body::FileStop { .. }
-            | Body::FilePart { .. } => Err(Error::Malformed),
+            | Body::FilePart { .. }
+            | Body::IntroAsk { .. }
+            | Body::IntroGrant { .. }
+            | Body::IntroDecline { .. }
+            | Body::IntroOffer { .. } => Err(Error::Malformed),
             body => check_body(body),
         }
     }
@@ -1140,7 +1177,11 @@ fn check_body(body: &Body) -> Result<(), Error> {
             | Body::FileWant { .. }
             | Body::FileAck { .. }
             | Body::FileStop { .. }
-            | Body::FilePart { .. } => Err(Error::Malformed),
+            | Body::FilePart { .. }
+            | Body::IntroAsk { .. }
+            | Body::IntroGrant { .. }
+            | Body::IntroDecline { .. }
+            | Body::IntroOffer { .. } => Err(Error::Malformed),
             ref inner => check_body(inner),
         },
         Body::Receipt {
@@ -1220,6 +1261,14 @@ fn check_body(body: &Body) -> Result<(), Error> {
                 return Err(Error::Malformed);
             }
             Ok(())
+        }
+        Body::IntroAsk { nickname, .. } => check_nickname(nickname),
+        Body::IntroGrant { invite, .. } => invite.check(),
+        Body::IntroOffer {
+            nickname, invite, ..
+        } => {
+            check_nickname(nickname)?;
+            invite.check()
         }
         Body::FileOffer { name, size, .. } => {
             check_file_name(name)?;
@@ -1422,15 +1471,29 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let part = Body::FilePart {
-            id: 1,
-            index: 0,
-            data: vec![1],
-        };
-        let raw = postcard::to_allocvec(&with(part)).unwrap();
+        let last = Body::IntroDecline { intro: 1 };
+        let raw = postcard::to_allocvec(&with(last)).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
+        assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 2);
+        let raw = postcard::to_allocvec(&with(Body::IntroOffer {
+            intro: 1,
+            nickname: "c".into(),
+            invite: Invite {
+                version: INVITE_VERSION,
+                relay_url: "wss://r/".into(),
+                onion_url: None,
+                identity: Identity {
+                    ed25519: [1; 32],
+                    curve25519: [2; 32],
+                    signature: [3; 64],
+                },
+                queue: [4; 16],
+                code: [5; 16],
+            },
+        }))
+        .unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
-        assert_eq!(raw[head.len()], 37);
+        assert_eq!(raw[head.len()], 41);
     }
 
     #[test]
@@ -1510,6 +1573,86 @@ mod tests {
         assert_eq!(large_chunks(MAX_LARGE_FILE_BYTES), 410);
         assert_eq!(large_chunk_len(LARGE_CHUNK as u32 + 1, 1), Some(1));
         assert_eq!(large_chunk_len(LARGE_CHUNK as u32, 1), None);
+    }
+
+    #[test]
+    fn adr_045_introductions_are_checked_and_direct() {
+        let invite = Invite {
+            version: INVITE_VERSION,
+            relay_url: "wss://relay.example/".into(),
+            onion_url: None,
+            identity: Identity {
+                ed25519: [1; 32],
+                curve25519: [2; 32],
+                signature: [3; 64],
+            },
+            queue: [4; 16],
+            code: [5; 16],
+        };
+        let ok = [
+            Body::IntroAsk {
+                intro: 9,
+                nickname: "bob".into(),
+                key: [7; 32],
+            },
+            Body::IntroGrant {
+                intro: 9,
+                invite: invite.clone(),
+            },
+            Body::IntroDecline { intro: 9 },
+            Body::IntroOffer {
+                intro: 9,
+                nickname: "carol".into(),
+                invite: invite.clone(),
+            },
+        ];
+        for body in ok.clone() {
+            let inner = with(body.clone());
+            assert_eq!(
+                Inner::from_padded(&inner.to_padded().unwrap()).unwrap(),
+                inner
+            );
+            let group = GroupInner {
+                sender: [1; 32],
+                group: [3; 16],
+                body: body.clone(),
+            };
+            assert!(group.to_padded().is_err());
+            let copy = Body::Copy {
+                contact: [4; 32],
+                body: Box::new(body),
+            };
+            assert!(with(copy).to_padded().is_err());
+        }
+        let mut http = invite.clone();
+        http.relay_url = format!("wss://{}/", "a".repeat(MAX_RELAY_URL));
+        let mut old = invite.clone();
+        old.version = INVITE_VERSION - 1;
+        for bad in [
+            Body::IntroAsk {
+                intro: 1,
+                nickname: "".into(),
+                key: [7; 32],
+            },
+            Body::IntroAsk {
+                intro: 1,
+                nickname: "a\nb".into(),
+                key: [7; 32],
+            },
+            Body::IntroGrant {
+                intro: 1,
+                invite: http,
+            },
+            Body::IntroOffer {
+                intro: 1,
+                nickname: "carol".into(),
+                invite: old,
+            },
+        ] {
+            assert!(with(bad.clone()).to_padded().is_err());
+            let raw = pad(postcard::to_allocvec(&with(bad)).unwrap());
+            assert!(Inner::from_padded(&raw).is_err());
+        }
     }
 
     #[test]

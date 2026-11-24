@@ -50,6 +50,9 @@ pub struct Addr {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Data {
+    /// ADR-045: introductions in flight, whatever our part in them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intros: Vec<Intro>,
     /// A backup of the identity exists; until then the status bar nags.
     pub backed_up: bool,
     pub relay_url: String,
@@ -596,6 +599,44 @@ pub struct Msg {
     /// Ours: the contact saw it; theirs: we said we did (ADR-041).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read: bool,
+}
+
+/// ADR-045: one introduction, from where this device stands in it. Alice
+/// introduces Bob to Carol.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Intro {
+    pub id: u64,
+    /// Unix seconds it began here; it goes after `INTRO_TTL`.
+    pub at: u64,
+    pub part: IntroPart,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum IntroPart {
+    /// We are Alice: Carol was asked.
+    Asking { bob: Ed25519Key, carol: Ed25519Key },
+    /// We are Carol: Alice asks us to meet `bob`.
+    Asked {
+        alice: Ed25519Key,
+        nickname: String,
+        bob: Ed25519Key,
+    },
+    /// We are Carol and said yes: a request from `bob` with `code` is let in
+    /// and accepted. `profile`: the incognito identity it is for; `sent`
+    /// once the invite went to Alice.
+    Granted {
+        alice: Ed25519Key,
+        bob: Ed25519Key,
+        code: InviteCode,
+        profile: Option<Ed25519Key>,
+        sent: bool,
+    },
+    /// We are Bob: Alice passes on Carol's invite.
+    Offered {
+        alice: Ed25519Key,
+        nickname: String,
+        invite: String,
+    },
 }
 
 /// ADR-041: what a receipt names, a text by its id or a whole document.

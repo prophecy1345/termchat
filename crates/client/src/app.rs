@@ -9,7 +9,9 @@ use ratatui::layout::Position;
 use termchat_core::proto::{Ed25519Key, REACTIONS, Ref};
 
 use crate::data::{self, Contact, Group, Msg};
-use crate::engine::{self, Engine, Happened, Setup, Unlocked, next_timer};
+use crate::engine::{
+    self, Engine, Happened, IntroAnswer, PendingIntro, Setup, Unlocked, next_timer,
+};
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
 use crate::notify;
@@ -142,6 +144,8 @@ pub enum Popup {
     Members(usize),
     /// Contacts the admin can invite, with the highlighted row.
     InviteToGroup(usize),
+    /// ADR-045: the open contact is introduced to the highlighted one.
+    Introduce(usize),
     /// Message `at` of the open chat goes to the chosen chat or group.
     Forward {
         at: usize,
@@ -1328,6 +1332,30 @@ impl Main {
             };
             items.push(('g', what.into()));
         }
+        // ADR-045: an introduction waiting for our answer, or one to start.
+        match self.engine.pending_intro(self.selected) {
+            Some(PendingIntro::Ask {
+                nickname,
+                fingerprint,
+                ..
+            }) => items.extend([
+                ('a', format!("allow: meet {nickname}·{fingerprint}")),
+                ('c', "allow, from a new incognito identity".into()),
+                ('n', format!("decline meeting {nickname}")),
+            ]),
+            Some(PendingIntro::Offer {
+                nickname,
+                fingerprint,
+                ..
+            }) => items.extend([
+                ('a', format!("add {nickname}·{fingerprint}")),
+                ('n', format!("ignore {nickname}")),
+            ]),
+            None => {}
+        }
+        if !self.engine.is_request(&c.key) {
+            items.push(('o', "introduce to someone".into()));
+        }
         items.extend([
             ('r', "rename".into()),
             ('f', format!("safety number ({verified})")),
@@ -1343,6 +1371,48 @@ impl Main {
         ]);
         items.extend(self.place_rows());
         items
+    }
+
+    /// ADR-045: contacts the open one can be introduced to.
+    pub fn introducible(&self) -> Vec<usize> {
+        let c = &self.engine.data.contacts;
+        (0..self.engine.data.people())
+            .filter(|&k| k != self.selected)
+            .filter(|&k| !c[k].own && !c[k].blocked && !c[k].left)
+            .filter(|&k| !self.engine.is_request(&c[k].key))
+            .collect()
+    }
+
+    /// ADR-045: a menu key about introductions in the open chat.
+    fn intro_key(&mut self, key: char) -> Option<Popup> {
+        let i = self.selected;
+        if key == 'o' {
+            return Some(Popup::Introduce(0));
+        }
+        let done = match (self.engine.pending_intro(i), key) {
+            (Some(PendingIntro::Ask { id, .. }), 'a') => self
+                .engine
+                .answer_intro(i, id, IntroAnswer::Allow)
+                .map(|_| None),
+            (Some(PendingIntro::Ask { id, .. }), 'c') => self
+                .engine
+                .answer_intro(i, id, IntroAnswer::AllowIncognito)
+                .map(|_| None),
+            (Some(PendingIntro::Ask { id, .. }), _) => self
+                .engine
+                .answer_intro(i, id, IntroAnswer::Decline)
+                .map(|_| None),
+            (Some(PendingIntro::Offer { id, .. }), add) => {
+                self.engine.answer_offer(i, id, add == 'a')
+            }
+            (None, _) => Err("no introduction here".into()),
+        };
+        match done {
+            Ok(Some(j)) => self.selected = j,
+            Ok(None) => {}
+            Err(e) => self.status = e,
+        }
+        None
     }
 
     fn send(&mut self) {
@@ -1450,6 +1520,7 @@ impl Main {
                     self.place(c);
                     None
                 }
+                Ok(Some(c @ ('a' | 'c' | 'n' | 'o'))) => self.intro_key(c),
                 // The same as pressing Ctrl+key in the chat.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -1645,6 +1716,28 @@ impl Main {
                     KeyCode::Char('d') if helper => Some(Popup::Admin(AdminChange::StepDown, me)),
                     KeyCode::Esc => None,
                     _ => Some(Popup::Members(at)),
+                }
+            }
+            Popup::Introduce(to) => {
+                let others = self.introducible();
+                match k.code {
+                    KeyCode::Up => Some(Popup::Introduce(to.saturating_sub(1))),
+                    KeyCode::Down => Some(Popup::Introduce(
+                        (to + 1).min(others.len().saturating_sub(1)),
+                    )),
+                    KeyCode::Enter => {
+                        let sent = match others.get(to) {
+                            Some(&k) => self.engine.introduce_contacts(self.selected, k),
+                            None => Err("nobody to introduce them to".into()),
+                        };
+                        self.status = match sent {
+                            Ok(()) => "asked; they answer in their chat".into(),
+                            Err(e) => e,
+                        };
+                        None
+                    }
+                    KeyCode::Esc => None,
+                    _ => Some(Popup::Introduce(to)),
                 }
             }
             Popup::Forward { at, to } => {

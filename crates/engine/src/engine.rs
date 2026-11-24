@@ -24,6 +24,9 @@ use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
 mod devices;
 #[path = "group.rs"]
 mod group;
+#[path = "intro.rs"]
+mod intro;
+pub use intro::{IntroAnswer, PendingIntro};
 #[path = "large.rs"]
 mod large;
 #[path = "receipts.rs"]
@@ -1114,6 +1117,8 @@ impl Engine {
                 && !published
                 && let Some(code) = self.data.profiles[slot - 1].code
                 && let Ok(invite) = self.invite_with(slot, code)
+                // ADR-045: made for an introduction, it goes to the introducer.
+                && !self.grant_waiting(slot)
             {
                 self.happened.push(Happened::Invite(invite));
             }
@@ -2101,6 +2106,10 @@ impl Engine {
             key: sender,
             request,
         };
+        let intro_code = match &got.body {
+            Body::ContactRequestV2 { code, .. } => Some(*code),
+            _ => None,
+        };
         match got.body {
             // A stranger's texts wait out of sight until the request is accepted.
             Body::Text { text, .. } | Body::Message { text, .. } if got.request => {
@@ -2140,7 +2149,12 @@ impl Engine {
             // text inside a system line would pass for the app speaking.
             Body::ContactRequest { .. } | Body::ContactRequestV2 { .. } => {
                 let request = self.core_at(slot).is_request(&sender);
-                if request == Some(true) {
+                // ADR-045: someone an introduction let in is accepted at once.
+                let introduced = request == Some(true)
+                    && intro_code.is_some_and(|code| self.accept_introduced(i, &sender, &code));
+                if introduced {
+                    self.happened.push(alert(false));
+                } else if request == Some(true) {
                     self.happened.push(alert(true));
                     self.system(i, "contact request: accept it, or delete to reject");
                 } else {
@@ -2198,6 +2212,22 @@ impl Engine {
                     self.got(i, data::Seen::File(id));
                 }
                 self.happened.push(alert(false));
+            }
+            // ADR-045: introductions, between accepted contacts only.
+            Body::IntroAsk { .. }
+            | Body::IntroGrant { .. }
+            | Body::IntroDecline { .. }
+            | Body::IntroOffer { .. }
+                if got.request =>
+            {
+                return self.persist();
+            }
+            body @ (Body::IntroAsk { .. }
+            | Body::IntroGrant { .. }
+            | Body::IntroDecline { .. }
+            | Body::IntroOffer { .. }) => {
+                self.take_intro(i, body);
+                return self.persist();
             }
             // ADR-043: documents on request, between accepted contacts only.
             Body::FileOffer { .. }
@@ -2484,6 +2514,7 @@ impl Engine {
             changed |= g.messages.len() != before;
         }
         changed |= self.expire_offers();
+        changed |= self.expire_intros();
         if changed {
             self.persist();
         }

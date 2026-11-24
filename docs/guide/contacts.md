@@ -43,6 +43,17 @@ When someone adds your invite, they arrive as a **request** (a `?` in the termin
 
 If both of you add each other's invites, neither is a request.
 
+## Introducing two contacts
+
+When two of your contacts should meet, introduce them instead of copying an invite around.
+
+- **Start:** in the chat with Bob, **Introduce** (desktop and Android: the chat menu; terminal: **Ctrl+P**, then **o**) and pick Carol.
+- **Carol is asked first.** Her chat with you shows "wants to introduce you to Bob·12345": **Allow**, **Allow incognito** (Bob meets a new identity of hers, not her main one) or **Decline**. She sees Bob's nickname and fingerprint; Bob hears nothing unless she allows it.
+- **Then Bob decides.** His chat with you shows "introduces Carol·67890": **Add** or **Ignore**. Add opens the new chat; Carol's app accepts him by itself, since she already said yes.
+- In the terminal the answers are in the chat menu too: **Ctrl+P**, then **a** (allow or add), **c** (allow incognito), **n** (decline or ignore).
+
+The new contact starts **not verified**: you passed the invite on, and the two of them should compare their safety number before trusting it. An introduction nobody answers is dropped after 7 days. Everyone needs version 0.32.0 or later; groups and chains (Bob passing Carol on) are not possible.
+
 ## Safety number, once per contact
 
 The relay cannot read messages, but someone who controls the network could try to give you their keys instead of your friend's when you first connect. Rule it out once:

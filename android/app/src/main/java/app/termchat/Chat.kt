@@ -204,6 +204,35 @@ fun Chat(m: Model, index: UInt) {
                 }
             }
         }
+        // ADR-045: an introduction waiting for our answer.
+        if (!c.request) runCatching { a.pendingIntro(index) }.getOrNull()?.let { intro ->
+            val who = "${intro.nickname}·${intro.fingerprint}"
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Text(if (intro.ask) "Wants to introduce you to $who" else "Introduces $who", style = Tc.mono.copy(color = Tc.warn))
+                val answer = { what: String ->
+                    runCatching { a.answerIntro(index, intro.id, what) }.onFailure { m.note = it.message ?: "$it" }
+                    m.changed()
+                }
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (intro.ask) {
+                        Flat("Allow") { answer("allow") }
+                        Flat("Incognito", color = Tc.dim) { answer("incognito") }
+                        Flat("Decline", color = Tc.dim) { answer("decline") }
+                    } else {
+                        Flat("Add") {
+                            runCatching { a.answerOffer(index, intro.id, true) }
+                                .onSuccess { j -> j?.let { m.screen = Screen.Chat(it) } }
+                                .onFailure { m.note = it.message ?: "$it" }
+                            m.changed()
+                        }
+                        Flat("Ignore", color = Tc.dim) {
+                            runCatching { a.answerOffer(index, intro.id, false) }.onFailure { m.note = it.message ?: "$it" }
+                            m.changed()
+                        }
+                    }
+                }
+            }
+        }
         if (c.request) {
             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Flat("Accept") { runCatching { a.accept(index) }; m.changed() }
@@ -279,6 +308,7 @@ fun Chat(m: Model, index: UInt) {
         "clear" -> Confirm(m, "Clear the history?", "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
             runCatching { a.clearChat(index) }.onFailure { m.note = it.message ?: "$it" }
         }
+        "introduce" -> Introduce(m, index) { dialog = null }
         else -> ContactDialog(m, c, d) { dialog = null }
     }
     forwarding?.let { at -> ForwardTo(m, Place.Chat(index), at) { forwarding = null } }
@@ -372,6 +402,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                 item("Search") { ask("search") }
                 item("Export") { ask("export") }
                 item("Clear history") { ask("clear") }
+                if (!c.request) item("Introduce") { ask("introduce") }
                 item("Safety number") { ask("verify") }
                 item("Rename") { ask("rename") }
                 item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
@@ -632,6 +663,36 @@ internal fun ForwardTo(m: Model, from: Place, at: UInt, done: () -> Unit) {
                 }
                 items(a.groups().filter { !it.left }) { g ->
                     Text("# ${g.name}", style = Tc.mono, modifier = Modifier.fillMaxWidth().clickable { send(Place.Group(g.index)) }.padding(vertical = 10.dp))
+                }
+            }
+        },
+        confirmButton = { Flat("Cancel", color = Tc.dim) { done() } },
+    )
+}
+
+/** ADR-045: pick whom contact `index` should meet; that one is asked first. */
+@Composable
+internal fun Introduce(m: Model, index: UInt, done: () -> Unit) {
+    val a = m.account ?: return done()
+    val others = a.contacts().filter { it.index != index && !it.request && !it.blocked && !it.left && !it.needsInvite }
+    AlertDialog(
+        onDismissRequest = done,
+        containerColor = Tc.surface,
+        shape = corner,
+        title = { Text("Introduce to", style = Tc.name) },
+        text = {
+            Column {
+                Text("They are asked first and see this contact's nickname and fingerprint.", style = Tc.small)
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(others) { c ->
+                        Text(c.name, style = Tc.mono, modifier = Modifier.fillMaxWidth().clickable {
+                            runCatching { a.introduce(index, c.index) }
+                                .onSuccess { m.note = "asked; they answer in their chat" }
+                                .onFailure { m.note = it.message ?: "$it" }
+                            m.changed()
+                            done()
+                        }.padding(vertical = 10.dp))
+                    }
                 }
             }
         },

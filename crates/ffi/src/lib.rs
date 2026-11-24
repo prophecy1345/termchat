@@ -88,6 +88,16 @@ fn hex(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// ADR-045: an introduction waiting for our answer in a chat.
+#[derive(uniffi::Record)]
+pub struct IntroView {
+    pub id: u64,
+    /// `true`: they ask us to meet someone; `false`: they pass on an invite.
+    pub ask: bool,
+    pub nickname: String,
+    pub fingerprint: String,
+}
+
 /// ADR-044: an image for the viewer, RGBA, not premultiplied, at most
 /// `picture::MAX_SHOWN` on the longest side.
 #[derive(uniffi::Record)]
@@ -1109,6 +1119,58 @@ impl Account {
     pub fn view_image(&self, index: u32, msg: u32) -> Result<Picture> {
         let bytes = self.with(index, |e, i| e.image_bytes(i, msg as usize))??;
         Ok(picture(&bytes)?)
+    }
+
+    /// ADR-045: introduce contact `index` to contact `other`.
+    pub fn introduce(&self, index: u32, other: u32) -> Result<()> {
+        let other = other as usize;
+        Ok(self.with(index, |e, i| e.introduce_contacts(i, other))??)
+    }
+
+    /// ADR-045: what contact `index`'s chat asks of us, if anything.
+    pub fn pending_intro(&self, index: u32) -> Result<Option<IntroView>> {
+        use engine::PendingIntro;
+        self.with(index, |e, i| {
+            e.pending_intro(i).map(|p| match p {
+                PendingIntro::Ask {
+                    id,
+                    nickname,
+                    fingerprint,
+                } => IntroView {
+                    id,
+                    ask: true,
+                    nickname,
+                    fingerprint,
+                },
+                PendingIntro::Offer {
+                    id,
+                    nickname,
+                    fingerprint,
+                } => IntroView {
+                    id,
+                    ask: false,
+                    nickname,
+                    fingerprint,
+                },
+            })
+        })
+    }
+
+    /// ADR-045: our answer to an introduction: "allow", "incognito" or "decline".
+    pub fn answer_intro(&self, index: u32, id: u64, answer: String) -> Result<()> {
+        use engine::IntroAnswer;
+        let answer = match answer.as_str() {
+            "allow" => IntroAnswer::Allow,
+            "incognito" => IntroAnswer::AllowIncognito,
+            _ => IntroAnswer::Decline,
+        };
+        Ok(self.with(index, |e, i| e.answer_intro(i, id, answer))??)
+    }
+
+    /// ADR-045: add the introduced contact, or not; the new contact's index.
+    pub fn answer_offer(&self, index: u32, id: u64, add: bool) -> Result<Option<u32>> {
+        let added = self.with(index, |e, i| e.answer_offer(i, id, add))??;
+        Ok(added.map(|j| j as u32))
     }
 
     /// Asks the contact for offered document `msg` (ADR-043).

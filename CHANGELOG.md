@@ -3,6 +3,16 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.32.0
+
+- Introduce two of your contacts (ADR-045): in the chat with Bob pick
+  Introduce, then Carol. Carol is asked first and can allow, allow from a
+  new incognito identity, or decline; only then does Bob get her invite,
+  and he decides whether to add her. Carol's app accepts him by itself.
+  The new contact starts not verified: compare your safety number. Nobody
+  passes on a queue or a key of their own, and nobody can be reached
+  without saying yes. Everyone needs 0.32.0.
+
 ## 0.31.0
 
 - Incognito invite: the apps say a new identity is being made and clear
