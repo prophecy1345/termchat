@@ -36,7 +36,7 @@ fn engine(dir: &Path, name: &str, url: &str) -> Box<Engine> {
 
 /// Feeds relay events and ticks both engines until `done` holds.
 async fn pump(a: &mut Engine, b: &mut Engine, done: impl Fn(&Engine, &Engine) -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !done(a, b) {
         if Instant::now() > deadline {
             let dump = |e: &Engine| -> Vec<(String, String)> {
@@ -136,7 +136,95 @@ async fn documents_travel_both_ways_but_not_before_acceptance() {
     assert_eq!(bob.unsaved_file(0), None);
 
     assert!(bob.send_file(0, "../etc/passwd", vec![1]).is_err());
-    let big = vec![0; termchat_core::proto::MAX_FILE_BYTES as usize + 1];
+    // ADR-043: above 1 MiB a document is offered instead; past 25 MiB, refused.
+    let big = vec![0; termchat_core::proto::MAX_LARGE_FILE_BYTES as usize + 1];
     assert!(bob.send_file(0, "big.bin", big).is_err());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A spool file of either engine, by its state folder.
+fn spooled(dir: &Path, name: &str) -> usize {
+    let spool = termchat_engine::data::spool_dir(&dir.join(name));
+    std::fs::read_dir(spool).map_or(0, |d| d.count())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn large_documents_go_only_when_asked_and_leave_nothing_behind() {
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-large-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut alice = engine(&dir, "alice", &url);
+    let mut bob = engine(&dir, "bob", &url);
+    pump(&mut alice, &mut bob, |a, _| a.data.invite_queue.is_some()).await;
+    let settle = Instant::now() + Duration::from_secs(1);
+    pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
+    bob.add(&alice.invite().unwrap(), false).unwrap();
+    pump(&mut alice, &mut bob, |a, _| !a.data.contacts.is_empty()).await;
+    alice.accept(0);
+    // Both sides must know the other reads offers (ADR-043, level 7).
+    pump(&mut alice, &mut bob, |a, b| {
+        a.data.contacts[0].understands >= 7 && b.data.contacts[0].understands >= 7
+    })
+    .await;
+
+    let doc: Vec<u8> = (0..1_200_000u32).map(|n| (n % 253) as u8).collect();
+    bob.send_file(0, "scan.pdf", doc.clone()).unwrap();
+    assert_eq!(spooled(&dir, "bob"), 1);
+    pump(&mut alice, &mut bob, |a, _| a.unsaved_file(0).is_some()).await;
+    let m = alice.unsaved_file(0).unwrap();
+    let offer = alice.data.contacts[0].messages[m].file.clone().unwrap();
+    assert!(offer.offered());
+    assert!(offer.label().ends_with("offered"), "{}", offer.label());
+    // Nothing moves until she asks, and there is nothing to save yet.
+    let settle = Instant::now() + Duration::from_secs(2);
+    pump(&mut alice, &mut bob, |_, _| Instant::now() > settle).await;
+    let sent = |b: &Engine| {
+        b.data.contacts[0]
+            .messages
+            .iter()
+            .rev()
+            .find_map(|m| m.file.clone())
+    };
+    assert_eq!(sent(&bob).unwrap().done, 0);
+    assert!(alice.file_bytes(0, m).is_none());
+
+    alice.download_file(0, m).unwrap();
+    assert!(alice.download_file(0, m).is_err());
+    pump(&mut alice, &mut bob, |a, b| {
+        a.data.contacts[0].messages[m]
+            .file
+            .as_ref()
+            .is_some_and(|f| f.complete())
+            && sent(b).is_some_and(|f| !f.held())
+    })
+    .await;
+    assert_eq!(
+        alice.file_bytes(0, m).unwrap(),
+        ("scan.pdf".into(), doc.clone())
+    );
+    let saved = alice.save_file(0, m, &dir).unwrap();
+    assert_eq!(std::fs::read(&saved).unwrap(), doc);
+    assert_eq!(alice.unsaved_file(0), None);
+    pump(&mut alice, &mut bob, |_, _| {
+        spooled(&dir, "alice") == 0 && spooled(&dir, "bob") == 0
+    })
+    .await;
+
+    // Declined: the sender's copy goes, both lines say so.
+    bob.send_file(0, "photos.zip", vec![9; 1_100_000]).unwrap();
+    pump(&mut alice, &mut bob, |a, _| a.unsaved_file(0).is_some()).await;
+    let m = alice.unsaved_file(0).unwrap();
+    alice.discard_file(0, m);
+    pump(&mut alice, &mut bob, |_, b| {
+        sent(b).is_some_and(|f| !f.held())
+    })
+    .await;
+    assert!(sent(&bob).unwrap().label().ends_with("not taken"));
+    assert_eq!(spooled(&dir, "bob"), 0);
+    assert!(alice.download_file(0, m).is_err());
+
+    // Over the new limit.
+    let huge = vec![0; termchat_core::proto::MAX_LARGE_FILE_BYTES as usize + 1];
+    assert!(bob.send_file(0, "huge.bin", huge).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }

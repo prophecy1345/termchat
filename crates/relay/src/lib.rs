@@ -114,9 +114,11 @@ impl Default for Limits {
             queues_per_ip: Rate::per(20.0, HOUR),
             onion_connections: 2000,
             onion_queues: Rate::per(200.0, HOUR),
+            // ADR-043: one a second carries a 25 MiB document in ~10 min;
+            // the queue quota, not this, keeps a queue from being flooded.
             sends_per_queue: Rate {
                 burst: 30.0,
-                per_sec: 0.5,
+                per_sec: 1.0,
             },
             publishes_per_queue: Rate::per(30.0, HOUR),
             claims_per_connection: Rate::per(30.0, HOUR),

@@ -1,5 +1,6 @@
 //! App data stored inside the encrypted state file, and writing that file.
 
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -653,23 +654,65 @@ pub struct FileMsg {
     /// discarded. Base64 in the state file.
     #[serde(with = "b64_bytes")]
     pub data: Option<Vec<u8>>,
+    /// ADR-043: offered, sent on request, its bytes in the spool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub large: Option<Large>,
+}
+
+/// ADR-043: where a document sent on request stands.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct Large {
+    /// The spool file holds its bytes: the sender's copy until every part is
+    /// acknowledged, the receiver's until saved or discarded.
+    pub held: bool,
+    /// The receiver asked for it.
+    pub wanted: bool,
+    /// Declined, cancelled, expired or broken; nothing more moves.
+    pub stopped: bool,
+    /// Sender: parts the receiver confirmed.
+    pub acked: u16,
+    /// The spool file's name, random hex.
+    pub spool: String,
 }
 
 impl FileMsg {
     pub fn complete(&self) -> bool {
-        usize::from(self.done) == termchat_proto::file_chunks(self.size)
+        usize::from(self.done) == self.parts()
+    }
+
+    /// Chunks, or parts for a document sent on request.
+    pub fn parts(&self) -> usize {
+        match self.large {
+            Some(_) => termchat_proto::large_chunks(self.size),
+            None => termchat_proto::file_chunks(self.size),
+        }
+    }
+
+    /// Its bytes are still on this device, in the state file or the spool.
+    pub fn held(&self) -> bool {
+        self.data.is_some() || self.large.as_ref().is_some_and(|l| l.held)
+    }
+
+    /// ADR-043: an offer the receiver has not answered yet.
+    pub fn offered(&self) -> bool {
+        self.large.as_ref().is_some_and(|l| !l.wanted && !l.stopped)
     }
 
     /// One line for the chat: name, size and, while it travels, progress.
     pub fn label(&self) -> String {
         let size = match self.size {
             n if n < 1024 => format!("{n} B"),
-            n => format!("{} KB", n.div_ceil(1024)),
+            n if n < 1 << 20 => format!("{} KB", n.div_ceil(1024)),
+            n => format!("{:.1} MB", f64::from(n) / f64::from(1u32 << 20)),
         };
-        let total = termchat_proto::file_chunks(self.size);
-        match self.complete() {
-            true => format!("{} · {size}", self.name),
-            false => format!("{} · {size} · {}/{total}", self.name, self.done),
+        let total = self.parts();
+        match &self.large {
+            Some(l) if l.stopped && !self.complete() => {
+                format!("{} · {size} · not taken", self.name)
+            }
+            Some(_) if self.offered() => format!("{} · {size} · offered", self.name),
+            _ if self.complete() => format!("{} · {size}", self.name),
+            _ => format!("{} · {size} · {}/{total}", self.name, self.done),
         }
     }
 
@@ -721,6 +764,30 @@ impl Data {
             .filter_map(|m| m.file.as_ref()?.data.as_ref())
             .map(Vec::len)
             .sum()
+    }
+
+    /// ADR-043: bytes of received documents in the spool, asked for and not
+    /// saved or discarded yet, counted at their full size.
+    pub fn spooled_theirs(&self) -> usize {
+        self.contacts
+            .iter()
+            .flat_map(|c| &c.messages)
+            .filter(|m| !m.mine)
+            .filter_map(|m| m.file.as_ref())
+            .filter(|f| f.large.as_ref().is_some_and(|l| l.held))
+            .map(|f| f.size as usize)
+            .sum()
+    }
+
+    /// Spool files a message still holds bytes in (ADR-043).
+    pub fn spool_names(&self) -> BTreeSet<String> {
+        self.contacts
+            .iter()
+            .flat_map(|c| &c.messages)
+            .filter_map(|m| m.file.as_ref()?.large.as_ref())
+            .filter(|l| l.held)
+            .map(|l| l.spool.clone())
+            .collect()
     }
 }
 
@@ -790,6 +857,7 @@ fn take_into(
         size,
         done: 1,
         data: Some(data),
+        large: None,
     };
     let whole = file.complete();
     msgs.push(Msg {
@@ -973,8 +1041,8 @@ pub fn expand(path: &str) -> PathBuf {
 /// size is checked before reading, so a huge file is never loaded.
 pub fn read_document(path: &Path) -> Result<(String, Vec<u8>), String> {
     let meta = fs::metadata(path).map_err(|e| format!("cannot read: {e}"))?;
-    if !meta.is_file() || meta.len() > u64::from(termchat_proto::MAX_FILE_BYTES) {
-        return Err("pick a file of at most 1 MiB".into());
+    if !meta.is_file() || meta.len() > u64::from(termchat_proto::MAX_LARGE_FILE_BYTES) {
+        return Err("pick a file of at most 25 MiB".into());
     }
     let bytes = fs::read(path).map_err(|e| match e.raw_os_error() {
         // macOS: a file kept only in iCloud ("dataless") is not on this Mac.
@@ -1011,7 +1079,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Opens `path` for writing with mode 0600, creating it and its folder
 /// (0700) if needed. `new`: fail if anything is there, a link included.
-fn create_private(path: &Path, new: bool) -> io::Result<fs::File> {
+pub(crate) fn create_private(path: &Path, new: bool) -> io::Result<fs::File> {
     if let Some(dir) = path.parent() {
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true);
@@ -1185,6 +1253,25 @@ pub fn settings_path(state: &Path) -> PathBuf {
 
 /// Tor state and directory cache (ADR-004); shows that termchat was used
 /// over Tor, and holds the bridge lines in use in the clear (ADR-015).
+/// ADR-043: documents sent on request, one sealed file per transfer.
+pub fn spool_dir(state: &Path) -> PathBuf {
+    let mut name = state.file_name().unwrap_or_default().to_os_string();
+    name.push(".spool");
+    state.with_file_name(name)
+}
+
+/// Deletes spool files no message holds bytes in any more; best effort.
+pub fn sweep_spool(state: &Path, keep: &BTreeSet<String>) {
+    let Ok(entries) = fs::read_dir(spool_dir(state)) else {
+        return;
+    };
+    for e in entries.flatten() {
+        if !e.file_name().to_str().is_some_and(|n| keep.contains(n)) {
+            let _ = shred(&e.path());
+        }
+    }
+}
+
 pub fn tor_dir(state: &Path) -> PathBuf {
     state.with_file_name("arti")
 }
@@ -1241,6 +1328,8 @@ pub fn wipe(path: &Path) -> io::Result<()> {
         }
     }
     shred(&list)?;
+    sweep_spool(path, &BTreeSet::new());
+    let _ = fs::remove_dir(spool_dir(path));
     remove_tor_dir(path)
 }
 
@@ -1339,6 +1428,7 @@ mod tests {
             size: bytes.len() as u32,
             done: 0,
             data: Some(bytes),
+            large: None,
         }
     }
 
@@ -1600,6 +1690,7 @@ mod tests {
                 size: 2,
                 done: 1,
                 data,
+                large: None,
             });
             m
         };

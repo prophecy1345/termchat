@@ -24,6 +24,8 @@ use crate::data::{self, Addr, Contact, Data, FileMsg, Msg, Queue, Status};
 mod devices;
 #[path = "group.rs"]
 mod group;
+#[path = "large.rs"]
+mod large;
 #[path = "receipts.rs"]
 mod receipts;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
@@ -283,6 +285,8 @@ pub struct Engine {
     gone: bool,
     /// File chunks we may send now, and when that was counted (ADR-017).
     chunk_budget: (f64, Instant),
+    /// The same for parts of documents sent on request (ADR-043).
+    large_budget: (f64, Instant),
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
@@ -316,6 +320,8 @@ struct Live {
     subscribing: Vec<QueueId>,
     /// An unanswered heartbeat per contact, retained across reconnects of this link.
     heartbeats: BTreeMap<Ed25519Key, u64>,
+    /// The relay's version, from its last handshake (ADR-010).
+    version: Option<(u32, u32, u32)>,
     forward: tokio::task::AbortHandle,
 }
 
@@ -511,6 +517,7 @@ fn start(
         creating: Vec::new(),
         subscribing: Vec::new(),
         heartbeats: BTreeMap::new(),
+        version: None,
         forward,
     })
 }
@@ -675,6 +682,7 @@ impl Engine {
             leaving: None,
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
+            large_budget: (large::LARGE_BURST, Instant::now()),
             chunks: BTreeMap::new(),
             heartbeat: None,
             unreachable: BTreeSet::new(),
@@ -1549,6 +1557,7 @@ impl Engine {
         let home = same_url(&link.relay, &self.data.relay_url);
         match ev {
             Event::RelayVersion(v) => {
+                live.version = parse_version(&v);
                 let ours = parse_version(env!("CARGO_PKG_VERSION"));
                 self.update = (parse_version(&v) > ours).then_some(v);
             }
@@ -2187,6 +2196,24 @@ impl Engine {
                 }
                 self.happened.push(alert(false));
             }
+            // ADR-043: documents on request, between accepted contacts only.
+            Body::FileOffer { .. }
+            | Body::FileWant { .. }
+            | Body::FileAck { .. }
+            | Body::FileStop { .. }
+            | Body::FilePart { .. }
+                if got.request =>
+            {
+                return self.persist();
+            }
+            body @ (Body::FileOffer { .. }
+            | Body::FileWant { .. }
+            | Body::FileAck { .. }
+            | Body::FileStop { .. }
+            | Body::FilePart { .. }) => {
+                self.take_large(i, body);
+                return self.persist();
+            }
             Body::Receipt { .. } if got.request => return self.persist(),
             Body::Receipt {
                 messages,
@@ -2453,9 +2480,12 @@ impl Engine {
             g.reactions.retain(|(id, _, _)| ids.contains(id));
             changed |= g.messages.len() != before;
         }
+        changed |= self.expire_offers();
         if changed {
             self.persist();
         }
+        // ADR-043: also after a chat was cleared or deleted.
+        self.sweep_spool();
     }
 
     /// Accepts contact `i`'s request: their held texts appear. They are told
@@ -2911,14 +2941,24 @@ impl Engine {
         if bytes.is_empty() {
             return Err("the file is empty".into());
         }
-        let size = match u32::try_from(bytes.len()) {
-            Ok(n) if n <= proto::MAX_FILE_BYTES => n,
-            _ => return Err("files are limited to 1 MiB".into()),
-        };
-        let busy = |m: &Msg| m.mine && m.file.as_ref().is_some_and(|f| f.data.is_some());
+        let busy = |m: &Msg| m.mine && m.file.as_ref().is_some_and(FileMsg::held);
         if c.messages.iter().any(busy) {
             return Err("wait until the previous file is sent".into());
         }
+        let size = match u32::try_from(bytes.len()) {
+            Ok(n) if n <= proto::MAX_FILE_BYTES => n,
+            // ADR-043: offered first, sent when they ask.
+            _ => {
+                let key = c.key;
+                self.offer_file(i, name, &bytes)?;
+                self.persist();
+                match self.has_session(&key) {
+                    true => self.send_chunks(),
+                    false => self.claim(key),
+                }
+                return Ok(());
+            }
+        };
         let mut id = [0; 4];
         getrandom::fill(&mut id).map_err(|e| e.to_string())?;
         let (key, expires_in) = (c.key, c.expires_in);
@@ -2935,6 +2975,7 @@ impl Engine {
                 size,
                 done: 0,
                 data: Some(bytes),
+                large: None,
             }),
             unfetched: false,
             ..Default::default()
@@ -2957,7 +2998,9 @@ impl Engine {
         for i in 0..self.data.contacts.len() {
             let c = &self.data.contacts[i];
             let (key, expires_in) = (c.key, c.expires_in);
-            let queued = |m: &Msg| m.status == Status::Queued && m.file.is_some();
+            let queued = |m: &Msg| {
+                m.status == Status::Queued && m.file.as_ref().is_some_and(|f| f.large.is_none())
+            };
             let Some(m) = c.messages.iter().position(queued) else {
                 continue;
             };
@@ -2996,6 +3039,7 @@ impl Engine {
         }
         // ADR-027 amendment: documents in groups, from the same budget.
         sent |= self.send_group_chunks();
+        sent |= self.send_parts();
         if sent {
             self.persist();
         }
@@ -3005,11 +3049,25 @@ impl Engine {
     /// make it whole, so it stops (ADR-020).
     fn file_failed(&mut self, key: &Ed25519Key, why: String) {
         let Some(i) = self.index(key) else { return };
-        let sending = |m: &&mut Msg| m.mine && m.file.as_ref().is_some_and(|f| f.data.is_some());
+        let sending = |m: &Msg| m.mine && m.file.as_ref().is_some_and(FileMsg::held);
+        let msgs = &self.data.contacts[i].messages;
+        // ADR-043: the receiver hears too, or it waits for parts that never come.
+        if let Some(m) = msgs.iter().position(sending)
+            && msgs[m].file.as_ref().is_some_and(|f| f.large.is_some())
+        {
+            return self.stop_large(i, m, true, Some(why));
+        }
+        let sending = |m: &&mut Msg| m.mine && m.file.as_ref().is_some_and(FileMsg::held);
         if let Some(m) = self.data.contacts[i].messages.iter_mut().find(sending) {
             m.status = Status::Failed(why);
-            m.file.iter_mut().for_each(|f| f.data = None);
+            for f in m.file.iter_mut() {
+                f.data = None;
+                f.large
+                    .iter_mut()
+                    .for_each(|l| (l.held, l.stopped) = (false, true));
+            }
             self.persist();
+            self.sweep_spool();
         }
     }
 
@@ -3018,7 +3076,10 @@ impl Engine {
     pub fn file_bytes(&self, i: usize, m: usize) -> Option<(String, Vec<u8>)> {
         let msg = self.data.contacts.get(i)?.messages.get(m)?;
         let f = msg.file.as_ref().filter(|f| !msg.mine && f.complete())?;
-        Some((f.name.clone(), f.data.clone()?))
+        match f.large {
+            Some(_) => Some((f.name.clone(), self.large_bytes(i, m)?)),
+            None => Some((f.name.clone(), f.data.clone()?)),
+        }
     }
 
     /// The newest received file of contact `i` that waits to be saved.
@@ -3028,7 +3089,7 @@ impl Engine {
             !m.mine
                 && m.file
                     .as_ref()
-                    .is_some_and(|f| f.complete() && f.data.is_some())
+                    .is_some_and(|f| (f.complete() && f.held()) || f.offered())
         })
     }
 
@@ -3040,6 +3101,9 @@ impl Engine {
             .get_mut(i)
             .and_then(|c| c.messages.get_mut(m));
         if let Some(f) = msg.filter(|m| !m.mine).and_then(|m| m.file.as_mut()) {
+            if f.large.is_some() {
+                return self.drop_large(i, m);
+            }
             f.data = None;
             self.persist();
         }
@@ -3719,6 +3783,7 @@ mod tests {
             size: 40_000,
             done: 1,
             data: Some(vec![1; 16_000]),
+            large: None,
         });
         let c = &mut e.data.contacts[i];
         c.messages = vec![
@@ -4250,6 +4315,7 @@ mod tests {
             size: 32_000,
             done: 1,
             data: Some(vec![0; 16_000]),
+            large: None,
         });
         e.data.contacts[1].messages.push(file);
 

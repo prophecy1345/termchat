@@ -9,8 +9,12 @@ use serde::{Deserialize, Serialize};
 
 /// Anonymous queues (ADR-023). Version 1 had accounts and is not supported.
 pub const VERSION: u16 = 2;
-/// Padded plaintext sizes (protocol.md, section 8).
-pub const BUCKETS: [usize; 3] = [512, 4096, 16384];
+/// Padded plaintext sizes (protocol.md, section 8). The last one carries
+/// `Body::FilePart` only (ADR-043).
+pub const BUCKETS: [usize; 4] = [512, 4096, 16384, LARGE_BUCKET];
+/// The largest bucket for everything but `Body::FilePart`.
+const SMALL_BUCKET: usize = 16384;
+const LARGE_BUCKET: usize = 65536;
 pub const MAX_TEXT_BYTES: usize = 16_000;
 /// Self-chosen display name, only ever sent inside E2EE.
 pub const MAX_NICKNAME_BYTES: usize = 64;
@@ -21,10 +25,16 @@ pub const MAX_FILE_BYTES: u32 = 1 << 20;
 /// Data per `Body::File` chunk: fits the largest bucket with a full header.
 pub const FILE_CHUNK: usize = 16_000;
 pub const MAX_FILE_NAME_BYTES: usize = 255;
+/// A document offered and sent on request (ADR-043).
+pub const MAX_LARGE_FILE_BYTES: u32 = 25 << 20;
+/// Data per `Body::FilePart`: fits the large bucket with its header.
+pub const LARGE_CHUNK: usize = 64_000;
+/// Parts the sender may have out before the receiver's `FileAck` (ADR-043).
+pub const LARGE_WINDOW: u16 = 64;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
-pub const MAX_BODY_BYTES: usize = 20 * 1024;
+pub const MAX_BODY_BYTES: usize = 68 * 1024;
 /// One WebSocket frame (protocol.md, section 11).
-pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+pub const MAX_FRAME_BYTES: usize = 72 * 1024;
 /// A UnifiedPush endpoint URL (ADR-012).
 pub const MAX_PUSH_URL_BYTES: usize = 512;
 /// HTTP header on the relay's upgrade response: its version (ADR-010).
@@ -595,6 +605,32 @@ pub enum Body {
         roster_no: u64,
         grant: AdminGrant,
     },
+    /// ADR-043: a document of more than 1 MiB, sent only after `FileWant`.
+    FileOffer {
+        id: u32,
+        name: String,
+        size: u32,
+        expires_in: Option<u32>,
+    },
+    /// ADR-043: the receiver asks for offer `id`.
+    FileWant {
+        id: u32,
+    },
+    /// ADR-043: every part of `id` below `next` arrived.
+    FileAck {
+        id: u32,
+        next: u16,
+    },
+    /// ADR-043: either side drops transfer `id`.
+    FileStop {
+        id: u32,
+    },
+    /// ADR-043: part `index` of offer `id`, bytes from `index * LARGE_CHUNK`.
+    FilePart {
+        id: u32,
+        index: u16,
+        data: Vec<u8>,
+    },
     /// A kind this version does not know, from a newer client (ADR-025): its
     /// `seq` counts, nothing is shown. Never on the wire; keep it last, and
     /// put new kinds above it.
@@ -606,13 +642,16 @@ pub enum Body {
 pub const MAX_GROUP_MEMBERS: usize = 32;
 
 /// Kinds of `Body` on the wire: every variant but `Unknown`.
-const KNOWN_KINDS: u32 = 33;
+const KNOWN_KINDS: u32 = 38;
 
 /// What `Understands` says this version reads: 1 = ADR-025, 2 = groups
 /// (ADR-027), 3 = devices (ADR-028), 4 = devices that prove themselves and
 /// copies that name their chat (ADR-030), 5 = receipts (ADR-041), 6 = several
-/// group admins (ADR-042).
-pub const UNDERSTANDS: u16 = 6;
+/// group admins (ADR-042), 7 = documents on request (ADR-043).
+pub const UNDERSTANDS: u16 = 7;
+
+/// The level from which a contact takes `FileOffer` (ADR-043).
+pub const LARGE_FILES_LEVEL: u16 = 7;
 
 /// The level from which a member takes rosters from several admins (ADR-042).
 pub const ADMINS_LEVEL: u16 = 6;
@@ -934,10 +973,10 @@ struct InnerHead {
 }
 
 /// Pads to the smallest bucket (ISO/IEC 7816-4: 0x80, then zeros).
-fn pad(mut buf: Vec<u8>) -> Result<Vec<u8>, Error> {
+fn pad(mut buf: Vec<u8>, largest: usize) -> Result<Vec<u8>, Error> {
     let bucket = *BUCKETS
         .iter()
-        .find(|&&b| b > buf.len())
+        .find(|&&b| b > buf.len() && b <= largest)
         .ok_or(Error::TooLarge)?;
     buf.push(0x80);
     buf.resize(bucket, 0);
@@ -963,15 +1002,28 @@ impl Inner {
     /// Serialize and pad to the smallest bucket (ISO/IEC 7816-4: 0x80, then zeros).
     pub fn to_padded(&self) -> Result<Vec<u8>, Error> {
         self.check_limits()?;
-        pad(postcard::to_allocvec(self).map_err(|_| Error::Malformed)?)
+        let largest = match self.body {
+            Body::FilePart { .. } => LARGE_BUCKET,
+            _ => SMALL_BUCKET,
+        };
+        pad(
+            postcard::to_allocvec(self).map_err(|_| Error::Malformed)?,
+            largest,
+        )
     }
 
     pub fn from_padded(bytes: &[u8]) -> Result<Self, Error> {
+        let large = bytes.len() == LARGE_BUCKET;
         let bytes = unpad(bytes)?;
         let inner: Self = match decode_exact(bytes) {
             Ok(inner) => inner,
+            Err(_) if large => return Err(Error::Malformed),
             Err(e) => return Self::unknown_kind(bytes).ok_or(e),
         };
+        // ADR-043: the large bucket carries parts and nothing else.
+        if large && !matches!(inner.body, Body::FilePart { .. }) {
+            return Err(Error::Malformed);
+        }
         inner.check_limits()?;
         Ok(inner)
     }
@@ -1011,7 +1063,10 @@ pub struct GroupInner {
 impl GroupInner {
     pub fn to_padded(&self) -> Result<Vec<u8>, Error> {
         self.check_body()?;
-        pad(postcard::to_allocvec(self).map_err(|_| Error::Malformed)?)
+        pad(
+            postcard::to_allocvec(self).map_err(|_| Error::Malformed)?,
+            SMALL_BUCKET,
+        )
     }
 
     pub fn from_padded(bytes: &[u8]) -> Result<Self, Error> {
@@ -1024,9 +1079,15 @@ impl GroupInner {
         match &self.body {
             // ADR-041: receipts are between two people, never in a group.
             // ADR-042: every member would read the admin token.
-            Body::Heartbeat { .. } | Body::Receipt { .. } | Body::GroupAdminKeys { .. } => {
-                Err(Error::Malformed)
-            }
+            // ADR-043: offers are between two people for now.
+            Body::Heartbeat { .. }
+            | Body::Receipt { .. }
+            | Body::GroupAdminKeys { .. }
+            | Body::FileOffer { .. }
+            | Body::FileWant { .. }
+            | Body::FileAck { .. }
+            | Body::FileStop { .. }
+            | Body::FilePart { .. } => Err(Error::Malformed),
             body => check_body(body),
         }
     }
@@ -1071,7 +1132,12 @@ fn check_body(body: &Body) -> Result<(), Error> {
             Body::Copy { .. }
             | Body::Heartbeat { .. }
             | Body::Receipt { .. }
-            | Body::GroupAdminKeys { .. } => Err(Error::Malformed),
+            | Body::GroupAdminKeys { .. }
+            | Body::FileOffer { .. }
+            | Body::FileWant { .. }
+            | Body::FileAck { .. }
+            | Body::FileStop { .. }
+            | Body::FilePart { .. } => Err(Error::Malformed),
             ref inner => check_body(inner),
         },
         Body::Receipt {
@@ -1152,6 +1218,24 @@ fn check_body(body: &Body) -> Result<(), Error> {
             }
             Ok(())
         }
+        Body::FileOffer { name, size, .. } => {
+            check_file_name(name)?;
+            if *size == 0 || *size > MAX_LARGE_FILE_BYTES {
+                return Err(Error::TooLarge);
+            }
+            Ok(())
+        }
+        // The exact length needs the offer's size; the receiver checks it.
+        Body::FilePart { index, data, .. }
+            if data.is_empty()
+                || data.len() > LARGE_CHUNK
+                || usize::from(*index) >= large_chunks(MAX_LARGE_FILE_BYTES) =>
+        {
+            Err(Error::Malformed)
+        }
+        Body::FileAck { next, .. } if usize::from(*next) > large_chunks(MAX_LARGE_FILE_BYTES) => {
+            Err(Error::Malformed)
+        }
         _ => Ok(()),
     }
 }
@@ -1165,6 +1249,17 @@ pub fn file_chunks(size: u32) -> usize {
 pub fn chunk_len(size: u32, index: u16) -> Option<usize> {
     let start = usize::from(index) * FILE_CHUNK;
     (start < size as usize).then(|| (size as usize - start).min(FILE_CHUNK))
+}
+
+/// Number of parts a document of `size` bytes takes (ADR-043).
+pub fn large_chunks(size: u32) -> usize {
+    (size as usize).div_ceil(LARGE_CHUNK)
+}
+
+/// Exact data length of part `index`, or `None` past the last part.
+pub fn large_chunk_len(size: u32, index: u16) -> Option<usize> {
+    let start = usize::from(index) * LARGE_CHUNK;
+    (start < size as usize).then(|| (size as usize - start).min(LARGE_CHUNK))
 }
 
 /// Control characters drive a terminal; bidi overrides reorder what is
@@ -1324,10 +1419,126 @@ mod tests {
     #[test]
     fn known_kinds_counts_every_kind_on_the_wire() {
         // The last kind on the wire is `KNOWN_KINDS - 1`, right after the head.
-        let raw = postcard::to_allocvec(&with(admin_keys())).unwrap();
+        let part = Body::FilePart {
+            id: 1,
+            index: 0,
+            data: vec![1],
+        };
+        let raw = postcard::to_allocvec(&with(part)).unwrap();
         let head = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
         assert_eq!(u32::from(raw[head.len()]), KNOWN_KINDS - 1);
-        assert_eq!(raw[head.len()], 32);
+        assert_eq!(raw[head.len()], 37);
+    }
+
+    #[test]
+    fn adr_043_parts_alone_take_the_large_bucket() {
+        let part = |len: usize| {
+            with(Body::FilePart {
+                id: 1,
+                index: 2,
+                data: vec![7; len],
+            })
+        };
+        let full = part(LARGE_CHUNK).to_padded().unwrap();
+        assert_eq!(full.len(), LARGE_BUCKET);
+        assert_eq!(Inner::from_padded(&full).unwrap(), part(LARGE_CHUNK));
+        assert_eq!(part(10).to_padded().unwrap().len(), 512);
+        // Anything else in the large bucket, or too big for the small ones.
+        let big_text = pad(postcard::to_allocvec(&text(MAX_TEXT_BYTES)).unwrap());
+        assert_eq!(big_text.len(), 16384);
+        let mut raw = postcard::to_allocvec(&text(20_000)).unwrap();
+        raw = pad(raw);
+        assert_eq!(raw.len(), LARGE_BUCKET);
+        assert!(Inner::from_padded(&raw).is_err());
+        let mut unknown = postcard::to_allocvec(&(&[1u8; 32], &[2u8; 32], 7u64)).unwrap();
+        unknown.extend(postcard::to_allocvec(&KNOWN_KINDS).unwrap());
+        unknown.extend([0; 20_000]);
+        assert!(Inner::from_padded(&pad(unknown)).is_err());
+        let offer = with(Body::FileOffer {
+            id: 1,
+            name: "a".repeat(MAX_TEXT_BYTES),
+            size: 5,
+            expires_in: None,
+        });
+        assert!(offer.to_padded().is_err());
+    }
+
+    #[test]
+    fn adr_043_bounds() {
+        let offer = |name: &str, size: u32| {
+            with(Body::FileOffer {
+                id: 1,
+                name: name.into(),
+                size,
+                expires_in: Some(60),
+            })
+        };
+        let ok = offer("scan.pdf", MAX_LARGE_FILE_BYTES);
+        assert_eq!(Inner::from_padded(&ok.to_padded().unwrap()).unwrap(), ok);
+        for bad in [
+            offer("scan.pdf", 0),
+            offer("scan.pdf", MAX_LARGE_FILE_BYTES + 1),
+            offer("../x", 5),
+            offer("a\u{202E}b", 5),
+            with(Body::FilePart {
+                id: 1,
+                index: 0,
+                data: vec![],
+            }),
+            with(Body::FilePart {
+                id: 1,
+                index: 0,
+                data: vec![1; LARGE_CHUNK + 1],
+            }),
+            with(Body::FilePart {
+                id: 1,
+                index: large_chunks(MAX_LARGE_FILE_BYTES) as u16,
+                data: vec![1],
+            }),
+            with(Body::FileAck {
+                id: 1,
+                next: large_chunks(MAX_LARGE_FILE_BYTES) as u16 + 1,
+            }),
+        ] {
+            assert!(bad.to_padded().is_err());
+            let raw = pad(postcard::to_allocvec(&bad).unwrap());
+            assert!(Inner::from_padded(&raw).is_err());
+        }
+        assert_eq!(large_chunks(MAX_LARGE_FILE_BYTES), 410);
+        assert_eq!(large_chunk_len(LARGE_CHUNK as u32 + 1, 1), Some(1));
+        assert_eq!(large_chunk_len(LARGE_CHUNK as u32, 1), None);
+    }
+
+    #[test]
+    fn adr_043_never_in_groups_or_copies() {
+        for body in [
+            Body::FileOffer {
+                id: 1,
+                name: "a".into(),
+                size: 5,
+                expires_in: None,
+            },
+            Body::FileWant { id: 1 },
+            Body::FileAck { id: 1, next: 1 },
+            Body::FileStop { id: 1 },
+            Body::FilePart {
+                id: 1,
+                index: 0,
+                data: vec![1],
+            },
+        ] {
+            let group = GroupInner {
+                sender: [1; 32],
+                group: [3; 16],
+                body: body.clone(),
+            };
+            assert!(group.to_padded().is_err());
+            let copy = Body::Copy {
+                contact: [4; 32],
+                body: Box::new(body),
+            };
+            assert!(with(copy).to_padded().is_err());
+        }
     }
 
     #[test]

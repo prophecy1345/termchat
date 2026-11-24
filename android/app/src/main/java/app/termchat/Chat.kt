@@ -41,10 +41,10 @@ import app.termchat.engine.MessageView
 import app.termchat.engine.Place
 import app.termchat.engine.reactions
 
-/** ADR-017: the largest document, as in the Rust core. */
-private const val MAX_FILE = 1 shl 20
+/** ADR-043: the largest document, as in the Rust core. */
+private const val MAX_FILE = 25 shl 20
 
-/** A picked document's name and bytes, at most 1 MiB (ADR-017): opaque, never opened. */
+/** A picked document's name and bytes, at most 25 MiB (ADR-043): opaque, never opened. */
 internal fun readDocument(context: android.content.Context, uri: android.net.Uri): Pair<String, ByteArray> {
     // Review 2026-11d, finding 5: another app's share could name our own
     // private files (file://, or a provider of ours). Only another app's
@@ -64,7 +64,7 @@ internal fun readDocument(context: android.content.Context, uri: android.net.Uri
             val n = s.read(buf)
             if (n < 0) break
             out.write(buf, 0, n)
-            if (out.size() > MAX_FILE) error("files are limited to 1 MiB")
+            if (out.size() > MAX_FILE) error("documents are limited to 25 MiB")
         }
         out.toByteArray()
     }
@@ -101,7 +101,8 @@ fun Chat(m: Model, index: UInt) {
     LaunchedEffect(m.version) { a.open(index) }
     val context = LocalContext.current
 
-    // ADR-017: a document goes as opaque bytes, at most 1 MiB, read here in full.
+    // ADR-017, ADR-043: a document goes as opaque bytes, read here in full;
+    // above 1 MiB it is offered and goes when they ask.
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         runCatching {
@@ -162,7 +163,11 @@ fun Chat(m: Model, index: UInt) {
                         }
                     }
                 }
-                Bubble(msg, c.rich, act) { keep ->
+                val download = {
+                    runCatching { a.downloadFile(index, at) }.onFailure { m.note = it.message ?: "$it" }
+                    m.changed()
+                }
+                Bubble(msg, c.rich, act, download = download) { keep ->
                     if (keep) {
                         saving = at
                         save.launch(msg.fileName ?: "file")
@@ -369,7 +374,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
@@ -437,6 +442,13 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Flat("Save", color = Tc.lime) { file(true) }
                 Flat("Discard", color = Tc.dim) { file(false) }
+            }
+        }
+        // ADR-043: nothing comes until they ask; declining frees the sender's copy.
+        if (msg.fileOffered) {
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Flat("Download", color = Tc.lime) { download() }
+                Flat("Decline", color = Tc.dim) { file(false) }
             }
         }
         val failed = msg.mine && msg.status !in setOf("sent", "sending", "queued")

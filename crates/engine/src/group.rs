@@ -664,6 +664,7 @@ impl Engine {
                 size,
                 done: 0,
                 data: Some(bytes),
+                large: None,
             }),
             unfetched: false,
             ..Default::default()

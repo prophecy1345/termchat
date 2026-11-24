@@ -1313,8 +1313,14 @@ impl Main {
             "not verified"
         };
         items.push(('l', "send a file".into()));
-        if self.engine.unsaved_file(self.selected).is_some() {
-            items.push(('g', "save the file".into()));
+        if let Some(m) = self.engine.unsaved_file(self.selected) {
+            let offered = c.messages[m].file.as_ref().is_some_and(|f| f.offered());
+            let what = if offered {
+                "download the file"
+            } else {
+                "save the file"
+            };
+            items.push(('g', what.into()));
         }
         items.extend([
             ('r', "rename".into()),
@@ -1898,9 +1904,21 @@ impl Main {
                     .engine
                     .unsaved_file(i)
                     .ok_or("no unsaved file in this chat")?;
+                let offered = self.engine.data.contacts[i].messages[m]
+                    .file
+                    .as_ref()
+                    .is_some_and(|f| f.offered());
                 if f.fields[0].trim() == "DISCARD" {
                     self.engine.discard_file(i, m);
-                    return Ok("File discarded.".into());
+                    return Ok(match offered {
+                        true => "Offer declined.".into(),
+                        false => "File discarded.".into(),
+                    });
+                }
+                // ADR-043: an offer is asked for first, saved once it is here.
+                if offered {
+                    self.engine.download_file(i, m)?;
+                    return Ok("Downloading. Ctrl+G saves it once it is here.".into());
                 }
                 let path = self.engine.save_file(i, m, &form::expand(&f.fields[0]))?;
                 Ok(format!("Saved to {}.", path.display()))

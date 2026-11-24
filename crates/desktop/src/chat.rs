@@ -202,6 +202,9 @@ enum Compose {
 /// What a click in the history asks for, by message index.
 enum Act {
     Save(usize),
+    /// ADR-043: ask for an offered document, or turn it down.
+    Download(usize),
+    Decline(usize),
     Forward(usize),
     Reply(usize),
     Edit(usize),
@@ -889,6 +892,18 @@ impl Chat {
         };
         match act {
             Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
+            Act::Download(n) => {
+                if let Open::Chat(i) = at
+                    && let Err(e) = self.engine.download_file(i, n)
+                {
+                    self.status = e;
+                }
+            }
+            Act::Decline(n) => {
+                if let Open::Chat(i) = at {
+                    self.engine.discard_file(i, n);
+                }
+            }
             Act::Forward(n) => self.dialog = Some(Dialog::Forward(n)),
             _ if !rich => self.status = OLDER_APP.into(),
             Act::Reply(n) => {
@@ -1126,7 +1141,7 @@ impl Chat {
                         ui.horizontal(|ui| {
                             if ui
                                 .add(egui::Button::new(file_text).corner_radius(2))
-                                .on_hover_text("Send a file, up to 1 MiB")
+                                .on_hover_text("Send a file, up to 25 MiB")
                                 .clicked()
                             {
                                 self.dialog = Some(Dialog::SendFile {
@@ -1614,9 +1629,17 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
             let unsaved = m
                 .file
                 .as_ref()
-                .is_some_and(|f| !m.mine && f.complete() && f.data.is_some());
+                .is_some_and(|f| !m.mine && f.complete() && f.held());
             if unsaved && ui.link(RichText::new("Save…").color(p.accent)).clicked() {
                 act = Some(Act::Save(n));
+            }
+            if m.file.as_ref().is_some_and(|f| !m.mine && f.offered()) {
+                if ui.link(RichText::new("Download").color(p.accent)).clicked() {
+                    act = Some(Act::Download(n));
+                }
+                if ui.link(RichText::new("Decline").color(p.dim)).clicked() {
+                    act = Some(Act::Decline(n));
+                }
             }
         });
         ui.add_space(4.0);
@@ -1829,7 +1852,8 @@ mod tests {
                         size: 5,
                         done: 1,
                         data: Some(b"hello".to_vec()),
-                        ..Default::default()
+                        id: 0,
+                        large: None,
                     });
                     m
                 },

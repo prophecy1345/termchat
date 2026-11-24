@@ -812,6 +812,13 @@ async fn send_file(e: &mut Engine, a: &Args, deadline: Instant) -> Result<(), Fa
     };
     let i = writable(e, query, deadline).await?;
     let (name, bytes) = data::read_document(&data::expand(file)).map_err(|why| Fail(1, why))?;
+    // ADR-043: a larger one waits for the contact to ask; a one-shot command cannot.
+    if bytes.len() > termchat_core::proto::MAX_FILE_BYTES as usize {
+        return fail(
+            1,
+            "send-file takes documents of up to 1 MiB; send larger ones from the app",
+        );
+    }
     e.send_file(i, &name, bytes).map_err(|why| Fail(5, why))?;
     let m = last_mark(e, i);
     delivered(e, i, m, deadline).await

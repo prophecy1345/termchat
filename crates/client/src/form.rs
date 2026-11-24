@@ -103,7 +103,7 @@ impl Kind {
                 "The data stays as it is; only the key slot changes.\nIf you set a duress password, keep the new one far from it:\na typo that hits the duress password erases everything.   Ctrl+G: generate"
             }
             Self::SendFile => {
-                "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about\n10 s, 1 MiB about 3 min. The relay sees roughly how big it is."
+                "Up to 25 MiB, end-to-end encrypted like a message. Up to 1 MiB it goes at\nonce; a larger one is offered and goes when they download it, 25 MiB in\nabout 10 min. Groups: up to 1 MiB. The relay sees roughly how big it is."
             }
             Self::SaveFile => {
                 "The newest unsaved file in this chat. Files from contacts can be\nharmful: termchat never opens them, check before you do.\nAn existing file is never overwritten. Esc: keep it for later."

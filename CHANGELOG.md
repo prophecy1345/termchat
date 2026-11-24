@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.29.0
+
+- Documents up to 25 MiB (ADR-043). Above 1 MiB the contact first gets an
+  offer and the bytes go only after they choose to download it, so nobody
+  gets a large file they did not want. 25 MiB takes about 10 minutes.
+  Both of you need 0.29.0, and the relay too. Not in groups yet: there the
+  limit stays 1 MiB.
+
 ## 0.28.1
 
 Fixes from the fourth AI-assisted security review (review 2026-11d,

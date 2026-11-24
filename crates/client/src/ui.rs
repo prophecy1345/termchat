@@ -45,7 +45,7 @@ Ctrl+R       rename contact (only on this device)
 Ctrl+T       disappearing messages: off/5m/1h/1d/1w
 Ctrl+E       no history: keep this chat in memory only
 Ctrl+V       mute: off/1h/1d/always (no sound; unread still counts)
-Ctrl+L       send a file (up to 1 MiB)
+Ctrl+L       send a file (up to 25 MiB)
 Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
 Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
@@ -740,9 +740,10 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut picked_line = None;
     for (n, msg) in msgs.iter().enumerate() {
         let text = match &msg.file {
-            Some(f) if !msg.mine && f.complete() && f.data.is_some() => {
+            Some(f) if !msg.mine && f.complete() && f.held() => {
                 clean(&format!("▤ {} · unsaved, Ctrl+G", f.label()))
             }
+            Some(f) if !msg.mine && f.offered() => clean(&format!("▤ {}, Ctrl+G", f.label())),
             // A text mark for a document: the terminal draws no sprites.
             Some(f) => clean(&format!("▤ {}", f.label())),
             None => crate::engine::clean_text(&msg.text),

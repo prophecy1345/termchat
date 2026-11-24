@@ -20,7 +20,7 @@ import kotlin.concurrent.thread
 /** Minutes without a touch before the app locks itself; no "never" (ADR-021). */
 val LOCK_CHOICES = listOf(1, 5, 15, 30)
 
-/** What another app shared: text, or one file read into memory (at most 1 MiB). */
+/** What another app shared: text, or one file read into memory (at most 25 MiB). */
 class Share(val text: String?, val name: String?, val bytes: ByteArray?)
 
 sealed interface Screen {

@@ -1143,6 +1143,7 @@ impl Engine {
                         size,
                         done: total,
                         data: None,
+                        large: None,
                     }),
                     unfetched: false,
                     ..Default::default()

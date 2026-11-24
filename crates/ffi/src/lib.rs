@@ -144,6 +144,8 @@ pub struct MessageView {
     pub file_name: Option<String>,
     /// A received document still waiting to be saved or discarded.
     pub file_unsaved: bool,
+    /// ADR-043: a document offered to us, not asked for or declined yet.
+    pub file_offered: bool,
     /// It can be answered and reacted to (ADR-025).
     pub pointable: bool,
     /// Ours: on a device of theirs, and seen by them (ADR-041).
@@ -514,10 +516,8 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
             Status::Failed(why) => why.clone(),
         },
         file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
-        file_unsaved: !m.mine
-            && m.file
-                .as_ref()
-                .is_some_and(|f| f.complete() && f.data.is_some()),
+        file_unsaved: !m.mine && m.file.as_ref().is_some_and(|f| f.complete() && f.held()),
+        file_offered: !m.mine && m.file.as_ref().is_some_and(|f| f.offered()),
         pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
         delivered: m.delivered,
         read: m.read,
@@ -1070,9 +1070,15 @@ impl Account {
         Ok(self.with(index, |e, i| e.react(i, msg as usize, reaction))??)
     }
 
-    /// Queues a document of at most 1 MiB (ADR-017).
+    /// Queues a document: up to 1 MiB it goes at once (ADR-017), up to
+    /// 25 MiB it is offered and goes when they ask (ADR-043).
     pub fn send_file(&self, index: u32, name: String, bytes: Vec<u8>) -> Result<()> {
         Ok(self.with(index, |e, i| e.send_file(i, &name, bytes))??)
+    }
+
+    /// Asks the contact for offered document `msg` (ADR-043).
+    pub fn download_file(&self, index: u32, msg: u32) -> Result<()> {
+        Ok(self.with(index, |e, i| e.download_file(i, msg as usize))??)
     }
 
     /// The bytes of received document `msg`, for the system "Save as" dialog.

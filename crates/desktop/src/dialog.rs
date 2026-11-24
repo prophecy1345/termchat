@@ -1325,8 +1325,10 @@ impl Chat {
                 }
                 ui.heading("Send a file");
                 ui.label(
-                    "Up to 1 MiB, end-to-end encrypted like a message. 200 KB takes about \
-                     10 s, 1 MiB about 3 min. The relay sees roughly how big it is.",
+                    "Up to 25 MiB, end-to-end encrypted like a message. Up to 1 MiB it goes \
+                     at once; a larger one is offered and goes when they download it, \
+                     25 MiB in about 10 min. Groups: up to 1 MiB. The relay sees roughly \
+                     how big it is.",
                 );
                 ui.horizontal(|ui| {
                     // The system's own Open dialog; the field stays for the keyboard.
@@ -1361,12 +1363,23 @@ impl Chat {
             }
             Dialog::SaveFile { m, folder, error } => {
                 let group = self.open_group();
-                let bytes = match (group, open) {
-                    (Some(g), _) => self.engine.group_file_bytes(g, *m),
-                    (None, Some(i)) => self.engine.file_bytes(i, *m),
+                // By name only: a document from the spool is opened on Save,
+                // not every frame (ADR-043).
+                let name = match (group, open) {
+                    (Some(g), _) => self.engine.group_file_bytes(g, *m).map(|(n, _)| n),
+                    (None, Some(i)) => self
+                        .engine
+                        .data
+                        .contacts
+                        .get(i)
+                        .and_then(|c| c.messages.get(*m))
+                        .filter(|x| !x.mine)
+                        .and_then(|x| x.file.as_ref())
+                        .filter(|f| f.complete() && f.held())
+                        .map(|f| f.name.clone()),
                     (None, None) => None,
                 };
-                let Some((name, _)) = bytes else {
+                let Some(name) = name else {
                     return false;
                 };
                 ui.heading("Save a file");
