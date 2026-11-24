@@ -41,6 +41,6 @@ While a file travels, both apps keep its bytes in a spool next to the encrypted 
 
 ## No image previews, on purpose
 
-We considered showing a small preview of an image before download. We decided against it: image decoders are where zero-click attacks on messengers have come from, and anyone who can message you could feed yours. A document in termchat.app stays opaque bytes.
+We considered showing a small preview of an image before download. We decided against it: image decoders are where zero-click attacks on messengers have come from, and anyone who can message you could feed yours. A document in termchat.app stays opaque bytes. (Update: since 0.30 a received image can be viewed on an explicit tap, decoded by our own Rust code: [how and why](/blog/view-images/).)
 
 The decision and its details are in [ADR-043](https://github.com/prophecy1345/termchat/blob/main/docs/adr/043-large-documents.md). How to send and save files in each app: [Messages and documents](/docs/messages/).
