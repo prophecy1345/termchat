@@ -108,3 +108,13 @@ Same as ADR-017 section 7: only on an explicit action, `create_new`, mode `0600`
 ## Dependencies
 
 None new.
+
+## Implementation notes (2026-11-24)
+
+Where the code differs from the text above:
+
+- **Spool IO lives in `engine`**, which already reads and writes the state file. `core` and `proto` stay without IO (rule 11). The records are sealed by `core::store::seal_record`: the state file's data key and AEAD, with the transfer id and part number as associated data. The state file's header is not part of the record, so a new password keeps the spool readable.
+- **Saving assembles the file in memory**, 25 MiB at most, from the checked records. Android gets the bytes through FFI, as for small files.
+- **Offers and parts go to the contact's primary device only**, and our own linked devices get nothing, not even the history line: a `FileOffer` is never put in a `Copy`.
+- **`termchat send-file` stays at 1 MiB**: a one-shot command cannot wait for the contact to ask. `termchat recv` does not show offers.
+- The spool folder is `<state file>.spool` next to the state file. Files no message needs are shredded on the next tick, so clearing or deleting a chat frees them too. WIPE shreds the folder.

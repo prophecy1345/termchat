@@ -222,6 +222,15 @@ characters, no `/`, `\` or NUL, and is not `.` or `..`. The receiver takes
 chunks of one file strictly in order, only from accepted contacts, and drops
 the transfer on a gap.
 
+A document of more than 1 MiB, up to 25 MiB, is offered first (ADR-043):
+`FileOffer { id, name, size, expires_in }`; the bytes go only after the
+receiver's `FileWant { id }`, as `FilePart { id, index, data }` of 64000 bytes
+each (the rest in the last one), in order. The receiver answers
+`FileAck { id, next }` every 16 parts and after the last; the sender keeps at
+most 64 parts unacknowledged. `FileStop { id }` from either side ends the
+transfer. Only between accepted contacts at `Understands` level 7, never in a
+group or a `Copy`.
+
 `QueueOffer` gives the contact the `send_id` of the queue we made for them; the
 URLs follow the invite's limits and must be `wss://` (or `ws://` for an onion
 address). From then on they write there. Meeting goes in this order:
@@ -294,7 +303,8 @@ keys and does not decrypt their messages.
 
 The serialized `Inner` is padded up to the nearest bucket: `0x80`, then zeros
 (ISO/IEC 7816-4). Buckets: **512, 4096 and 16384 bytes**. Larger than 16384 is a
-`TooLarge` error.
+`TooLarge` error. A fourth bucket, **65536 bytes**, carries `FilePart` and
+nothing else (ADR-043); anything else padded to it is rejected.
 
 - The `text` limit is **16000 bytes of UTF-8** (about 8000 Cyrillic or 16000
   Latin characters). The limit is in bytes, not characters, so the size is
@@ -450,9 +460,9 @@ fingerprint as one specific person: ~2^99 tries.
 
 | What | Value |
 |---|---|
-| WS frame size | 64 KiB |
-| Envelope `body` | 16384 plus Olm overhead, at most 20 KiB |
-| `Send` into one queue, from everyone | token bucket: 30 in a burst, then 1 every 2 seconds |
+| WS frame size | 72 KiB |
+| Envelope `body` | 65536 plus Olm overhead, at most 68 KiB |
+| `Send` into one queue, from everyone | token bucket: 30 in a burst, then 1 a second (ADR-043) |
 | Connections per IP | 50 (CGNAT: many people behind one IP) |
 | Any frame, per connection | token bucket: 2000 in a burst (a whole queue acknowledged after a reconnect), then 20 per second; past it the connection is closed |
 | New queues per IP | 20 per hour (over onion: a shared budget of 200 per hour, ADR-004) |

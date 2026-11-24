@@ -13,7 +13,7 @@ The Android app needs Android 8.0 or newer and no Google services. [Install](ins
 
 - **Chats:** archived chats first, then your contacts (pinned on top, then the newest), then your groups; tap a heading to fold its section. ⋮ holds **Your invite**, **Add contact**, **New group**, **Devices** (see [Devices](devices.md)), **Settings**, **What's new** and **Lock**, and on a new device **Link to my main device**; **+** also adds a contact.
 - **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the disappearing timer (a crumbling envelope: a tap moves to the next time and says it), the paperclip for a file, the field and **Send**.
-- **Share from another app:** pick termchat.app in the system's share sheet, then a chat or group. Text goes into the message field for you to send; a file (up to 1 MiB) is sent as soon as you pick the chat. termchat.app never opens files.
+- **Share from another app:** pick termchat.app in the system's share sheet, then a chat or group. Text goes into the message field for you to send; a file (up to 25 MiB in a chat, 1 MiB in a group) is sent as soon as you pick the chat. termchat.app never opens files.
 - **Long press** a chat or group in the list for its menu without opening it: **Rename**, **Mute**, **Pin**, **Archive**, **Block** and **Delete** for a contact, **Mute** and **Leave** for a group.
 - **Long press** a message to answer, react, copy it, and edit or delete your own; see [Messages](messages.md).
 - **Your invite** shows a QR code for another phone or the desktop app to scan; **Add contact** has **Scan QR code**. See [Contacts](contacts.md).

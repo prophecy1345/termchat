@@ -76,7 +76,10 @@ that (ADR-023).
     queues are one person's, and so does the "one connection for all
     contacts" setting, which is off by default;
   - **size** rounded up to a bucket; a document (ADR-017) goes as a run of full
-    16 KB messages, so its size shows to about 16 KB;
+    16 KB messages, so its size shows to about 16 KB; a document over 1 MiB
+    (ADR-043) goes as 64 KB parts, a bucket used for nothing else, so the
+    relay knows a large document is moving, its size to about 64 KB, and
+    when the receiver asked for it;
   - the number of contacts, roughly, from the number of connections that
     come and go together at unlock;
   - **a contact's own relay**: a contact may give an address on a relay they
