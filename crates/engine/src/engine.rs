@@ -287,6 +287,8 @@ pub struct Engine {
     chunk_budget: (f64, Instant),
     /// The same for parts of documents sent on request (ADR-043).
     large_budget: (f64, Instant),
+    /// The last part sent, for relays that pace parts with text.
+    slow_part_at: Instant,
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
@@ -683,6 +685,7 @@ impl Engine {
             gone: false,
             chunk_budget: (FILE_BURST, Instant::now()),
             large_budget: (large::LARGE_BURST, Instant::now()),
+            slow_part_at: Instant::now(),
             chunks: BTreeMap::new(),
             heartbeat: None,
             unreachable: BTreeSet::new(),
@@ -2941,7 +2944,13 @@ impl Engine {
         if bytes.is_empty() {
             return Err("the file is empty".into());
         }
-        let busy = |m: &Msg| m.mine && m.file.as_ref().is_some_and(FileMsg::held);
+        // ADR-043: an offer nobody has asked for yet does not hold the line.
+        let busy = |m: &Msg| {
+            m.mine
+                && m.file
+                    .as_ref()
+                    .is_some_and(|f| f.held() && f.large.as_ref().is_none_or(|l| l.wanted))
+        };
         if c.messages.iter().any(busy) {
             return Err("wait until the previous file is sent".into());
         }

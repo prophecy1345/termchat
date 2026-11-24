@@ -1327,7 +1327,7 @@ impl Chat {
                 ui.label(
                     "Up to 25 MiB, end-to-end encrypted like a message. Up to 1 MiB it goes \
                      at once; a larger one is offered and goes when they download it, \
-                     25 MiB in about 10 min. Groups: up to 1 MiB. The relay sees roughly \
+                     25 MiB in about 2 min. Groups: up to 1 MiB. The relay sees roughly \
                      how big it is.",
                 );
                 ui.horizontal(|ui| {

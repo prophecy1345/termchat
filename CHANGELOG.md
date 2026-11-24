@@ -3,6 +3,19 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.30.0
+
+- View a received image on the desktop and Android (ADR-044). A PNG,
+  JPEG, GIF or WebP waiting unsaved gets View; only that click decodes it,
+  inside termchat.app with limits, never through a system decoder. Zoom
+  with the wheel or a pinch. No thumbnails in the chat, nothing written to
+  disk, the first frame of a GIF only. The terminal shows no images.
+- Large documents are about five times faster: 25 MiB in about 2 minutes.
+  The relay now paces parts of a large document apart from text
+  (ADR-043, amendment 1).
+- An offer nobody has answered yet no longer holds back the next file to
+  the same contact.
+
 ## 0.29.0
 
 - Documents up to 25 MiB (ADR-043). Above 1 MiB the contact first gets an

@@ -697,8 +697,14 @@ impl FileMsg {
     }
 
     /// ADR-044: a received image that can be viewed now: whole and held.
+    /// Bytes in the state file are checked here, so a file that came before
+    /// this version counts too; a spooled one by the mark set on arrival.
     pub fn viewable(&self) -> bool {
-        self.picture && self.complete() && self.held()
+        let image = match &self.data {
+            Some(bytes) => crate::picture::is_image(bytes),
+            None => self.picture,
+        };
+        image && self.complete() && self.held()
     }
 
     /// ADR-043: an offer the receiver has not answered yet.
@@ -864,9 +870,9 @@ fn take_into(
         name: name.clone(),
         size,
         done: 1,
-        picture: crate::picture::is_image(&data),
         data: Some(data),
         large: None,
+        picture: false,
     };
     let whole = file.complete();
     msgs.push(Msg {

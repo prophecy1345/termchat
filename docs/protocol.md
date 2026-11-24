@@ -463,6 +463,7 @@ fingerprint as one specific person: ~2^99 tries.
 | WS frame size | 72 KiB |
 | Envelope `body` | 65536 plus Olm overhead, at most 68 KiB |
 | `Send` into one queue, from everyone | token bucket: 30 in a burst, then 1 a second (ADR-043) |
+| `Send` of a body over 20 KiB (a `FilePart`) into one queue | a budget of its own: 30 in a burst, then 4 a second (ADR-043 amendment 1) |
 | Connections per IP | 50 (CGNAT: many people behind one IP) |
 | Any frame, per connection | token bucket: 2000 in a burst (a whole queue acknowledged after a reconnect), then 20 per second; past it the connection is closed |
 | New queues per IP | 20 per hour (over onion: a shared budget of 200 per hour, ADR-004) |

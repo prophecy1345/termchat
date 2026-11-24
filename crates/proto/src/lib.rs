@@ -31,6 +31,9 @@ pub const MAX_LARGE_FILE_BYTES: u32 = 25 << 20;
 pub const LARGE_CHUNK: usize = 64_000;
 /// Parts the sender may have out before the receiver's `FileAck` (ADR-043).
 pub const LARGE_WINDOW: u16 = 64;
+/// Olm ciphertext of the 16384 bucket plus pre-key overhead: a body above
+/// this can only be a `FilePart` (ADR-043, amendment 1).
+pub const SMALL_BODY_BYTES: usize = 20 * 1024;
 /// Olm ciphertext of the largest bucket plus pre-key overhead.
 pub const MAX_BODY_BYTES: usize = 68 * 1024;
 /// One WebSocket frame (protocol.md, section 11).

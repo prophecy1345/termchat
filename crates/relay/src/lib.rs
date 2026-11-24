@@ -21,7 +21,7 @@ use axum::response::Response;
 use axum::routing::get;
 use termchat_proto::{
     ClientFrame, Envelope, ErrorCode, MAX_FRAME_BYTES, MAX_GROUP_MEMBERS, QueueId, QueueToken,
-    ServerFrame, VERSION, VERSION_HEADER,
+    SMALL_BODY_BYTES, ServerFrame, VERSION, VERSION_HEADER,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, mpsc};
@@ -57,6 +57,9 @@ pub struct Limits {
     pub onion_queues: Rate,
     /// Writes into one queue, whoever writes: the relay does not know senders.
     pub sends_per_queue: Rate,
+    /// ADR-043 amendment 1: envelopes above `SMALL_BODY_BYTES`, parts of a
+    /// large document, on a budget of their own so text keeps its own.
+    pub parts_per_queue: Rate,
     /// Each `PublishKeys` costs up to 100 inserts; a client needs a handful per day.
     pub publishes_per_queue: Rate,
     pub claims_per_connection: Rate,
@@ -114,11 +117,16 @@ impl Default for Limits {
             queues_per_ip: Rate::per(20.0, HOUR),
             onion_connections: 2000,
             onion_queues: Rate::per(200.0, HOUR),
-            // ADR-043: one a second carries a 25 MiB document in ~10 min;
+            // ADR-043: parts of large documents have `parts_per_queue`;
             // the queue quota, not this, keeps a queue from being flooded.
             sends_per_queue: Rate {
                 burst: 30.0,
                 per_sec: 1.0,
+            },
+            // 25 MiB in about two minutes; the queue quota bounds the bytes.
+            parts_per_queue: Rate {
+                burst: 30.0,
+                per_sec: 4.0,
             },
             publishes_per_queue: Rate::per(30.0, HOUR),
             claims_per_connection: Rate::per(30.0, HOUR),
@@ -235,6 +243,7 @@ struct Relay {
 /// Per-queue state that never touches the disk (ADR-005).
 struct QueueMem {
     sends: Bucket,
+    parts: Bucket,
     publishes: Bucket,
     claimed: Bucket,
     reports: Bucket,
@@ -246,6 +255,7 @@ impl QueueMem {
     fn new(l: &Limits, now: Instant) -> Self {
         Self {
             sends: Bucket::full(l.sends_per_queue, now),
+            parts: Bucket::full(l.parts_per_queue, now),
             publishes: Bucket::full(l.publishes_per_queue, now),
             claimed: Bucket::full(l.claims_per_queue, now),
             reports: Bucket::full(l.reports_per_queue, now),
@@ -860,7 +870,11 @@ fn put(
         .mem
         .entry(to)
         .or_insert_with(|| QueueMem::new(limits, now));
-    if !q.sends.take(limits.sends_per_queue, now) {
+    let paced = match envelope.body.len() > SMALL_BODY_BYTES {
+        true => q.parts.take(limits.parts_per_queue, now),
+        false => q.sends.take(limits.sends_per_queue, now),
+    };
+    if !paced {
         return Ok(Some(ErrorCode::RateLimited));
     }
     let size = envelope.body.len() as u64;

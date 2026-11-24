@@ -19,9 +19,13 @@ const RECORD: usize = LARGE_CHUNK + RECORD_OVERHEAD;
 /// The receiver confirms after this many parts, and after the last.
 const ACK_EVERY: u16 = 16;
 /// Parts go in a burst of this many, then one per `LARGE_EVERY` seconds,
-/// below the relay's one a second so texts still fit.
+/// below the relay's four a second for parts (ADR-043 amendment 1).
 pub(super) const LARGE_BURST: f64 = 10.0;
-const LARGE_EVERY: f64 = 1.5;
+const LARGE_EVERY: f64 = 0.3;
+/// A relay before `FAST_RELAY` counts parts with text at one a second:
+/// there a part goes at most this often, so texts still fit.
+const SLOW_EVERY: Duration = Duration::from_millis(1500);
+const FAST_RELAY: (u32, u32, u32) = (0, 30, 0);
 /// An offer nobody answered is dropped on both sides.
 const OFFER_TTL: u64 = 7 * 86_400;
 /// The sender's offers waiting or moving, and their bytes, at once.
@@ -139,14 +143,32 @@ impl Engine {
                         .and_then(|f| f.large.as_ref())
                         .is_some_and(|l| l.held && !l.stopped)
             };
-            let Some(m) = c.messages.iter().position(ours) else {
+            // Every offer not out yet goes; then parts of the one asked for.
+            let queued: Vec<usize> = (0..c.messages.len())
+                .filter(|&m| ours(&c.messages[m]) && c.messages[m].status == Status::Queued)
+                .collect();
+            for m in queued {
+                sent |= self.send_offer(i, m);
+            }
+            let wanted = |m: &Msg| {
+                ours(m)
+                    && m.file
+                        .as_ref()
+                        .and_then(|f| f.large.as_ref())
+                        .is_some_and(|l| l.wanted)
+            };
+            let Some(m) = self.data.contacts[i].messages.iter().position(wanted) else {
                 continue;
             };
-            if c.messages[m].status == Status::Queued {
-                sent |= self.send_offer(i, m);
-                continue;
-            }
+            let relay = self.out_addr(i).map(|a| a.relay_url.clone());
+            let fast = relay
+                .and_then(|r| self.live(&key, &r))
+                .and_then(|l| l.version)
+                .is_some_and(|v| v >= FAST_RELAY);
             while self.large_budget.0 >= 1.0 {
+                if !fast && self.slow_part_at.elapsed() < SLOW_EVERY {
+                    break;
+                }
                 let msg = &self.data.contacts[i].messages[m];
                 let Some(f) = msg.file.as_ref() else { break };
                 let Some(l) = f.large.as_ref() else { break };
@@ -166,6 +188,7 @@ impl Engine {
                     f.done += 1;
                 }
                 self.large_budget.0 -= 1.0;
+                self.slow_part_at = Instant::now();
                 sent = true;
                 let body = Body::FilePart {
                     id,

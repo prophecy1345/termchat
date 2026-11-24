@@ -1,0 +1,1 @@
+View a received image: tap View under a picture you got, zoom with a pinch. Only that tap decodes it, inside the app. Large documents are about five times faster: 25 MiB in about 2 minutes.

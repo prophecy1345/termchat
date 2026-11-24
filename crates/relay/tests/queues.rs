@@ -369,6 +369,51 @@ async fn writes_are_limited_per_queue_whoever_writes() {
     );
 }
 
+/// ADR-043 amendment 1: parts of a large document have a budget of their
+/// own, so they neither use up nor wait for the one text needs.
+#[tokio::test]
+async fn parts_are_paced_apart_from_text() {
+    let slow = Rate {
+        burst: 2.0,
+        per_sec: 0.001,
+    };
+    let url = start(Limits {
+        sends_per_queue: slow,
+        parts_per_queue: slow,
+        ..Limits::default()
+    })
+    .await;
+    let mut owner = Ws::new(&url).await;
+    let q = owner.create().await;
+    let mut w = Ws::new(&url).await;
+    let part = |client_id| ClientFrame::Send {
+        client_id,
+        send_id: q.send_id,
+        envelope: Envelope {
+            version: termchat_proto::VERSION,
+            olm_type: 1,
+            body: vec![7; termchat_proto::SMALL_BODY_BYTES + 1],
+        },
+    };
+    for id in 1..=2 {
+        w.send(part(id)).await;
+        assert_eq!(w.recv().await, ServerFrame::Accepted { client_id: id });
+    }
+    w.send(part(3)).await;
+    assert_eq!(w.recv().await, err(Some(3), ErrorCode::RateLimited));
+    // Text still has its whole budget, and then runs out on its own.
+    for id in 4..=5 {
+        assert_eq!(
+            w.put(id, q.send_id, 1).await,
+            ServerFrame::Accepted { client_id: id }
+        );
+    }
+    assert_eq!(
+        w.put(6, q.send_id, 1).await,
+        err(Some(6), ErrorCode::RateLimited)
+    );
+}
+
 #[tokio::test]
 async fn queue_creation_is_limited_per_ip() {
     let url = start(Limits {

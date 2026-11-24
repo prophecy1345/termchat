@@ -44,7 +44,7 @@ Send a message or a received document on to another chat or group. It goes as a 
 
 ## Documents
 
-Files of up to 25 MiB, end-to-end encrypted like messages. Up to 1 MiB a file goes at once: 200 KB takes about 10 seconds, 1 MiB about 3 minutes. A larger one is first offered, and its bytes go only when the contact downloads it: 25 MiB takes about 10 minutes, and nobody gets a large file they did not ask for. Both of you need 0.29.0. Files work only between accepted contacts, and in groups (there up to 1 MiB).
+Files of up to 25 MiB, end-to-end encrypted like messages. Up to 1 MiB a file goes at once: 200 KB takes about 10 seconds, 1 MiB about 3 minutes. A larger one is first offered, and its bytes go only when the contact downloads it: 25 MiB takes about 2 minutes (about 10 with a relay older than 0.30.0), and nobody gets a large file they did not ask for. Both of you need 0.29.0 or later. Files work only between accepted contacts, and in groups (there up to 1 MiB).
 
 - **Send:** **Ctrl+L** in the terminal (type the path); in the desktop app **File**, then **Choose…** for the system dialog, or drop a file on the window; the paperclip on Android. In chats and in groups alike.
 - **Offered:** a file over 1 MiB first shows as "offered". **Ctrl+G** in the terminal asks for it (type `DISCARD` to decline instead); the desktop app and Android have **Download** and **Decline** under it. An offer nobody answers is dropped after 7 days.

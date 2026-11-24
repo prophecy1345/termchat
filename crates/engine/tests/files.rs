@@ -210,16 +210,32 @@ async fn large_documents_go_only_when_asked_and_leave_nothing_behind() {
     })
     .await;
 
-    // Declined: the sender's copy goes, both lines say so.
+    // Declined: the sender's copy goes, both lines say so. An offer
+    // waiting for an answer does not hold back the next file.
     bob.send_file(0, "photos.zip", vec![9; 1_100_000]).unwrap();
-    pump(&mut alice, &mut bob, |a, _| a.unsaved_file(0).is_some()).await;
-    let m = alice.unsaved_file(0).unwrap();
-    alice.discard_file(0, m);
-    pump(&mut alice, &mut bob, |_, b| {
-        sent(b).is_some_and(|f| !f.held())
+    bob.send_file(0, "note.txt", b"meanwhile".to_vec()).unwrap();
+    let named = |e: &Engine, name: &str| {
+        e.data.contacts[0]
+            .messages
+            .iter()
+            .position(|m| m.text == name)
+    };
+    pump(&mut alice, &mut bob, |a, _| {
+        named(a, "photos.zip").is_some() && named(a, "note.txt").is_some()
     })
     .await;
-    assert!(sent(&bob).unwrap().label().ends_with("not taken"));
+    let m = named(&alice, "photos.zip").unwrap();
+    alice.discard_file(0, m);
+    let zip = |b: &Engine| {
+        b.data.contacts[0].messages[named(b, "photos.zip").unwrap()]
+            .file
+            .clone()
+    };
+    pump(&mut alice, &mut bob, |_, b| {
+        zip(b).is_some_and(|f| !f.held())
+    })
+    .await;
+    assert!(zip(&bob).unwrap().label().ends_with("not taken"));
     assert_eq!(spooled(&dir, "bob"), 0);
     assert!(alice.download_file(0, m).is_err());
 
@@ -235,8 +251,21 @@ async fn large_documents_go_only_when_asked_and_leave_nothing_behind() {
     )
     .unwrap();
     bob.send_file(0, "photo.dat", png).unwrap();
-    pump(&mut alice, &mut bob, |a, _| a.unsaved_file(0).is_some()).await;
-    let m = alice.unsaved_file(0).unwrap();
+    let whole = |a: &Engine| {
+        named(a, "photo.dat").is_some_and(|m| {
+            a.data.contacts[0].messages[m]
+                .file
+                .as_ref()
+                .is_some_and(|f| f.complete())
+        })
+    };
+    pump(&mut alice, &mut bob, |a, _| whole(a)).await;
+    let m = named(&alice, "photo.dat").unwrap();
+    assert!(
+        alice
+            .image_bytes(0, named(&alice, "note.txt").unwrap())
+            .is_err()
+    );
     let p = termchat_engine::picture::decode(&alice.image_bytes(0, m).unwrap()).unwrap();
     assert_eq!((p.width, p.height, p.rgba.len()), (5, 4, 80));
     let first = alice.data.contacts[0]
