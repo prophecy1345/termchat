@@ -109,6 +109,16 @@ Same as ADR-017 section 7: only on an explicit action, `create_new`, mode `0600`
 
 None new.
 
+## Amendment 1 (2026-11-24): parts get their own pace on the relay
+
+Accepted by the owner, 2026-11-24. 25 MiB in about 10 minutes proved too slow. Section 4 changes:
+
+- **The relay keeps a second budget per queue for parts**: an envelope whose body is larger than 20 KiB (`SMALL_BODY_BYTES`, the largest body the three small buckets produce) is a part, and draws from `parts_per_queue`: **30 in a burst, then 4 a second**. Every other envelope draws from `sends_per_queue` as before (30, then 1 a second). Parts no longer use up the budget text needs.
+- The relay cannot tell a real part from any other envelope of that size; a sender who abuses the faster pace still meets the unchanged queue quota (10 MiB), and the sender's window keeps an honest transfer at 4 MiB of it.
+- **The client sends one part every 0.3 s** to a relay of 0.30.0 or later, and keeps one every 1.5 s to an older one, which still counts parts against its single budget.
+- 25 MiB takes about **2 minutes**, 4 MiB about 20 seconds.
+- Metadata: unchanged; parts were already recognisable by their size.
+
 ## Implementation notes (2026-11-24)
 
 Where the code differs from the text above:
