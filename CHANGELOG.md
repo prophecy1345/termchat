@@ -3,6 +3,17 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.31.0
+
+- Incognito invite: the apps say a new identity is being made and clear
+  that line once its invite opens; on Android the button waits meanwhile
+  instead of seeming to do nothing.
+- `termchat hook`: the same alert on the same route within 10 minutes is
+  counted instead of sent again; the next one sent says how many repeats
+  were held back.
+- `deploy/cli.Dockerfile`: a 15 MB image of the command-line client for a
+  Compose sidecar or a Kubernetes CronJob.
+
 ## 0.30.0
 
 - View a received image on the desktop and Android (ADR-044). A PNG,

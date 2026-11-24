@@ -1,0 +1,1 @@
+Incognito invites now say that a new identity is being made, and the button waits until its invite opens.
