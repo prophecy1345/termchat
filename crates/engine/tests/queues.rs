@@ -201,9 +201,10 @@ async fn a_contact_from_before_queues_needs_an_invite_and_keeps_its_history() {
     pump(&mut alice, &mut bob, |_, b| b.data.invite_queue.is_some()).await;
     let invite = bob.invite().unwrap();
     alice.add(&invite, false).unwrap();
+    // Bob and Notes (ADR-046).
     assert_eq!(
         alice.data.contacts.len(),
-        1,
+        2,
         "the same contact, not a new one"
     );
     pump(&mut alice, &mut bob, |a, b| {

@@ -970,6 +970,28 @@ async fn notes_go_to_our_other_device_and_nowhere_else() {
     })
     .await;
 
+    // ADR-046 amendment 1: a star follows the note to the other device.
+    e[0].send(phone, "read later #reading").unwrap();
+    pump(&mut e, |e| {
+        notes(&e[1]).iter().any(|t| t == "read later #reading")
+    })
+    .await;
+    let m = e[0].data.contacts[phone]
+        .messages
+        .iter()
+        .position(|m| m.text == "read later #reading")
+        .unwrap();
+    e[0].toggle_star(m).unwrap();
+    pump(&mut e, |e| {
+        let i = e[1].notes().unwrap();
+        e[1].data.contacts[i]
+            .messages
+            .iter()
+            .any(|m| m.text == "read later #reading" && m.my_reaction.is_some())
+    })
+    .await;
+    assert_eq!(e[1].note_tags(), [("reading".to_string(), 1)]);
+
     // Bob, a contact, has seen none of it.
     let alice = e[0].me();
     let i = e[2].index(&alice).unwrap();

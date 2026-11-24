@@ -84,17 +84,21 @@ async fn three(dir: &Path) -> [Box<Engine>; 3] {
     for n in [1, 2] {
         let invite = e[0].invite().unwrap();
         e[n].add(&invite, false).unwrap();
-        let known = e[0].data.contacts.len() + 1;
-        pump(&mut e, |e| e[0].data.contacts.len() == known).await;
-        e[0].accept(known - 1);
+        let request = |x: &Engine| x.data.contacts.iter().position(|c| x.is_request(&c.key));
+        pump(&mut e, |e| request(&e[0]).is_some()).await;
+        let i = request(&e[0]).unwrap();
+        e[0].accept(i);
     }
     let level = termchat_core::proto::UNDERSTANDS;
-    pump(&mut e, |e| {
-        e[0].data.contacts.iter().all(|c| c.understands >= level)
-            && e[1].data.contacts.iter().all(|c| c.understands >= level)
-            && e[2].data.contacts.iter().all(|c| c.understands >= level)
-    })
-    .await;
+    // Notes (ADR-046) is no one to hear a level from.
+    let ready = |x: &Engine| {
+        x.data
+            .contacts
+            .iter()
+            .all(|c| c.notes || c.understands >= level)
+    };
+    pump(&mut e, |e| ready(&e[0]) && ready(&e[1]) && ready(&e[2])).await;
+
     e
 }
 

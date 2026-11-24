@@ -1030,6 +1030,14 @@ impl Data {
         self.contacts.iter().take_while(|c| !c.own).count()
     }
 
+    /// The people without Notes (ADR-046): Notes is always the last of them.
+    pub fn persons(&self) -> usize {
+        self.contacts
+            .iter()
+            .take_while(|c| !c.own && !c.notes)
+            .count()
+    }
+
     /// Adds a person before Notes and our own devices; their index.
     pub fn push_person(&mut self, c: Contact) -> usize {
         let at = self

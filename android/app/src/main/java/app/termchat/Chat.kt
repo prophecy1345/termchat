@@ -10,6 +10,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +21,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -115,6 +118,8 @@ fun Chat(m: Model, index: UInt) {
     var saving by remember { mutableStateOf<UInt?>(null) }
     // ADR-044: the received image open in the viewer.
     var viewing by remember { mutableStateOf<UInt?>(null) }
+    // ADR-046 amendment 1: which notes Notes shows.
+    var noteFilter by rememberSaveable { mutableStateOf("all") }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val msg = saving ?: return@rememberLauncherForActivityResult
         saving = null
@@ -146,7 +151,19 @@ fun Chat(m: Model, index: UInt) {
                 IconTap("close", "Close the search") { query = null }
             }
         }
-        val all = messages.withIndex().toList()
+        // ADR-046 amendment 1: the filters, and only the notes they show.
+        if (c.notes) {
+            val tags = runCatching { a.noteTags() }.getOrDefault(emptyList())
+            val chips = listOf("all" to "All", "untagged" to "Untagged", "favorites" to "Favorites", "links" to "Links") +
+                tags.map { "#${it.tag}" to "#${it.tag} ${it.count}" }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                chips.forEach { (key, label) ->
+                    Flat(label, color = if (noteFilter == key) Tc.lime else Tc.dim) { noteFilter = key }
+                }
+            }
+        }
+        val kept = if (c.notes) runCatching { a.notesShown(noteFilter) }.getOrDefault(emptyList()).map { it.toInt() }.toSet() else null
+        val all = messages.withIndex().toList().filter { kept == null || it.index in kept }
         val shown = query?.takeIf { it.isNotBlank() }?.let { q ->
             all.filter { !it.value.system && it.value.text.contains(q.trim(), ignoreCase = true) }
         } ?: all
@@ -178,7 +195,7 @@ fun Chat(m: Model, index: UInt) {
                     runCatching { a.downloadFile(index, at) }.onFailure { m.note = it.message ?: "$it" }
                     m.changed()
                 }
-                Bubble(msg, c.rich, act, download = download, view = { viewing = at }) { keep ->
+                Bubble(msg, c.rich, act, download = download, view = { viewing = at }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null) { keep ->
                     if (keep) {
                         saving = at
                         save.launch(msg.fileName ?: "file")
@@ -419,7 +436,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, star: (() -> Unit)? = null, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
@@ -462,7 +479,8 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; act(what) })
                 }
                 if (rich && msg.pointable) {
-                    Row(Modifier.padding(horizontal = 8.dp)) {
+                    // In Notes the star stands for our reaction (ADR-046 amendment 1).
+                    if (star == null) Row(Modifier.padding(horizontal = 8.dp)) {
                         REACTIONS.indices.forEach { r ->
                             val on = msg.myReaction?.toInt() == r
                             Box(
@@ -475,6 +493,8 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     }
                     item("Answer", "answer")
                 }
+                // ADR-046 amendment 1: in Notes, our reaction is a star.
+                star?.let { go -> if (msg.mine && !msg.deleted) DropdownMenuItem({ Text(if (msg.myReaction != null) "Unstar" else "Star", style = Tc.mono) }, { menu = false; go() }) }
                 if (msg.fileName == null) item("Copy", "copy")
                 if (msg.forwardable) item("Forward", "forward")
                 if (rich && msg.pointable && msg.mine) {
@@ -510,7 +530,10 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
             if (msg.mine && msg.status == "sent" && !msg.system) {
                 PixelIcon(if (msg.delivered || msg.read) "checks" else "check", if (msg.read) Tc.lime else Tc.dim, 12.dp)
             }
-            if (msg.counts.isNotEmpty()) {
+            if (star != null) {
+                // ADR-046 amendment 1: a note is starred, not reacted to.
+                if (msg.myReaction != null) Text("starred", style = Tc.small.copy(color = Tc.lime))
+            } else if (msg.counts.isNotEmpty()) {
                 // In a group: each reaction once, with how many chose it.
                 msg.counts.forEach {
                     Sprite(it.reaction.toInt(), 18.dp)

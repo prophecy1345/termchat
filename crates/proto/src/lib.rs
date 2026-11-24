@@ -664,7 +664,7 @@ pub enum Body {
         invite: Invite,
     },
     /// ADR-046: a note to self, from one of our devices to another: a
-    /// `Message`, `Edit`, `Delete` or `File` chunk.
+    /// `Message`, `Edit`, `Delete`, `File` chunk or `React` (a star).
     Note {
         body: Box<Body>,
     },
@@ -1274,9 +1274,12 @@ fn check_body(body: &Body) -> Result<(), Error> {
         }
         // ADR-046: what a note can be, one level deep.
         Body::Note { body } => match **body {
-            Body::Message { .. } | Body::Edit { .. } | Body::Delete { .. } | Body::File { .. } => {
-                check_body(body)
-            }
+            // ADR-046 amendment 1: a reaction stars a note.
+            Body::Message { .. }
+            | Body::Edit { .. }
+            | Body::Delete { .. }
+            | Body::File { .. }
+            | Body::React { .. } => check_body(body),
             _ => Err(Error::Malformed),
         },
         Body::IntroAsk { nickname, .. } => check_nickname(nickname),

@@ -10,7 +10,7 @@ use termchat_core::proto::{Ed25519Key, REACTIONS, Ref};
 
 use crate::data::{self, Contact, Group, Msg};
 use crate::engine::{
-    self, Engine, Happened, IntroAnswer, PendingIntro, Setup, Unlocked, next_timer,
+    self, Engine, Happened, IntroAnswer, NoteFilter, PendingIntro, Setup, Unlocked, next_timer,
 };
 use crate::form::{self, Action, Form, Kind};
 use crate::input::Input;
@@ -232,6 +232,8 @@ pub struct Main {
     pub status: String,
     /// The message picked with Shift+Up or Ctrl+N, by index (ADR-025).
     pub picked: Option<usize>,
+    /// ADR-046 amendment 1: which notes Notes shows.
+    pub note_filter: NoteFilter,
     pub compose: Compose,
     pub idle: Idle,
     path: PathBuf,
@@ -513,10 +515,10 @@ impl App {
         let row = |r: ratatui::layout::Rect| hits.list_offset + usize::from(at.y - r.y);
         match e.kind {
             MouseEventKind::Down(MouseButton::Left) if hits.list.contains(at) => {
-                m.select(row(hits.list))
+                m.select(m.from_row(row(hits.list)))
             }
             MouseEventKind::Down(MouseButton::Right) if hits.list.contains(at) => {
-                m.select(row(hits.list));
+                m.select(m.from_row(row(hits.list)));
                 if m.current().is_some() {
                     m.popup = Some(Popup::Actions(0));
                 }
@@ -531,10 +533,8 @@ impl App {
                     m.status = format!("cannot save settings: {e}");
                 }
             }
-            MouseEventKind::ScrollUp if hits.list.contains(at) => {
-                m.select(m.selected.saturating_sub(1))
-            }
-            MouseEventKind::ScrollDown if hits.list.contains(at) => m.select(m.selected + 1),
+            MouseEventKind::ScrollUp if hits.list.contains(at) => m.select(m.step(-1)),
+            MouseEventKind::ScrollDown if hits.list.contains(at) => m.select(m.step(1)),
             MouseEventKind::ScrollUp => scroll(m, 3, &hits),
             MouseEventKind::ScrollDown => scroll(m, -3, &hits),
             _ => {}
@@ -659,6 +659,7 @@ impl Main {
             alerts: Vec::new(),
             status: String::new(),
             picked: None,
+            note_filter: NoteFilter::All,
             compose: Compose::New,
             idle: Idle::default(),
             path: path.to_owned(),
@@ -744,6 +745,31 @@ impl Main {
         self.stash_draft();
         self.engine.persist();
         self.absorb();
+    }
+
+    /// ADR-046 amendment 1: Notes is drawn on top of the list, though its
+    /// index is the last of the people. Index to row on screen.
+    pub fn to_row(&self, i: usize) -> usize {
+        match self.engine.notes() {
+            Some(n) if i == n => 0,
+            Some(n) if i < n => i + 1,
+            _ => i,
+        }
+    }
+
+    /// Row on screen to index.
+    pub fn from_row(&self, r: usize) -> usize {
+        match self.engine.notes() {
+            Some(n) if r == 0 => n,
+            Some(n) if r <= n => r - 1,
+            _ => r,
+        }
+    }
+
+    /// The index `d` rows down (up if negative) from the selected one.
+    fn step(&self, d: isize) -> usize {
+        let row = self.to_row(self.selected).saturating_add_signed(d);
+        self.from_row(row)
     }
 
     /// The unsent text of the open chat or group, where its draft is kept.
@@ -866,8 +892,8 @@ impl Main {
             (false, KeyCode::Char('?')) if self.input.is_empty() => {
                 self.popup = Some(pager(Doc::Keys))
             }
-            (false, KeyCode::Up) => self.select(self.selected.saturating_sub(1)),
-            (false, KeyCode::Down) => self.select(self.selected + 1),
+            (false, KeyCode::Up) => self.select(self.step(-1)),
+            (false, KeyCode::Down) => self.select(self.step(1)),
             (true, KeyCode::Char('a')) => self.popup = Some(Popup::Add(Input::default())),
             (true, KeyCode::Char('p')) => self.popup = Some(Popup::Menu(0)),
             (true, KeyCode::Char('o')) => match self.engine.invite() {
@@ -1355,6 +1381,17 @@ impl Main {
         }
         // ADR-046: Notes is no one to verify, introduce, block, report or delete.
         if c.notes {
+            let label = |f: &NoteFilter| match f {
+                NoteFilter::All => "all".to_string(),
+                NoteFilter::Untagged => "untagged".into(),
+                NoteFilter::Favorites => "favorites".into(),
+                NoteFilter::Links => "links".into(),
+                NoteFilter::Tag(t) => format!("#{t}"),
+            };
+            items.push(('f', format!("filter: {} (next)", label(&self.note_filter))));
+            if self.picked.is_some() {
+                items.push(('s', "star or unstar the picked note".into()));
+            }
             items.push(('t', format!("disappearing: {}", timer_step(c.expires_in))));
             items.extend(self.place_rows());
             return items;
@@ -1377,6 +1414,33 @@ impl Main {
         ]);
         items.extend(self.place_rows());
         items
+    }
+
+    /// ADR-046 amendment 1: `f` steps to the next filter, `s` stars the
+    /// picked note.
+    fn note_key(&mut self, key: char) {
+        if key == 's' {
+            if let Some(m) = self.picked
+                && let Err(e) = self.engine.toggle_star(m)
+            {
+                self.status = e;
+            }
+            return;
+        }
+        let mut all = vec![NoteFilter::All, NoteFilter::Untagged, NoteFilter::Favorites];
+        all.push(NoteFilter::Links);
+        all.extend(
+            self.engine
+                .note_tags()
+                .into_iter()
+                .map(|(t, _)| NoteFilter::Tag(t)),
+        );
+        let at = all
+            .iter()
+            .position(|f| *f == self.note_filter)
+            .map_or(0, |i| i + 1);
+        self.note_filter = all.get(at).cloned().unwrap_or(NoteFilter::All);
+        self.picked = None;
     }
 
     /// ADR-045: contacts the open one can be introduced to.
@@ -1524,6 +1588,10 @@ impl Main {
                 Ok(None) => None,
                 Ok(Some(c @ ('i' | 'z'))) => {
                     self.place(c);
+                    None
+                }
+                Ok(Some(c @ ('f' | 's'))) if self.current().is_some_and(|c| c.notes) => {
+                    self.note_key(c);
                     None
                 }
                 Ok(Some(c @ ('a' | 'c' | 'n' | 'o'))) => self.intro_key(c),

@@ -27,7 +27,10 @@ fun Chats(m: Model) {
     val a = m.account ?: return
     @Suppress("UNUSED_EXPRESSION") m.version
     // Archived first under their own heading, then pinned on top of the rest (owner, 2026-11-22).
-    val (archived, contacts) = a.contacts()
+    // ADR-046 amendment 1: Notes has a row of its own, above the people.
+    val all = a.contacts()
+    val notes = all.firstOrNull { it.notes }
+    val (archived, contacts) = all.filter { !it.notes }
         .sortedWith(compareBy<ContactView> { !it.pinned }.thenByDescending { it.lastAt })
         .partition { it.archived }
     val groups = a.groups().sortedByDescending { it.lastAt }
@@ -144,6 +147,7 @@ fun Chats(m: Model) {
                     Line()
                 }
             }
+            notes?.let { n -> item(key = "notes") { row(n); Line() } }
             if (archived.isNotEmpty()) {
                 heading("ARCHIVED", archived.size, foldArchived) { foldArchived = !foldArchived }
                 if (!foldArchived) items(archived, key = { it.fingerprint }) { row(it) }

@@ -31,7 +31,7 @@ pub use intro::{IntroAnswer, PendingIntro};
 mod large;
 #[path = "notes.rs"]
 mod notes;
-pub use notes::NOTES_KEY;
+pub use notes::{NOTES_KEY, NoteFilter, note_shown, tags_of};
 #[path = "receipts.rs"]
 mod receipts;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
@@ -3656,9 +3656,12 @@ impl Engine {
 
     /// Archived first (owner, 2026-11-22), then pinned, then most recent.
     pub fn resort(&mut self) {
+        // ADR-046 amendment 1: Notes stays last among the people, so they
+        // keep one run of indices and the apps draw Notes apart, on top.
         self.data.contacts.sort_by_key(|c| {
             (
                 c.own,
+                c.notes,
                 !c.archived,
                 !c.pinned,
                 std::cmp::Reverse(c.last_at()),

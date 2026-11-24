@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align, Align2, Color32, Layout, RichText, Stroke};
 use termchat_core::proto::{REACTIONS, Ref};
 use termchat_engine::data::{Contact, Group, Msg, Status};
-use termchat_engine::engine::{IntroAnswer, PendingIntro};
+use termchat_engine::engine::{IntroAnswer, NoteFilter, PendingIntro, note_shown};
 use termchat_engine::engine::{
     OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
 };
@@ -177,6 +177,8 @@ pub struct Chat {
     /// One line: the last note from the engine.
     pub(crate) status: String,
     pub(crate) dialog: Option<Dialog>,
+    /// ADR-046 amendment 1: which notes Notes shows.
+    note_filter: NoteFilter,
     /// ADR-044: the received image open over the chat.
     pub(crate) viewer: Option<crate::viewer::Viewer>,
     /// What SEND does with the text (ADR-025).
@@ -211,6 +213,8 @@ enum Act {
     /// ADR-043: ask for an offered document, or turn it down.
     Download(usize),
     Decline(usize),
+    /// ADR-046 amendment 1: star a note, or take the star away.
+    Star(usize),
     /// ADR-044: open a received image.
     View(usize),
     Forward(usize),
@@ -232,6 +236,7 @@ impl Chat {
             last_tick: Instant::now(),
             status: String::new(),
             dialog: None,
+            note_filter: NoteFilter::All,
             viewer: None,
             compose: Compose::New,
             focus_input: false,
@@ -500,13 +505,43 @@ impl Chat {
         lock
     }
 
+    /// ADR-046 amendment 1: one row of filters over Notes.
+    fn note_filters(&mut self, ui: &mut egui::Ui, p: &Pal) {
+        let mut all = vec![
+            (NoteFilter::All, "All".to_string()),
+            (NoteFilter::Untagged, "Untagged".to_string()),
+            (NoteFilter::Favorites, "Favorites".to_string()),
+            (NoteFilter::Links, "Links".to_string()),
+        ];
+        for (tag, n) in self.engine.note_tags() {
+            let label = format!("#{} {n}", termchat_engine::clean(&tag));
+            all.push((NoteFilter::Tag(tag), label));
+        }
+        egui::Frame::new()
+            .fill(p.bg)
+            .inner_margin(egui::Margin::symmetric(12, 6))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (f, label) in all {
+                        let on = self.note_filter == f;
+                        if ui.selectable_label(on, label).clicked() {
+                            self.note_filter = f;
+                        }
+                    }
+                });
+            });
+    }
+
     fn sidebar(&mut self, ui: &mut egui::Ui, p: &Pal) -> bool {
         ui.horizontal(|ui| {
             crate::logo::mark(ui, 26.0);
             ui.label(RichText::new("termchat.app").strong().size(16.0));
         });
         ui.add_space(8.0);
+        // ADR-046 amendment 1: Notes has a row of its own, above the people.
+        let notes = self.engine.notes();
         let (requests, contacts): (Vec<_>, Vec<_>) = (0..self.engine.data.people())
+            .filter(|&i| Some(i) != notes)
             .partition(|&i| self.engine.is_request(&self.engine.data.contacts[i].key));
         let (archived, contacts): (Vec<_>, Vec<_>) = contacts
             .into_iter()
@@ -517,6 +552,12 @@ impl Chat {
             .auto_shrink(false)
             .max_height(ui.available_height() - 36.0)
             .show(ui, |ui| {
+                if let Some(i) = notes {
+                    if let Some(k) = self.row(ui, p, i) {
+                        picked = Some(k);
+                    }
+                    ui.add_space(10.0);
+                }
                 if !requests.is_empty() {
                     let n = requests.len();
                     ui.label(RichText::new(format!("Requests  {n}")).color(p.dim));
@@ -728,6 +769,7 @@ impl Chat {
                         let group = &self.engine.data.groups[g];
                         let me = self.engine.me();
                         let view = View {
+                            filter: None,
                             msgs: &group.messages,
                             group: Some(group),
                             me,
@@ -864,6 +906,9 @@ impl Chat {
         let request = self.engine.is_request(&self.engine.data.contacts[i].key);
         self.header(ui, p, i, request);
         self.search_bar(ui, p);
+        if self.engine.data.contacts[i].notes {
+            self.note_filters(ui, p);
+        }
         egui::Panel::bottom("input")
             .frame(egui::Frame::new().fill(p.bg).inner_margin(10))
             .show(ui, |ui| self.input_row(ui, p, Open::Chat(i)));
@@ -876,7 +921,9 @@ impl Chat {
                     .auto_shrink(false)
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
+                        let notes = self.engine.data.contacts[i].notes;
                         let view = View {
+                            filter: notes.then_some(&self.note_filter),
                             msgs: &self.engine.data.contacts[i].messages,
                             group: None,
                             me: self.engine.me(),
@@ -917,6 +964,11 @@ impl Chat {
                         self.viewer = Some(crate::viewer::Viewer::open(n, name, bytes));
                     }
                     Err(e) => self.status = e,
+                }
+            }
+            Act::Star(n) => {
+                if let Err(e) = self.engine.toggle_star(n) {
+                    self.status = e;
                 }
             }
             Act::Download(n) => {
@@ -1502,6 +1554,8 @@ struct View<'a> {
     rich: bool,
     /// Only messages holding this text, any case; empty shows all.
     query: &'a str,
+    /// ADR-046 amendment 1: in Notes, the filter chosen.
+    filter: Option<&'a NoteFilter>,
 }
 
 /// Our reaction to `m` in group `g`.
@@ -1527,6 +1581,9 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 continue;
             }
             found += 1;
+        }
+        if v.filter.is_some_and(|f| !note_shown(m, f)) {
+            continue;
         }
         if m.status == Status::System {
             ui.vertical_centered(|ui| {
@@ -1665,6 +1722,19 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 .file
                 .as_ref()
                 .is_some_and(|f| !m.mine && f.complete() && f.held());
+            // ADR-046 amendment 1: a note is starred or not.
+            if v.filter.is_some() && m.mine && !m.deleted {
+                let (label, colour) = match m.my_reaction {
+                    Some(_) => ("Starred", p.accent),
+                    None => ("Star", p.dim),
+                };
+                if ui
+                    .link(RichText::new(label).small().color(colour))
+                    .clicked()
+                {
+                    act = Some(Act::Star(n));
+                }
+            }
             // ADR-044: decoded only on this click. One row, right under the file.
             let image = m.file.as_ref().is_some_and(|f| !m.mine && f.viewable());
             let offered = m.file.as_ref().is_some_and(|f| !m.mine && f.offered());
@@ -1725,8 +1795,12 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         }
                     }
                 }
-                // Theirs, then ours (ADR-025).
-                for (r, mine) in [(m.their_reaction, false), (m.my_reaction, true)] {
+                // Theirs, then ours (ADR-025); in Notes ours is the star.
+                let reacts = match v.filter {
+                    Some(_) => [(None, false), (None, true)],
+                    None => [(m.their_reaction, false), (m.my_reaction, true)],
+                };
+                for (r, mine) in reacts {
                     if let Some(r) = r {
                         let who = if mine { "you" } else { "they" };
                         let hint = format!("{who}: {}", REACTION_NAMES[usize::from(r)]);
@@ -1971,9 +2045,9 @@ mod tests {
         };
         let shown = texts(&frame(&mut chat));
         assert!(shown.contains("Pick a contact"), "{shown}");
-        // ADR-046: Notes is there too, pinned.
+        // ADR-046: Notes has its own row, apart from the contacts.
         assert!(
-            shown.contains("Contacts  2") && shown.contains("NOT VERIFIED"),
+            shown.contains("Contacts  1") && shown.contains("NOT VERIFIED"),
             "{shown}"
         );
         assert!(

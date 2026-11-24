@@ -6,6 +6,52 @@
 use super::*;
 use termchat_core::proto::NOTES_LEVEL;
 
+/// ADR-046 amendment 1: which notes to show.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoteFilter {
+    All,
+    /// Notes with no tag: the inbox.
+    Untagged,
+    Favorites,
+    Links,
+    /// Notes with this tag, lower case, without the `#`.
+    Tag(String),
+}
+
+/// The tags of `text`: words after `#` of letters, digits, `_` and `-`,
+/// lower case, each once.
+pub fn tags_of(text: &str) -> Vec<String> {
+    let mut tags: Vec<String> = Vec::new();
+    for (at, _) in text.match_indices('#') {
+        let before = text[..at].chars().next_back();
+        if before.is_some_and(|c| c.is_alphanumeric() || c == '#') {
+            continue;
+        }
+        let tag: String = text[at + 1..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .flat_map(char::to_lowercase)
+            .collect();
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+/// Whether note `m` belongs under `filter`.
+pub fn note_shown(m: &Msg, filter: &NoteFilter) -> bool {
+    match filter {
+        NoteFilter::All => true,
+        NoteFilter::Untagged => tags_of(&m.text).is_empty(),
+        NoteFilter::Favorites => m.my_reaction.is_some(),
+        NoteFilter::Links => ["http://", "https://", "www."]
+            .iter()
+            .any(|p| m.text.to_lowercase().contains(p)),
+        NoteFilter::Tag(t) => tags_of(&m.text).contains(t),
+    }
+}
+
 /// The Notes chat's key: all 0xff is no valid Ed25519 point, and unlike all
 /// zeros no default value, so it can never name a contact, a device or an
 /// identity by accident.
@@ -33,6 +79,36 @@ impl Engine {
             );
             self.persist();
         }
+    }
+
+    /// Every tag in Notes with how many notes carry it, most used first.
+    pub fn note_tags(&self) -> Vec<(String, usize)> {
+        let Some(i) = self.notes() else {
+            return Vec::new();
+        };
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for m in self.data.contacts[i].messages.iter().filter(|m| !m.deleted) {
+            for t in tags_of(&m.text) {
+                match counts.iter_mut().find(|(x, _)| *x == t) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((t, 1)),
+                }
+            }
+        }
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        counts
+    }
+
+    /// Stars note `m`, or takes the star away; our other devices follow.
+    pub fn toggle_star(&mut self, m: usize) -> Result<(), String> {
+        let i = self.notes().ok_or("no Notes here")?;
+        let starred = self.data.contacts[i]
+            .messages
+            .get(m)
+            .ok_or("no such note")?
+            .my_reaction
+            .is_some();
+        self.react(i, m, if starred { None } else { Some(0) })
     }
 
     /// Our own devices that take notes now.
@@ -117,7 +193,43 @@ impl Engine {
                     msgs[m].wipe();
                 }
             }
+            // Amendment 1: a star, only on one of our notes.
+            Body::React { target, reaction } if !target.theirs => {
+                if let Some(m) = at(msgs, target.id) {
+                    msgs[m].my_reaction = reaction;
+                }
+            }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tags_and_filters() {
+        assert_eq!(
+            tags_of("#Work and #read-later, #work again"),
+            ["work", "read-later"]
+        );
+        assert_eq!(tags_of("issue#12 ## #"), Vec::<String>::new());
+        assert_eq!(tags_of("#рецепт_1"), ["рецепт_1"]);
+        let note = |text: &str, star| {
+            let mut m = Msg::default();
+            m.text = text.into();
+            m.my_reaction = star;
+            m
+        };
+        let link = note("see https://example.org #read", None);
+        let plain = note("buy milk", Some(0));
+        assert!(note_shown(&link, &NoteFilter::Links));
+        assert!(!note_shown(&plain, &NoteFilter::Links));
+        assert!(note_shown(&plain, &NoteFilter::Untagged));
+        assert!(!note_shown(&link, &NoteFilter::Untagged));
+        assert!(note_shown(&plain, &NoteFilter::Favorites));
+        assert!(note_shown(&link, &NoteFilter::Tag("read".into())));
+        assert!(note_shown(&link, &NoteFilter::All));
     }
 }

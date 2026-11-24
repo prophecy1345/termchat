@@ -88,6 +88,13 @@ fn hex(key: &[u8; 32]) -> String {
     key.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// ADR-046 amendment 1: a tag in Notes and how many notes carry it.
+#[derive(uniffi::Record)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: u32,
+}
+
 /// ADR-045: an introduction waiting for our answer in a chat.
 #[derive(uniffi::Record)]
 pub struct IntroView {
@@ -1124,6 +1131,50 @@ impl Account {
         Ok(picture(&bytes)?)
     }
 
+    /// ADR-046 amendment 1: the tags in Notes, most used first.
+    pub fn note_tags(&self) -> Vec<TagCount> {
+        let _rt = runtime().enter();
+        self.lock()
+            .note_tags()
+            .into_iter()
+            .map(|(tag, n)| TagCount {
+                tag: engine::clean(&tag),
+                count: u32::try_from(n).unwrap_or(u32::MAX),
+            })
+            .collect()
+    }
+
+    /// ADR-046 amendment 1: indices of the notes `filter` shows: "all",
+    /// "untagged", "favorites", "links" or "#tag".
+    pub fn notes_shown(&self, filter: String) -> Vec<u32> {
+        use engine::NoteFilter;
+        let f = match filter.as_str() {
+            "untagged" => NoteFilter::Untagged,
+            "favorites" => NoteFilter::Favorites,
+            "links" => NoteFilter::Links,
+            t if t.starts_with('#') => NoteFilter::Tag(t[1..].to_lowercase()),
+            _ => NoteFilter::All,
+        };
+        let _rt = runtime().enter();
+        let e = self.lock();
+        let Some(i) = e.notes() else {
+            return Vec::new();
+        };
+        e.data.contacts[i]
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| engine::note_shown(m, &f))
+            .map(|(n, _)| n as u32)
+            .collect()
+    }
+
+    /// ADR-046 amendment 1: star note `msg`, or take the star away.
+    pub fn toggle_star(&self, msg: u32) -> Result<()> {
+        let _rt = runtime().enter();
+        Ok(self.lock().toggle_star(msg as usize)?)
+    }
+
     /// ADR-045: introduce contact `index` to contact `other`.
     pub fn introduce(&self, index: u32, other: u32) -> Result<()> {
         let other = other as usize;
@@ -1473,7 +1524,8 @@ mod tests {
         .unwrap();
         // No relay here, so no invite queue yet, so no invite.
         assert!(a.invite().is_err());
-        assert!(a.contacts().is_empty() && a.add("nonsense".into(), false).is_err());
+        // Only Notes (ADR-046) at first.
+        assert!(a.contacts().iter().all(|c| c.notes) && a.add("nonsense".into(), false).is_err());
         a.incognito_invite("ghost".into()).unwrap();
         assert_eq!(a.push_instances().len(), 2);
         // ADR-027: a group waits for its queue offline, but is there.

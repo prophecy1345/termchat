@@ -549,7 +549,12 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             list,
         );
     } else {
-        let mut state = ListState::default().with_selected(Some(m.selected));
+        // ADR-046 amendment 1: Notes on top, apart from the people.
+        if let Some(n) = m.engine.notes() {
+            let notes = items.remove(n);
+            items.insert(0, notes);
+        }
+        let mut state = ListState::default().with_selected(Some(m.to_row(m.selected)));
         f.render_stateful_widget(
             List::new(items).highlight_style(Style::new().bg(t.active_row_bg)),
             list,
@@ -692,7 +697,14 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             flag("connecting…".into(), t.yellow);
         }
         if c.notes {
-            flag("only on your devices".into(), t.teal);
+            let shown = match &m.note_filter {
+                crate::engine::NoteFilter::All => String::new(),
+                crate::engine::NoteFilter::Untagged => " · untagged".into(),
+                crate::engine::NoteFilter::Favorites => " · favorites".into(),
+                crate::engine::NoteFilter::Links => " · links".into(),
+                crate::engine::NoteFilter::Tag(t) => format!(" · #{}", clean(t)),
+            };
+            flag(format!("only on your devices{shown} (Ctrl+P, f)"), t.teal);
         } else if !c.verified {
             flag("! not verified (Ctrl+F)".into(), t.peach);
         }
@@ -741,7 +753,12 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let mut prev: Option<&crate::data::Msg> = None;
     let mut picked_line = None;
+    let in_notes = m.current().is_some_and(|c| c.notes);
     for (n, msg) in msgs.iter().enumerate() {
+        // ADR-046 amendment 1: only the notes the filter shows.
+        if in_notes && !crate::engine::note_shown(msg, &m.note_filter) {
+            continue;
+        }
         let text = match &msg.file {
             Some(f) if !msg.mine && f.complete() && f.held() => {
                 clean(&format!("▤ {} · unsaved, Ctrl+G", f.label()))
@@ -854,6 +871,17 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                     spans.push(Span::styled(n.to_string(), muted));
                 }
             }
+        }
+        // ADR-046 amendment 1: in Notes our reaction is a star.
+        if in_notes {
+            if msg.my_reaction.is_some() {
+                spans.extend([
+                    Span::raw("  "),
+                    Span::styled("starred", Style::new().fg(t.yellow)),
+                ]);
+            }
+            lines.push(Line::from(spans).style(row));
+            continue;
         }
         // Theirs, then ours; the same one twice shows once with a 2.
         match (msg.their_reaction, msg.my_reaction) {
