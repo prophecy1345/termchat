@@ -492,7 +492,7 @@ impl Chat {
                      anyone who can read it reads the chat, disappearing messages included. \
                      Delete it when you are done.",
                 );
-                let (go, stay) = buttons(ui, p, "Choose where…");
+                let (go, stay) = buttons(ui, p, "Choose where");
                 if !go {
                     return stay;
                 }
@@ -893,10 +893,10 @@ impl Chat {
                             ui.label(RichText::new(under).monospace().small().color(p.dim));
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if main && k != me && ui.button("Remove…").clicked() {
+                            if main && k != me && ui.button("Remove").clicked() {
                                 remove = Some(k);
                             }
-                            if main && ui.button("Rename…").clicked() {
+                            if main && ui.button("Rename").clicked() {
                                 rename = Some((k, old));
                             }
                         });
@@ -1236,7 +1236,7 @@ impl Chat {
                 let mut device = None;
                 ui.columns(2, |cols| {
                     if (e.is_primary() || e.data.devices.is_some())
-                        && wide(&mut cols[0], p, "Devices…")
+                        && wide(&mut cols[0], p, "Devices")
                     {
                         device = Some(Dialog::Devices);
                     }
@@ -1332,7 +1332,7 @@ impl Chat {
                 );
                 ui.horizontal(|ui| {
                     // The system's own Open dialog; the field stays for the keyboard.
-                    if ui.button("Choose…").clicked()
+                    if ui.button("Choose").clicked()
                         && let Some(file) = rfd::FileDialog::new().pick_file()
                     {
                         *path = file.display().to_string();
@@ -1394,7 +1394,7 @@ impl Chat {
                 ui.horizontal(|ui| {
                     ui.label("Into folder");
                     ui.text_edit_singleline(folder);
-                    if ui.button("Choose…").clicked()
+                    if ui.button("Choose").clicked()
                         && let Some(dir) = rfd::FileDialog::new()
                             .set_directory(data::expand(folder))
                             .pick_folder()

@@ -15,6 +15,8 @@ the desktop app.
   (ADR-043, amendment 1).
 - An offer nobody has answered yet no longer holds back the next file to
   the same contact.
+- A file's actions sit in one row right under it, and buttons and menu
+  items no longer end in "…".
 
 ## 0.29.0
 

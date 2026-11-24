@@ -1390,12 +1390,12 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         {
             Menu::Mute
         }
-        _ if pick(ui, "Export…") => Menu::Open(Dialog::Export),
+        _ if pick(ui, "Export") => Menu::Open(Dialog::Export),
         _ if pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
         _ if pick(ui, if c.pinned { "Unpin" } else { "Pin" }) => Menu::Pin,
         _ if pick(ui, if c.archived { "Unarchive" } else { "Archive" }) => Menu::Archive,
         _ if pick(ui, &format!("Safety number ({verified})")) => Menu::Open(Dialog::Verify),
-        _ if pick(ui, "Rename…") => {
+        _ if pick(ui, "Rename") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
         }
         _ if pick(
@@ -1410,16 +1410,8 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
             Menu::NoHistory
         }
         _ if pick(ui, if c.blocked { "Unblock" } else { "Block" }) => Menu::Block,
-        _ if pick(ui, "Report…") => Menu::Report,
-        _ if pick(
-            ui,
-            if request {
-                "Reject request…"
-            } else {
-                "Delete…"
-            },
-        ) =>
-        {
+        _ if pick(ui, "Report") => Menu::Report,
+        _ if pick(ui, if request { "Reject request" } else { "Delete" }) => {
             Menu::Open(Dialog::Delete)
         }
         _ => return None,
@@ -1578,7 +1570,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         act = Some(Act::Reply(n));
                         ui.close();
                     }
-                    if m.forwardable().is_some() && ui.button("Forward…").clicked() {
+                    if m.forwardable().is_some() && ui.button("Forward").clicked() {
                         act = Some(Act::Forward(n));
                         ui.close();
                     }
@@ -1587,12 +1579,35 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         ui.close();
                     }
                     let delete = match v.group {
-                        Some(_) => "Delete for everyone…",
-                        None => "Delete for both…",
+                        Some(_) => "Delete for everyone",
+                        None => "Delete for both",
                     };
                     if m.mine && ui.button(delete).clicked() {
                         act = Some(Act::Delete(n));
                         ui.close();
+                    }
+                });
+            }
+            let unsaved = m
+                .file
+                .as_ref()
+                .is_some_and(|f| !m.mine && f.complete() && f.held());
+            // ADR-044: decoded only on this click. One row, right under the file.
+            let image = m.file.as_ref().is_some_and(|f| !m.mine && f.viewable());
+            let offered = m.file.as_ref().is_some_and(|f| !m.mine && f.offered());
+            if image || unsaved || offered {
+                ui.horizontal(|ui| {
+                    if image && ui.link(RichText::new("View").color(p.accent)).clicked() {
+                        act = Some(Act::View(n));
+                    }
+                    if unsaved && ui.link(RichText::new("Save").color(p.accent)).clicked() {
+                        act = Some(Act::Save(n));
+                    }
+                    if offered && ui.link(RichText::new("Download").color(p.accent)).clicked() {
+                        act = Some(Act::Download(n));
+                    }
+                    if offered && ui.link(RichText::new("Decline").color(p.dim)).clicked() {
+                        act = Some(Act::Decline(n));
                     }
                 });
             }
@@ -1646,26 +1661,6 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                     }
                 }
             });
-            let unsaved = m
-                .file
-                .as_ref()
-                .is_some_and(|f| !m.mine && f.complete() && f.held());
-            // ADR-044: decoded only on this click.
-            let image = m.file.as_ref().is_some_and(|f| !m.mine && f.viewable());
-            if image && ui.link(RichText::new("View").color(p.accent)).clicked() {
-                act = Some(Act::View(n));
-            }
-            if unsaved && ui.link(RichText::new("Save…").color(p.accent)).clicked() {
-                act = Some(Act::Save(n));
-            }
-            if m.file.as_ref().is_some_and(|f| !m.mine && f.offered()) {
-                if ui.link(RichText::new("Download").color(p.accent)).clicked() {
-                    act = Some(Act::Download(n));
-                }
-                if ui.link(RichText::new("Decline").color(p.dim)).clicked() {
-                    act = Some(Act::Decline(n));
-                }
-            }
         });
         ui.add_space(4.0);
     }
@@ -1919,7 +1914,7 @@ mod tests {
             "hello",
             "request accepted",
             "notes.txt",
-            "Save…",
+            "Save",
             "new in this version",
             "· edited",
             "message deleted",

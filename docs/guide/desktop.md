@@ -14,7 +14,7 @@ The terminal client and the desktop app open the same account (`~/.termchat`), b
 ## The window
 
 - **Left:** archived chats, your contacts and your groups, each under a heading that folds on a click (**+** beside Groups makes a new one), with **Add**, **Invite**, **Settings** and **Lock** below.
-- **Right:** the chat. ⋮ at the top holds **Search**, **Safety number**, **Rename…**, **No history**, **Block**, **Report…** and **Delete…** (**Reject request…** for a request).
+- **Right:** the chat. ⋮ at the top holds **Search**, **Safety number**, **Rename**, **No history**, **Block**, **Report** and **Delete** (**Reject request** for a request).
 - **Bottom:** the field, **SEND**, **File** and the disappearing-messages timer (**timer off**, then 5m, 1h, 1d, 1w with each click). **Enter** sends, **Shift+Enter** starts a new line.
 - **Status bar:** online or connecting, your nickname, warnings.
 - **Keys:** **Cmd+K** (Ctrl+K on Linux and Windows) goes to a chat or group by part of its name; **F1** lists all the shortcuts.
@@ -46,7 +46,7 @@ A new member does not see what was said before they joined. Documents go to the 
 
 - **Appearance:** the theme (the same as in the terminal and on Android), the system sound for new messages, and **Lock after** 1, 5, 15 or 30 minutes.
 - **Contacts:** **One connection for all contacts** and **Connect the open chat at once** (see [Tor and bridges](tor.md)).
-- **Devices:** **Devices…** lists your devices; **Link to my main device** on a new one. See [Devices](devices.md).
+- **Devices:** **Devices** lists your devices; **Link to my main device** on a new one. See [Devices](devices.md).
 - **Account and security:** **Turn Tor on/off**, **Back up your identity**, **Change password**, **Set a duress password**, **Tor bridges**, **What's new in this version**.
 - **Danger zone:** **Wipe everything**. See [Backups, locking, wiping](safety.md).
 

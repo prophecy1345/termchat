@@ -219,7 +219,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
                 item("Members") { ask("members") }
-                item("Export…") { ask("export") }
+                item("Export") { ask("export") }
                 item("Clear history") { ask("clear") }
                 if (g.admin) item("Invite") { ask("invite") }
                 if (g.mainAdmin) {

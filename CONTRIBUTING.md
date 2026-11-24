@@ -50,6 +50,10 @@ below are strict on purpose.
     group is a few contacts in one room. A feature that needs something else
     to talk to the user (a channel, a bot API, a directory) is a red flag:
     discuss it in an issue first.
+17. **No ellipsis on buttons.** Buttons, links and menu items read as plain
+    words ("Save", "Forward", "Rename"), in every app. An ellipsis belongs
+    only to text that is cut short or to a status that is still going on
+    ("connecting…").
 
 ## Layout
 

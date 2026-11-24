@@ -19,7 +19,7 @@ One identity can live on up to four devices, for example your phone and your lap
    The link code appears as soon as the relay is reached. A device already set up, with no contacts on it, asks for one from its menu: **Ctrl+P**, then **l** in the terminal; **Settings**, **Link to my main device** on the desktop; **⋮**, **Link to my main device** on Android.
 2. On your main device, open the devices and add it:
    - terminal: **Ctrl+P**, **v**, then **a**, and paste the code;
-   - desktop: **Settings**, **Devices…**, **Add a device**;
+   - desktop: **Settings**, **Devices**, **Add a device**;
    - Android: **⋮**, **Devices**, then scan its QR code or paste the code.
 3. Both screens now show one fingerprint. **Go on only if it is the same on both**: someone who copied the link code would show another one. Confirm on both devices.
 4. The new device says "This device is linked", takes your nickname and gets your contacts.

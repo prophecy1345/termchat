@@ -370,7 +370,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
                     DropdownMenuItem({ Text(label, style = Tc.mono) }, { menu = false; go() })
                 }
                 item("Search") { ask("search") }
-                item("Export…") { ask("export") }
+                item("Export") { ask("export") }
                 item("Clear history") { ask("clear") }
                 item("Safety number") { ask("verify") }
                 item("Rename") { ask("rename") }
@@ -442,10 +442,10 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     item("Answer", "answer")
                 }
                 if (msg.fileName == null) item("Copy", "copy")
-                if (msg.forwardable) item("Forward…", "forward")
+                if (msg.forwardable) item("Forward", "forward")
                 if (rich && msg.pointable && msg.mine) {
                     item("Edit", "edit")
-                    item(if (group) "Delete for everyone…" else "Delete for both…", "delete")
+                    item(if (group) "Delete for everyone" else "Delete for both", "delete")
                 }
             }
         }
@@ -660,7 +660,7 @@ internal fun ExportChat(m: Model, place: Place, done: () -> Unit) {
         shape = corner,
         title = { Text("Export this chat", style = Tc.name) },
         text = { Text("A plain text file, with times in UTC. It is not encrypted: anyone who can open it reads the chat, disappearing messages included. Delete it when you are done.", style = Tc.mono) },
-        confirmButton = { Flat("Choose where…", color = Tc.lime) { save.launch(export.name) } },
+        confirmButton = { Flat("Choose where", color = Tc.lime) { save.launch(export.name) } },
         dismissButton = { Flat("Cancel", color = Tc.dim) { done() } },
     )
 }

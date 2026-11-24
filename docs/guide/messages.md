@@ -29,8 +29,8 @@ Since version 0.9, between apps that both run 0.9 or newer:
 How:
 
 - **Terminal:** **Shift+↑** or **Ctrl+N** picks the newest message; **↑/↓** move. Then **Enter** answers, **e** edits, **d** deletes (after **y**), **1** to **7** react, **Esc** goes back to typing. While you answer or edit, the top of the field says so; **Esc** cancels.
-- **Desktop:** right-click a message: the seven reactions on top, then **Answer**, and **Edit** and **Delete for both…** on your own. The line over the field says what SEND will do; a click on it or **Esc** cancels.
-- **Android:** long press a message: the reactions, **Answer** and **Copy**, and **Edit** and **Delete for both…** on your own. **×** over the field cancels.
+- **Desktop:** right-click a message: the seven reactions on top, then **Answer**, and **Edit** and **Delete for both** on your own. The line over the field says what SEND will do; a click on it or **Esc** cancels.
+- **Android:** long press a message: the reactions, **Answer** and **Copy**, and **Edit** and **Delete for both** on your own. **×** over the field cancels.
 
 A contact on 0.8 or older cannot read these. Until their app says it can, yours sends them plain messages and offers no answers or reactions in that chat ("their app is older"). When you first update, contacts still on 0.8 see one "could not be decrypted" line and one "1 message lost": nothing is lost in fact.
 
@@ -39,16 +39,16 @@ A contact on 0.8 or older cannot read these. Until their app says it can, yours 
 Send a message or a received document on to another chat or group. It goes as a new message of yours, with no mark of where it came from, and follows the timer of the chat it lands in. A document can be forwarded until you save or discard it; after that it is a file on your disk, and you send it from there.
 
 - **Terminal:** pick the message (**Shift+↑**), press **f**, choose the chat and press **Enter**.
-- **Desktop:** right-click the message → **Forward…**, then click the chat.
-- **Android:** long press the message → **Forward…**, then tap the chat.
+- **Desktop:** right-click the message → **Forward**, then click the chat.
+- **Android:** long press the message → **Forward**, then tap the chat.
 
 ## Documents
 
 Files of up to 25 MiB, end-to-end encrypted like messages. Up to 1 MiB a file goes at once: 200 KB takes about 10 seconds, 1 MiB about 3 minutes. A larger one is first offered, and its bytes go only when the contact downloads it: 25 MiB takes about 2 minutes (about 10 with a relay older than 0.30.0), and nobody gets a large file they did not ask for. Both of you need 0.29.0 or later. Files work only between accepted contacts, and in groups (there up to 1 MiB).
 
-- **Send:** **Ctrl+L** in the terminal (type the path); in the desktop app **File**, then **Choose…** for the system dialog, or drop a file on the window; the paperclip on Android. In chats and in groups alike.
+- **Send:** **Ctrl+L** in the terminal (type the path); in the desktop app **File**, then **Choose** for the system dialog, or drop a file on the window; the paperclip on Android. In chats and in groups alike.
 - **Offered:** a file over 1 MiB first shows as "offered". **Ctrl+G** in the terminal asks for it (type `DISCARD` to decline instead); the desktop app and Android have **Download** and **Decline** under it. An offer nobody answers is dropped after 7 days.
-- **Receive:** the file waits in the chat as "unsaved". **Ctrl+G** in the terminal saves the newest one into a folder you type (`~/Downloads` by default; the folder must exist), or discards it if you type `DISCARD`. The desktop app has **Save…** under it (**Choose…** picks the folder), Android **Save** and **Discard**.
+- **Receive:** the file waits in the chat as "unsaved". **Ctrl+G** in the terminal saves the newest one into a folder you type (`~/Downloads` by default; the folder must exist), or discards it if you type `DISCARD`. The desktop app has **Save** under it (**Choose** picks the folder), Android **Save** and **Discard**.
 
 **View an image** (desktop and Android): a received PNG, JPEG, GIF or WebP gets **View** under it while it waits unsaved. Only that click decodes it, inside termchat.app, with limits; zoom with the wheel or a pinch, Esc or back closes. The first frame of a GIF only; nothing is cached or written to disk. Once you save or discard the file, View goes with it.
 
@@ -72,8 +72,8 @@ Archived chats sit above the others, under their own heading; pin a chat to keep
 Save a chat or group as a plain text file: each message with its time in UTC and who wrote it, documents as their names. **The file is not encrypted.** Anyone who can read it reads the chat, disappearing messages included, so keep it somewhere safe and delete it when you are done.
 
 - **Terminal:** **Ctrl+P**, then **e**, and the folder (`~/Downloads` by default).
-- **Desktop:** ⋮ → **Export…** in a chat, or **Export** in a group, then the folder.
-- **Android:** ⋮ → **Export…**, then where to save it.
+- **Desktop:** ⋮ → **Export** in a chat, or **Export** in a group, then the folder.
+- **Android:** ⋮ → **Export**, then where to save it.
 
 An existing file is never overwritten.
 

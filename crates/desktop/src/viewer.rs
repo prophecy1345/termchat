@@ -80,7 +80,7 @@ impl Chat {
                 ui.label(RichText::new(&v.name).monospace());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     keep &= !ui.button("Close").clicked();
-                    if ui.button("Save…").clicked() {
+                    if ui.button("Save").clicked() {
                         self.dialog = Some(Dialog::save_file(v.m));
                         keep = false;
                     }
