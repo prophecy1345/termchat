@@ -69,6 +69,24 @@ Proposed by the owner, 2026-11-24: in Telegram "Saved Messages" turns into a hea
 
 Not taken from Raindrop: previews or fetched titles of links. Fetching a page would tell the site, and whoever watches the network, what you saved (rule 9). Folders (collections) wait until tags prove too little; they need a field of their own on the wire.
 
+## Amendment 2 (2026-11-24, proposed): notes missed while a device was not ready
+
+Found by the owner on 0.33.0. A note goes only to our devices that already said they read notes (`Understands` level 9). If none has, the note is still marked sent and is never sent again. So the notes written on the phone between its update and the moment it heard that the computer was updated too never reach the computer. Devices are rarely updated in the same minute, so this hits nearly everyone who links two.
+
+**Decision.** When one of our own devices says it reads notes for the first time (its level goes from below 9 to 9 or more), this device sends it the notes it should have had:
+
+- every note here written **after that device was linked** (`at` not before the device's `added_at`, which section 3 already promises), not deleted and not yet expired;
+- each as `Note { Message }` with its own id and the time it was written, its current text and the disappearing time that is **left**, so both copies still go at the same moment; then `Note { React }` for each starred one;
+- oldest first, **at most 30 messages** in all: the relay's burst for one queue (1 a second after that). Older ones stay where they are; a later note goes as usual.
+
+The receiving device already drops a `Note { Message }` whose id it holds, so a note sent twice shows once, and both devices may do this to each other at the same time.
+
+**Nothing new on the wire**: the same `Note` bodies, the same Olm sessions, only to our own devices. The relay sees up to 30 messages between two of our queues once, as when that many notes are written in a row.
+
+**Not changed:** notes written before a device was linked are still not copied to it (the rejected bulk copy above). A device that was offline for more than 14 days still misses what the relay dropped meanwhile: that loss is the relay's, not a level mismatch.
+
+**Rejected:** keeping notes queued until every device reads them: one device left on an old version would hold every note back for the others, and show them as unsent forever.
+
 ## Implementation notes (2026-11-24)
 
 - **Notes is a contact that is no one** (`notes`, key `NOTES_KEY`, all 0xff), so every chat feature works on it in all three apps. It has no identity slot, so no queue, key or session is ever made for it; sending to it marks the note sent and passes it to our devices.
