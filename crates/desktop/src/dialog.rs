@@ -417,8 +417,7 @@ impl Chat {
                     // The invite opens once its queue exists (ADR-023).
                     match self.engine.incognito_invite(nickname.trim()) {
                         Ok(()) => {
-                            self.status =
-                                "making a new identity; its invite opens in a moment".into();
+                            self.status = crate::chat::MAKING_IDENTITY.into();
                             return false;
                         }
                         Err(e) => *error = e,

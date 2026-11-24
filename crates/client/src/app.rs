@@ -22,6 +22,9 @@ use termchat_engine::notify::SOUND_GAP;
 const RELEASES: &str = "https://github.com/prophecy1345/termchat/releases";
 
 /// How this copy was installed decides how to update it (ADR-010).
+/// Shown from an incognito invite asked for until it opens (ADR-014).
+const MAKING_IDENTITY: &str = "making a new identity; its invite opens in a moment";
+
 fn update_command() -> Option<&'static str> {
     // Homebrew runs it through a symlink into its Cellar.
     let exe = std::env::current_exe().and_then(std::fs::canonicalize);
@@ -705,6 +708,9 @@ impl Main {
                 Happened::Wiped(n) => self.wiped = Some(n),
                 Happened::WipeAnyway(why) => self.popup = Some(Popup::WipeAnyway(why)),
                 Happened::Invite(text) => {
+                    if self.status == MAKING_IDENTITY {
+                        self.status.clear();
+                    }
                     self.popup = Some(Popup::Invite {
                         text,
                         kind: Share::Incognito,
@@ -1530,7 +1536,7 @@ impl Main {
                 true => {
                     // The invite pops up once its queue exists (ADR-023).
                     self.status = match self.engine.incognito_invite(&s) {
-                        Ok(()) => "making a new identity; its invite appears in a moment".into(),
+                        Ok(()) => MAKING_IDENTITY.into(),
                         Err(e) => e,
                     };
                     None

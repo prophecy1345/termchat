@@ -29,6 +29,9 @@ enum Open {
 const TOAST_FOR: Duration = Duration::from_secs(5);
 const MAX_TOASTS: usize = 4;
 
+/// Shown from an incognito invite asked for until it opens (ADR-014).
+pub(crate) const MAKING_IDENTITY: &str = "making a new identity; its invite opens in a moment";
+
 /// The colours the window uses, from a shared theme (`engine::themes`).
 pub struct Pal {
     pub bg: Color32,
@@ -296,6 +299,9 @@ impl Chat {
                 Happened::Wiped(n) => return Some(n),
                 Happened::WipeAnyway(why) => self.dialog = Some(Dialog::WipeAnyway(why)),
                 Happened::Invite(text) => {
+                    if self.status == MAKING_IDENTITY {
+                        self.status.clear();
+                    }
                     self.dialog = Some(Dialog::Invite {
                         text,
                         kind: crate::dialog::Share::Incognito,

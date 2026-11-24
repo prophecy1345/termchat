@@ -77,6 +77,8 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
     val get = { f: () -> String -> runCatching(f).getOrElse { m.note = it.message ?: "$it"; "" } }
     var invite by remember { mutableStateOf(get { a.invite() }) }
     var nick by remember { mutableStateOf("") }
+    // An incognito identity is being made: its invite comes as Event.Invite.
+    var making by remember { mutableStateOf(false) }
     val context = LocalContext.current
     Text(
         when (kind) {
@@ -87,7 +89,7 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
         style = Tc.small,
     )
     LaunchedEffect(m.readyInvite) {
-        m.readyInvite?.let { invite = it; kind = "incognito"; m.readyInvite = null }
+        m.readyInvite?.let { invite = it; kind = "incognito"; m.readyInvite = null; making = false }
     }
     if (invite.isEmpty()) {
         Text("Connecting to the relay; try again in a moment.", style = Tc.small)
@@ -128,11 +130,16 @@ fun Invite(m: Model) = Panel(m, "Your invite") {
             style = Tc.small,
         )
         Field(nick, { nick = it }, "Name they will see (empty: random)", Modifier.fillMaxWidth())
-        Flat("Incognito invite") {
-            // The invite comes as Event.Invite once its queue exists (ADR-023).
-            runCatching { a.incognitoInvite(nick) }
-                .onSuccess { m.note = "making a new identity; its invite appears in a moment" }
-                .onFailure { m.note = it.message ?: "$it" }
+        // The invite comes as Event.Invite once its queue exists (ADR-023);
+        // until then the button gives way to a line saying so.
+        if (making) {
+            Text("making a new identity; its invite opens in a moment", style = Tc.small.copy(color = Tc.warn))
+        } else {
+            Flat("Incognito invite") {
+                runCatching { a.incognitoInvite(nick) }
+                    .onSuccess { making = true }
+                    .onFailure { m.note = it.message ?: "$it" }
+            }
         }
     }
 }
