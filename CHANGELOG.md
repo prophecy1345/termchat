@@ -3,6 +3,19 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.33.0
+
+- Notes (ADR-046): a chat with yourself for links, drafts and reminders.
+  On one device nothing leaves it. With linked devices each note, edit,
+  delete and star goes to your other devices, and only to them. Devices
+  see notes written after they were linked. Documents in Notes come later.
+- Keep Notes in order: write `#tags` in a note, then filter by All,
+  Untagged, Favorites, Links or a tag. Star a note to keep it in
+  Favorites. Nothing fetches a link's page.
+- Notes has its own row above the contacts in every app.
+- Builds: the Tor bridge helper falls back to the module source when the
+  Go proxy fails.
+
 ## 0.32.0
 
 - Introduce two of your contacts (ADR-045): in the chat with Bob pick

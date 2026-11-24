@@ -1,0 +1,2 @@
+Notes: a chat with yourself, shared only with your own devices. Write #tags, filter by tag, links or favorites, and star what matters.
+Also since 0.32: introduce two of your contacts. The one introduced is asked first; nobody can be reached without saying yes.
