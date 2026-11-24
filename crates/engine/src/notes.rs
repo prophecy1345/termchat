@@ -39,8 +39,12 @@ pub fn tags_of(text: &str) -> Vec<String> {
     tags
 }
 
-/// Whether note `m` belongs under `filter`.
+/// Whether note `m` belongs under `filter`. A deleted note leaves no
+/// "message deleted" behind: there is no one else to tell.
 pub fn note_shown(m: &Msg, filter: &NoteFilter) -> bool {
+    if m.deleted {
+        return false;
+    }
     match filter {
         NoteFilter::All => true,
         NoteFilter::Untagged => tags_of(&m.text).is_empty(),
@@ -231,5 +235,8 @@ mod tests {
         assert!(note_shown(&plain, &NoteFilter::Favorites));
         assert!(note_shown(&link, &NoteFilter::Tag("read".into())));
         assert!(note_shown(&link, &NoteFilter::All));
+        let mut gone = note("buy milk", None);
+        gone.wipe();
+        assert!(!note_shown(&gone, &NoteFilter::All));
     }
 }
