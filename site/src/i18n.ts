@@ -54,6 +54,7 @@ const en = {
     ["Contacts on your terms", [
       ["Invites, not a directory", "Nobody can find you: people join with an invite you give them, one-time or public, and wait as a request until you accept. Block, reject or report."],
       ["Safety numbers", "Compare 60 digits with a friend once, or scan the QR code on their screen, and rule out anyone in the middle."],
+      ["Introductions with consent", "Introduce two of your contacts: the one introduced is asked first, the other decides whether to add them, and nobody can be reached without saying yes. The relay cannot tell an introduction from any other invite."],
       ["Incognito contacts", "Talk to someone from a separate identity of your own: other keys, another name. Your contacts cannot link you to each other."],
       ["Small private groups", "Up to 32 devices (32 people with one each), by invitation only, and nobody can find the group. Up to four admins: the main one removes, sets the timer and hands over; the others invite their own contacts. Megolm from the same vodozemac; new members do not read the old history, removed ones not the new. Documents go there as in a chat."],
       ["Phone and laptop, one identity", "Link up to four devices with a code and a fingerprint check on both screens. Contacts write to each of them; each device has keys of its own, and a lost one is removed from the main device. Groups, documents and what you send reach all of them."],
@@ -71,6 +72,7 @@ const en = {
       ["Answers, edits and reactions", "Answer a particular message, edit or delete your own for both of you, react with one of seven pixel sprites. All inside the encryption; the relay sees an ordinary message."],
       ["Delivered and read", "Two checks when a message is on their device; read receipts only if both of you turn them on. Off by default for read, never in groups, and the docs say what their timing shows the relay."],
       ["Documents, offline, searchable", "Files up to 25 MiB in chats and 1 MiB in groups, never opened by the app; on the desktop pick one in the system dialog or drop it on the window. Messages wait on the relay for up to 14 days. Search runs on your device only."],
+      ["Notes to yourself", "A chat with yourself for links, drafts and reminders, kept on the device and sent only to your own linked devices, never stored on a server. #tags, filters and stars keep it from turning into a heap."],
       ["A tidy chat list", "Drafts stay with their chat, encrypted. Mute a chat for an hour, a day or always, pin the ones you need, archive the rest. Forward a message with no mark of where it came from, or export a chat to a text file when you ask for it."],
     ]],
   ] as [string, Item[]][],
@@ -207,6 +209,7 @@ const ru: typeof en = {
     ["Контакты на ваших условиях", [
       ["Приглашения вместо каталога", "Найти вас нельзя: люди приходят по приглашению, которое вы дали, одноразовому или публичному, и ждут как запрос, пока вы не примете. Блокировка, отказ, жалоба."],
       ["Номер безопасности", "Один раз сверьте 60 цифр с другом или отсканируйте QR-код на его экране и исключите посредника."],
+      ["Знакомства с согласия", "Познакомьте два своих контакта: сначала спрашивают того, кого представляют, второй решает, добавлять ли, и до человека нельзя достучаться без его «да». Relay не отличит знакомство от любого другого приглашения."],
       ["Инкогнито-контакты", "Общайтесь с человеком от отдельной личности: другие ключи, другое имя. Контакты не смогут связать вас между собой."],
       ["Маленькие приватные группы", "До 32 устройств (32 человека с одним устройством), только по приглашению, найти группу нельзя. До четырёх администраторов: основной исключает, ставит таймер и передаёт роль, остальные приглашают своих контактов. Megolm из той же vodozemac; новые участники не читают старую историю, исключённые — новую. Документы отправляются туда, как в чат."],
       ["Телефон и ноутбук, одна личность", "Привяжите до четырёх устройств кодом со сверкой отпечатка на обоих экранах. Контакты пишут на каждое; у каждого устройства свои ключи, а потерянное удаляется с основного. Группы, документы и отправленное вами доходят до всех."],
@@ -224,6 +227,7 @@ const ru: typeof en = {
       ["Ответы, правка и реакции", "Ответ на конкретное сообщение, правка и удаление своих у обоих, реакция одним из семи пиксельных спрайтов. Всё внутри шифрования; relay видит обычное сообщение."],
       ["Доставлено и прочитано", "Две галочки, когда сообщение на устройстве собеседника; «прочитано» — только если оно включено у обоих. «Прочитано» по умолчанию выключено, в группах отметок нет, а в документации сказано, что их время показывает relay."],
       ["Документы, офлайн, поиск", "Файлы до 25 МиБ в чатах и до 1 МиБ в группах, приложение их не открывает; на компьютере выберите файл в системном окне или перетащите в окно. Сообщения ждут на relay до 14 дней. Поиск работает только на вашем устройстве."],
+      ["Заметки себе", "Чат с самим собой для ссылок, черновиков и напоминаний: хранится на устройстве и уходит только на ваши связанные устройства, никогда не хранится на сервере. #теги, фильтры и звёздочки не дают ему превратиться в свалку."],
       ["Порядок в чатах", "Черновики остаются у своего чата, зашифрованными. Заглушите чат на час, на день или навсегда, закрепите нужные, остальные уберите в архив. Пересылайте сообщение без пометки, откуда оно, или выгрузите чат в текстовый файл по вашей команде."],
     ]],
   ],
