@@ -1,0 +1,1 @@
+Documents up to 25 MiB. Above 1 MiB your contact first sees an offer and the file comes only when they tap Download, so nobody gets a large file they did not ask for. Both sides need 0.29.0.
