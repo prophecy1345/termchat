@@ -42,6 +42,10 @@ const PER_MINUTE: usize = 30;
 const SEND_TIMEOUT: u64 = 30;
 /// At least 32 random bytes, as hex (64) or base64 (43).
 const MIN_TOKEN: usize = 43;
+/// The same alert on a route within this time is counted, not sent again.
+const REPEAT_WINDOW: Duration = Duration::from_secs(600);
+/// Alert texts not seen for this long are forgotten, counted repeats too.
+const REPEAT_MEMORY: Duration = Duration::from_secs(86_400);
 
 #[derive(Clone)]
 enum Target {
@@ -65,6 +69,8 @@ struct Hook {
     routes: HashMap<String, Route>,
     labels: Vec<String>,
     sent: Mutex<HashMap<String, VecDeque<Instant>>>,
+    /// Per route and alert text: when it was last sent, repeats since.
+    repeats: Mutex<HashMap<(String, String), (Instant, u32)>>,
 }
 
 /// `termchat hook ...`, `args` without the command name.
@@ -145,6 +151,7 @@ pub(super) async fn run(args: &[String]) -> Result<(), Fail> {
         routes,
         labels,
         sent: Mutex::new(HashMap::new()),
+        repeats: Mutex::new(HashMap::new()),
     });
     serve(listener, hook).await
 }
@@ -411,8 +418,12 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
     if let Target::Page { chain, escalate } = &route.target {
         return page(hook, path, route.format, chain, *escalate, &body).await;
     }
-    let Some(text) = alert::render(route.format, &body, &hook.labels) else {
+    let Some(alert) = alert::render(route.format, &body, &hook.labels) else {
         return answer(StatusCode::BAD_REQUEST, "not this route's format\n");
+    };
+    // The same alert again soon: counted, said with the next one sent.
+    let Some(text) = hook.unless_repeat(path, &alert, Instant::now()) else {
+        return answer(StatusCode::OK, "repeat: counted, not sent\n");
     };
     if !hook.take_slot(path) {
         return answer(
@@ -441,7 +452,10 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
         }
     };
     match call(&hook.home, &request).await {
-        Some(Ok(_)) => answer(StatusCode::OK, "sent\n"),
+        Some(Ok(_)) => {
+            hook.was_sent(path, alert, Instant::now());
+            answer(StatusCode::OK, "sent\n")
+        }
         // No daemon, the relay not reached in time, or the daemon lost: retry later.
         None | Some(Err(Fail(1 | 4 | 6, _))) => answer(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -504,6 +518,33 @@ async fn page(
 }
 
 impl Hook {
+    /// `None`: `alert` went out on `route` less than `REPEAT_WINDOW` ago,
+    /// and is counted. Otherwise the text to send, saying how many repeats
+    /// were held back since the last time.
+    fn unless_repeat(&self, route: &str, alert: &str, now: Instant) -> Option<String> {
+        let Ok(mut seen) = self.repeats.lock() else {
+            return Some(alert.to_string());
+        };
+        seen.retain(|_, (at, _)| now.duration_since(*at) < REPEAT_MEMORY);
+        match seen.get_mut(&(route.to_string(), alert.to_string())) {
+            Some((at, n)) if now.duration_since(*at) < REPEAT_WINDOW => {
+                *n = n.saturating_add(1);
+                None
+            }
+            Some((_, n)) if *n > 0 => Some(format!(
+                "{alert}\n(the same alert came {n} more times after it was last sent)"
+            )),
+            _ => Some(alert.to_string()),
+        }
+    }
+
+    /// `alert` reached the daemon: repeats count from now.
+    fn was_sent(&self, route: &str, alert: String, now: Instant) {
+        if let Ok(mut seen) = self.repeats.lock() {
+            seen.insert((route.to_string(), alert), (now, 0));
+        }
+    }
+
     /// One of `PER_MINUTE` sends a minute for `route`.
     fn take_slot(&self, route: &str) -> bool {
         let Ok(mut sent) = self.sent.lock() else {
@@ -556,6 +597,46 @@ mod tests {
     }
 
     #[test]
+    fn repeats_are_counted_then_said_once() {
+        let hook = Hook {
+            home: PathBuf::new(),
+            token: Zeroizing::new(String::new()),
+            routes: HashMap::new(),
+            labels: Vec::new(),
+            sent: Mutex::new(HashMap::new()),
+            repeats: Mutex::new(HashMap::new()),
+        };
+        let t0 = Instant::now();
+        let later = |s: u64| t0 + Duration::from_secs(s);
+        assert_eq!(
+            hook.unless_repeat("ops", "disk full", t0).as_deref(),
+            Some("disk full")
+        );
+        hook.was_sent("ops", "disk full".into(), t0);
+        // Within the window: counted; another text or route still goes.
+        for s in [1, 60, 599] {
+            assert_eq!(hook.unless_repeat("ops", "disk full", later(s)), None);
+        }
+        assert!(hook.unless_repeat("ops", "disk ok", later(2)).is_some());
+        assert!(hook.unless_repeat("web", "disk full", later(2)).is_some());
+        // After it: sent once more, with the count, which then starts over.
+        let next = hook.unless_repeat("ops", "disk full", later(600)).unwrap();
+        assert!(
+            next.ends_with("came 3 more times after it was last sent)"),
+            "{next}"
+        );
+        hook.was_sent("ops", "disk full".into(), later(600));
+        assert_eq!(
+            hook.unless_repeat("ops", "disk full", later(1300))
+                .as_deref(),
+            Some("disk full")
+        );
+        // A send that failed is tried again on the next alert, not counted.
+        assert!(hook.unless_repeat("ops", "cpu hot", later(1)).is_some());
+        assert!(hook.unless_repeat("ops", "cpu hot", later(2)).is_some());
+    }
+
+    #[test]
     fn a_route_takes_at_most_its_share_a_minute() {
         let hook = Hook {
             home: PathBuf::new(),
@@ -563,6 +644,7 @@ mod tests {
             routes: HashMap::new(),
             labels: Vec::new(),
             sent: Mutex::new(HashMap::new()),
+            repeats: Mutex::new(HashMap::new()),
         };
         for _ in 0..PER_MINUTE {
             assert!(hook.take_slot("ops"));

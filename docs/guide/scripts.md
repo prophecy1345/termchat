@@ -285,6 +285,7 @@ termchat hook --token-file /etc/termchat/hook-token \
 - Every request needs `Authorization: Bearer <token>`. Without it: `401`.
 - It listens on `127.0.0.1:9099`. `--listen ADDR` takes another address; anything other than loopback sends the token in the clear, so put a TLS proxy (Caddy, nginx) in front.
 - An Alertmanager or Grafana alert becomes `FIRING (2)` and one line per alert: its name, `instance`, and the `summary` or `description` annotation. Other labels stay out unless `--labels` names them: they often hold internal addresses.
+- **Repeats:** the same alert on the same route within 10 minutes is not sent again; the hook answers `200` and counts it. The next time it goes out, a line says how many repeats were held back. Paging routes are not affected.
 - Answers: `200` once the relay has the message, `503` when the daemon or relay is not there (Alertmanager retries), `400` for a body that is not the route's format, `413` over 1 MiB, `429` over 30 messages a minute per route.
 
 Alertmanager, in `alertmanager.yml`:
