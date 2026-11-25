@@ -1,0 +1,1 @@
+Fixes: messages are kept when the disk cannot save them, large documents go on after a restart, document actions hit the right document, backups leave out chats, restore refuses non-backups.

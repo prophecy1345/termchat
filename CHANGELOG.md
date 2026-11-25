@@ -3,6 +3,26 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.34.1
+
+- A message that arrives while the disk cannot save it is no longer
+  lost: the relay keeps it until a save works.
+- Large documents go on after the connection drops or either app
+  restarts, instead of stalling.
+- Saving, opening or discarding a document acts on that document even
+  when older messages expired meanwhile.
+- Backups no longer carry group history, drafts or unsent messages.
+- Restore refuses a file that is not a termchat.app backup.
+- A new chat or identity gets its address once the relay's rate limit
+  allows, instead of never until a reconnect.
+- Documents save the state once per round of chunks instead of once per
+  chunk: faster with a long history.
+- Terminal: recv through the daemon fails when a document cannot be
+  written, and keeps it in the app; send fails when the message expired
+  before the relay took it.
+- Release: the Linux programs and the Android app published are the ones
+  built twice with equal bytes, now on ARM Linux too.
+
 ## 0.34.0
 
 - Notes filters (ADR-046, amendment 3): tap a filter again to go back to
