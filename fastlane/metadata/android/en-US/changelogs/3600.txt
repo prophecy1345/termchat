@@ -1,0 +1,1 @@
+Send later: long-press Send to let a message go in 10 minutes up to a day. It waits only on your phone, encrypted.

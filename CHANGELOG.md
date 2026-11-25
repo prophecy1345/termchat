@@ -3,6 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.36.0
+
+- Send later: write a message now and let it go in 10 minutes, 1, 3 or
+  8 hours or a day. Long-press Send on Android, right-click SEND in the
+  desktop app, Ctrl+P then u in the terminal. It waits only on this
+  device, encrypted, and can be cancelled until it goes.
+- Unpicking the last picked message now ends picking, instead of
+  leaving Delete here and Cancel on screen.
+
 ## 0.35.0
 
 - Pick several messages and delete them on this device: in the terminal
