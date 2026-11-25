@@ -48,6 +48,10 @@ What actually protects a queue from flooding is the queue quota (10 MiB, 1000 en
 - **Relay bandwidth**: one queue can take up to about 640 KB/s in (was about 260 KB/s). Our VPS has room for it.
 - **Battery and data**: the same bytes, sent sooner. Large documents still go only after "Download" (ADR-043).
 
+## Note (2026-11-25, audit finding 10)
+
+The client keeps one frame in flight per queue and sends the next once the relay has taken it, so a refused part never lets a later one overtake it. The pace is therefore also bounded by the round trip to the relay: about 5 parts a second at 200 ms, so 25 MiB takes about 80 s there, and longer over Tor. The times above assume a relay less than about 100 ms away. Several frames in flight would need parts to be re-ordered after a refusal; not done.
+
 ## Rejected
 
 - **Larger chunks or a new bucket** above 64 KiB: more padding wasted on the last chunk, a bigger frame limit on every relay, and a new size that stands out more. The gain is small next to the pace change.
