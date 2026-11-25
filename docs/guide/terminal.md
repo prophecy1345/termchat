@@ -52,7 +52,7 @@ description: "The termchat.app terminal client: what is on the screen, what the 
 | **Enter** | send |
 | **↑ / ↓** | choose contact |
 | **PgUp / PgDn** | scroll the chat |
-| **Shift+↑** or **Ctrl+N** | pick a message: **Enter** answer, **e** edit, **d** delete for both, **1**–**7** react (again to take back), **Esc** back |
+| **Shift+↑** or **Ctrl+N** | pick a message: **Enter** answer, **e** edit, **d** delete for both, **1**–**7** react (again to take back), **Space** mark, **x** delete the marked on this device, **Esc** back |
 | **Ctrl+A** | add a contact from an invite |
 | **Ctrl+O** | your invite: **c** copy, **p** public, **i** incognito, **r** revoke unused |
 | **Ctrl+Y** | accept a request |

@@ -438,6 +438,17 @@ impl Engine {
 }
 
 /// A message clearing a chat keeps: not sent yet, or a document still arriving.
+/// Drops messages `rows` that are not on their way; how many went.
+fn drop_rows(messages: &mut Vec<Msg>, rows: &[usize]) -> usize {
+    let (before, mut row) = (messages.len(), 0);
+    messages.retain(|m| {
+        let keep = !rows.contains(&row) || on_its_way(m);
+        row += 1;
+        keep
+    });
+    before - messages.len()
+}
+
 fn on_its_way(m: &Msg) -> bool {
     matches!(m.status, Status::Queued | Status::Sending(_))
         || m.file.as_ref().is_some_and(|f| !m.mine && !f.complete())
@@ -3051,6 +3062,25 @@ impl Engine {
         Ok(())
     }
 
+    /// Deletes messages `rows` of chat `i` on this device only, as
+    /// `clear_chat` does: what is on its way stays. How many went.
+    pub fn delete_here(&mut self, i: usize, rows: &[usize]) -> Result<usize, String> {
+        let c = self.data.contacts.get_mut(i).ok_or("no such chat")?;
+        let n = drop_rows(&mut c.messages, rows);
+        self.persist();
+        Ok(n)
+    }
+
+    /// As `delete_here`, for group `g`, with their reactions.
+    pub fn delete_group_here(&mut self, g: usize, rows: &[usize]) -> Result<usize, String> {
+        let group = self.data.groups.get_mut(g).ok_or("no such group")?;
+        let n = drop_rows(&mut group.messages, rows);
+        let kept: Vec<u64> = group.messages.iter().filter_map(|m| m.id).collect();
+        group.reactions.retain(|(id, _, _)| kept.contains(id));
+        self.persist();
+        Ok(n)
+    }
+
     /// As `clear_chat`, for group `g`, with its reactions.
     pub fn clear_group_history(&mut self, g: usize) -> Result<(), String> {
         let group = self.data.groups.get_mut(g).ok_or("no such group")?;
@@ -4079,6 +4109,21 @@ mod tests {
         assert_eq!(left, ["not sent yet", "half.bin"]);
         assert_eq!(c.unread, 0);
         assert!(e.clear_chat(99).is_err());
+
+        // Picked messages go the same way: the queued one stays.
+        e.data.contacts[i].messages = vec![
+            msg("one", Status::Received),
+            msg("two", Status::Sent),
+            msg("three", Status::Queued),
+            msg("four", Status::Received),
+        ];
+        assert_eq!(e.delete_here(i, &[0, 2, 3]), Ok(2));
+        let left: Vec<&str> = e.data.contacts[i]
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect();
+        assert_eq!(left, ["two", "three"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

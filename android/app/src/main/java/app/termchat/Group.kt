@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.GroupView
+import app.termchat.engine.Picked
 
 /** One small private group (ADR-027): like a chat, with members and an admin. */
 @Composable
@@ -32,6 +33,8 @@ fun Group(m: Model, index: UInt) {
     var compose by remember(index) { mutableStateOf<Triple<UInt, Boolean, String>?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
+    // Messages picked to delete on this device; `null`: not picking.
+    var picked by remember(index) { mutableStateOf<Set<Picked>?>(null) }
     DisposableEffect(index) {
         a.openGroup(index)
         onDispose { if (m.account === a) a.openGroup(null) }
@@ -91,13 +94,18 @@ fun Group(m: Model, index: UInt) {
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         "forward" -> forwarding = at
+                        "pick" -> msg.id?.let { id ->
+                            val p = Picked(id, msg.mine)
+                            val now = picked.orEmpty()
+                            picked = if (p in now) now - p else now + p
+                        }
                         else -> {
                             val r = what.toUByte()
                             runCatching { a.reactGroup(index, at, if (msg.myReaction == r) null else r) }.onFailure(fail)
                             m.changed()
                         }
                     }
-                }, group = true, view = { viewing = msg.fileId }) { keep ->
+                }, group = true, view = { viewing = msg.fileId }, picking = picked != null, marked = msg.id?.let { Picked(it, msg.mine) in picked.orEmpty() } ?: false) { keep ->
                     val id = msg.fileId
                     if (id != null) if (keep) {
                         saving = id
@@ -120,7 +128,10 @@ fun Group(m: Model, index: UInt) {
                 IconTap("close", "Cancel") { if (edit) text = ""; compose = null }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        picked?.let { p ->
+            PickBar(p.size, { dialog = "delete-here" }) { picked = null }
+        }
+        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (g.expiresIn != null) IconText("timer", span(g.expiresIn), Tc.small, Tc.lime)
             Box(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
@@ -147,6 +158,10 @@ fun Group(m: Model, index: UInt) {
         "export" -> ExportChat(m, app.termchat.engine.Place.Group(index)) { dialog = null }
         "clear" -> Confirm(m, "Clear the history?", "Delete every message here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.", "Clear", { dialog = null }) {
             runCatching { a.clearGroupHistory(index) }.onFailure(fail)
+        }
+        "delete-here" -> Confirm(m, "Delete the selected?", DELETE_HERE, "Delete", { dialog = null }) {
+            runCatching { a.deleteGroupHere(index, picked.orEmpty().toList()) }.onFailure(fail)
+            picked = null
         }
         "leave" -> Confirm(m, "Leave the group?", leaveText(g), "Leave", { dialog = null }) {
             runCatching { a.leaveGroup(index) }.onFailure(fail)

@@ -171,9 +171,27 @@ pub enum Place {
     Group { index: u32 },
 }
 
+/// A message picked to delete: its `MessageView` id and side.
+#[derive(uniffi::Record)]
+pub struct Picked {
+    pub id: u64,
+    pub mine: bool,
+}
+
+/// Where the picked messages are now; in a group the id alone names one.
+fn picked_rows(msgs: &[Msg], picked: &[Picked], group: bool) -> Vec<usize> {
+    let hit = |m: &Msg, p: &Picked| m.id == Some(p.id) && (group || m.mine == p.mine);
+    (0..msgs.len())
+        .filter(|&n| !msgs[n].deleted && picked.iter().any(|p| hit(&msgs[n], p)))
+        .collect()
+}
+
 #[derive(uniffi::Record)]
 pub struct MessageView {
     pub mine: bool,
+    /// What a pick for `delete_here` names it by, with `mine`: rows move
+    /// as older messages expire. `None`: it cannot be picked.
+    pub id: Option<u64>,
     pub text: String,
     pub at: u64,
     pub system: bool,
@@ -544,6 +562,7 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
     }
     MessageView {
         mine: m.mine,
+        id: m.id.filter(|_| !m.deleted),
         text: engine::clean_text(
             &m.file
                 .as_ref()
@@ -1066,6 +1085,25 @@ impl Account {
     /// Clears chat `index`'s history on this device; what is on its way stays.
     pub fn clear_chat(&self, index: u32) -> Result<()> {
         Ok(self.with(index, |e, i| e.clear_chat(i))??)
+    }
+
+    /// Deletes the picked messages of chat `index` on this device; what
+    /// is on its way stays. How many went.
+    pub fn delete_here(&self, index: u32, picked: Vec<Picked>) -> Result<u32> {
+        let n = self.with(index, |e, i| {
+            let rows = picked_rows(&e.data.contacts[i].messages, &picked, false);
+            e.delete_here(i, &rows)
+        })??;
+        Ok(n as u32)
+    }
+
+    /// As `delete_here`, for group `group`.
+    pub fn delete_group_here(&self, group: u32, picked: Vec<Picked>) -> Result<u32> {
+        let n = self.with_group(group, |e, g| {
+            let rows = picked_rows(&e.data.groups[g].messages, &picked, true);
+            e.delete_group_here(g, &rows)
+        })??;
+        Ok(n as u32)
     }
 
     /// The group on screen (`None`: none): its messages are read as they come.

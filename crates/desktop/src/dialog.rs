@@ -110,6 +110,8 @@ pub enum Dialog {
     LeaveGroup,
     /// Clear the open chat's or group's history on this device?
     ClearHistory,
+    /// Delete the picked messages on this device?
+    DeletePicked,
     /// ADR-045: introduce the open contact to another.
     Introduce,
     /// ADR-028: this device's link code, for the main device.
@@ -1085,6 +1087,20 @@ impl Chat {
                         (None, None) => Ok(()),
                     };
                     if let Err(e) = done {
+                        self.status = e;
+                    }
+                    return false;
+                }
+                stay
+            }
+            Dialog::DeletePicked => {
+                ui.set_width(560.0);
+                ui.heading("Delete the selected");
+                ui.add_space(6.0);
+                ui.label("Delete the selected messages here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone.");
+                let (go, stay) = buttons(ui, p, "Delete");
+                if go {
+                    if let Err(e) = self.delete_picked() {
                         self.status = e;
                     }
                     return false;

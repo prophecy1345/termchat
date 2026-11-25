@@ -49,7 +49,8 @@ Ctrl+L       send a file (up to 25 MiB)
 Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
 Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
-             f forward, 1-7 react; Esc back to typing
+             f forward, 1-7 react, Space mark, x delete marked here;
+             Esc back to typing
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe,
              g new group
 In a group   Ctrl+R members (admin: a invite, x remove), Ctrl+T timer
@@ -800,12 +801,24 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         }
         prev = Some(msg);
         // ADR-025: the picked message stands out, answers show what they answer.
-        let row = match m.picked == Some(n) {
-            true => {
+        let marked = msg.id.is_some_and(|id| {
+            m.marked.contains(&termchat_core::proto::Ref {
+                id,
+                theirs: !msg.mine,
+            })
+        });
+        let row = match (m.picked == Some(n), marked) {
+            (true, _) => {
                 picked_line = Some(lines.len());
-                Style::new().bg(t.selection_bg)
+                let row = Style::new().bg(t.selection_bg);
+                if marked {
+                    row.add_modifier(Modifier::BOLD)
+                } else {
+                    row
+                }
             }
-            false => Style::new(),
+            (false, true) => Style::new().add_modifier(Modifier::REVERSED),
+            (false, false) => Style::new(),
         };
         if let Some(r) = msg.reply_to {
             // In a group ids are enough: each is random, and names no side.
@@ -926,9 +939,11 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     if let Some(at) = m.picked {
         // Only one's own messages can be edited or deleted.
         let hint = match msgs.get(at).is_some_and(|p| p.mine) {
-            _ if in_notes => " e edit · d delete · s star · f forward · ↑↓ · esc ",
-            true => " ↵ answer · e edit · d delete · 1–7 react · ↑↓ · esc ",
-            false => " ↵ answer · 1–7 react · ↑↓ · esc ",
+            _ if in_notes => {
+                " e edit · d delete · s star · f forward · space mark · x delete here · esc "
+            }
+            true => " ↵ answer · e edit · d delete · 1–7 react · space mark · x delete here · esc ",
+            false => " ↵ answer · 1–7 react · space mark · x delete here · esc ",
         };
         let hint = Span::styled(hint, Style::new().bg(t.panel_bg).fg(t.accent));
         let row = Rect::new(pane.x, pane.bottom().saturating_sub(1), pane.width, 1);
@@ -1875,6 +1890,17 @@ fn popup_pane(
                 ("esc keep", false, esc),
             ];
             window(f, t, h, "clear the history", lines, &buttons, 60, true);
+        }
+        Popup::DeleteHere => {
+            let lines = plain(&format!(
+                "Delete {} message(s) here on this device?\nThe others, and your other devices, keep theirs.\nWhat is still on its way stays. This cannot be undone.",
+                m.marked.len()
+            ));
+            let buttons = [
+                ("y delete", true, key(KeyCode::Char('y'))),
+                ("esc keep", false, esc),
+            ];
+            window(f, t, h, "delete here", lines, &buttons, 60, true);
         }
         Popup::LeaveGroup => {
             let mut text =

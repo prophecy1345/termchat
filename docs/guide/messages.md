@@ -91,6 +91,8 @@ An existing file is never overwritten.
 
 Delete every message of a chat or group on this device: **Ctrl+P**, then **w** in the terminal; ⋮ → **Clear history** in a chat or **Clear history** in a group in the desktop app; ⋮ → **Clear history** on Android. The others, and your other devices, keep theirs; what is still on its way (a message not sent yet, a document still arriving) stays. The cleared messages are wiped from the state file. This cannot be undone.
 
+To delete only some messages on this device, pick them: in the terminal **Shift+↑**, move with **↑/↓**, **Space** marks a message, **x** deletes the marked ones (or the picked one) after **y**; in the desktop app right-click a message → **Select**, click the others, then **Delete here**; on Android long-press a message → **Select**, tap the others, then **Delete here**. The same rules hold: the others and your other devices keep them, and what is still on its way stays.
+
 ## Search
 
 **Ctrl+S** in the terminal, ⋮ → **Search** on Android, and **Ctrl+F** (**Cmd+F** on a Mac), ⋮ → **Search** or **Search** in a group in the desktop app. Results show as you type. The desktop app also finds documents by name; **Esc** or **×** closes the search. Search runs on your device only.

@@ -194,6 +194,9 @@ pub struct Chat {
     focus_search: bool,
     /// The setting: a system notification while the window is not in front.
     pub(crate) notify: bool,
+    /// Messages picked to delete on this device, by id: rows move as older
+    /// messages expire. `None`: not picking.
+    picked: Option<Vec<Ref>>,
 }
 
 /// What SEND does with the typed text (ADR-025).
@@ -222,6 +225,8 @@ enum Act {
     Edit(usize),
     Delete(usize),
     React(usize, u8),
+    /// Pick or unpick a message to delete on this device; starts picking.
+    Pick(usize),
 }
 
 impl Chat {
@@ -245,6 +250,7 @@ impl Chat {
             focus_search: false,
             folded: [false; 3],
             notify: false,
+            picked: None,
         };
         chat.engine.resort();
         chat
@@ -412,6 +418,7 @@ impl Chat {
 
     fn switched(&mut self) {
         self.compose = Compose::New;
+        self.picked = None;
         self.search = None;
         self.input = self.draft_slot().map(|d| d.clone()).unwrap_or_default();
     }
@@ -807,6 +814,7 @@ impl Chat {
                             me,
                             rich: true,
                             query: self.search.as_deref().unwrap_or_default(),
+                            picked: self.picked.as_deref(),
                         };
                         if let Some(act) = messages(ui, p, view) {
                             self.act(Open::Group(g), act);
@@ -961,6 +969,7 @@ impl Chat {
                             me: self.engine.me(),
                             rich: self.engine.rich(i),
                             query: self.search.as_deref().unwrap_or_default(),
+                            picked: self.picked.as_deref(),
                         };
                         if let Some(act) = messages(ui, p, view) {
                             self.act(Open::Chat(i), act);
@@ -1024,6 +1033,15 @@ impl Chat {
                 }
             }
             Act::Forward(n) => self.dialog = Some(Dialog::Forward(n)),
+            Act::Pick(n) => {
+                if let Some(r) = target(n) {
+                    let picked = self.picked.get_or_insert_with(Vec::new);
+                    match picked.iter().position(|p| *p == r) {
+                        Some(k) => drop(picked.remove(k)),
+                        None => picked.push(r),
+                    }
+                }
+            }
             _ if !rich => self.status = OLDER_APP.into(),
             Act::Reply(n) => {
                 self.compose = target(n).map_or(Compose::New, Compose::Reply);
@@ -1062,6 +1080,43 @@ impl Chat {
     }
 
     /// Where the message `r` points at is now. In a group the id alone names it.
+    /// Deletes the picked messages of the open chat or group on this device.
+    pub(crate) fn delete_picked(&mut self) -> Result<usize, String> {
+        let at = match (
+            self.open_group(),
+            self.open.and_then(|k| self.engine.index(&k)),
+        ) {
+            (Some(g), _) => Open::Group(g),
+            (None, Some(i)) => Open::Chat(i),
+            (None, None) => return Ok(0),
+        };
+        let picked = self.picked.take().unwrap_or_default();
+        let rows: Vec<usize> = picked.iter().filter_map(|r| self.locate(at, *r)).collect();
+        match at {
+            Open::Chat(i) => self.engine.delete_here(i, &rows),
+            Open::Group(g) => self.engine.delete_group_here(g, &rows),
+        }
+    }
+
+    /// Instead of the input while picking: how many, Delete, Cancel.
+    fn pick_bar(&mut self, ui: &mut egui::Ui, p: &Pal) {
+        let n = self.picked.as_ref().map_or(0, Vec::len);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{n} selected"))
+                    .monospace()
+                    .color(p.dim),
+            );
+            let delete = ui.add_enabled(n > 0, egui::Button::new("Delete here"));
+            if delete.clicked() {
+                self.dialog = Some(Dialog::DeletePicked);
+            }
+            if ui.button("Cancel").clicked() {
+                self.picked = None;
+            }
+        });
+    }
+
     fn locate(&self, at: Open, r: Ref) -> Option<usize> {
         let group = matches!(at, Open::Group(_));
         self.msgs(at)
@@ -1242,6 +1297,9 @@ impl Chat {
     }
 
     fn input_row(&mut self, ui: &mut egui::Ui, p: &Pal, at: Open) {
+        if self.picked.is_some() {
+            return self.pick_bar(ui, p);
+        }
         let timer = match at {
             Open::Chat(i) => self.engine.data.contacts[i].expires_in,
             Open::Group(g) => self.engine.data.groups[g].timer(),
@@ -1597,6 +1655,8 @@ struct View<'a> {
     query: &'a str,
     /// ADR-046 amendment 1: in Notes, the filter chosen.
     filter: Option<&'a NoteFilter>,
+    /// Picking messages to delete: a click picks instead.
+    picked: Option<&'a [Ref]>,
 }
 
 /// Our reaction to `m` in group `g`.
@@ -1677,10 +1737,19 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
             mark.push_str(" · edited");
         }
         let align = if m.mine { Align::Max } else { Align::Min };
+        let me = m.id.map(|id| Ref {
+            id,
+            theirs: !m.mine,
+        });
+        let on = me.is_some_and(|r| v.picked.is_some_and(|p| p.contains(&r)));
         ui.with_layout(Layout::top_down(align), |ui| {
             ui.set_max_width(width * 0.7);
             let bubble = egui::Frame::new()
                 .fill(if m.mine { p.mine } else { p.theirs })
+                .stroke(match on {
+                    true => Stroke::new(2.0, p.accent),
+                    false => Stroke::NONE,
+                })
                 .corner_radius(4)
                 .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
@@ -1716,7 +1785,11 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
             let pointable = v.rich && m.id.is_some() && !m.deleted;
             // ADR-046: a note answers no one and takes no reactions.
             let note = v.filter.is_some();
-            if pointable {
+            if v.picked.is_some() {
+                if me.is_some() && bubble.interact(egui::Sense::click()).clicked() {
+                    act = Some(Act::Pick(n));
+                }
+            } else if pointable {
                 let r = bubble
                     .interact(egui::Sense::click())
                     .on_hover_text(match (note, m.mine) {
@@ -1763,6 +1836,10 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                     };
                     if m.mine && ui.button(delete).clicked() {
                         act = Some(Act::Delete(n));
+                        ui.close();
+                    }
+                    if ui.button("Select").clicked() {
+                        act = Some(Act::Pick(n));
                         ui.close();
                     }
                 });
@@ -2240,6 +2317,7 @@ mod tests {
             ),
             (Dialog::LeaveGroup, "Leave the group"),
             (Dialog::ClearHistory, "Clear the history"),
+            (Dialog::DeletePicked, "Delete the selected"),
             (Dialog::DeleteMessage(0), "Delete it for everyone"),
         ];
         for (d, want) in dialogs {

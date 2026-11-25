@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.asImageBitmap
 import app.termchat.engine.ContactView
 import app.termchat.engine.MessageView
+import app.termchat.engine.Picked
 import app.termchat.engine.Place
 import app.termchat.engine.reactions
 
@@ -95,6 +96,8 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
     var compose by remember(index) { mutableStateOf<Compose?>(null) }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
+    // Messages picked to delete on this device, by id and side; `null`: not picking.
+    var picked by remember(index) { mutableStateOf<Set<Picked>?>(null) }
     // Search runs here, over what is already on the phone; `null` is off.
     var query by remember(index) { mutableStateOf(if (ask == "search") "" else null) }
     DisposableEffect(index) {
@@ -199,6 +202,11 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         "forward" -> forwarding = at
+                        "pick" -> msg.id?.let { id ->
+                            val p = Picked(id, msg.mine)
+                            val now = picked.orEmpty()
+                            picked = if (p in now) now - p else now + p
+                        }
                         else -> {
                             // A reaction; the same one again takes it back.
                             val r = what.toUByte()
@@ -212,7 +220,8 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     runCatching { a.downloadFile(index, at) }.onFailure { m.note = it.message ?: "$it" }
                     m.changed()
                 }
-                Bubble(msg, c.rich, act, download = download, view = { viewing = msg.fileId }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null) { keep ->
+                val marked = msg.id?.let { Picked(it, msg.mine) in picked.orEmpty() } ?: false
+                Bubble(msg, c.rich, act, download = download, view = { viewing = msg.fileId }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null, picking = picked != null, marked = marked) { keep ->
                     val id = msg.fileId
                     if (id != null) if (keep) {
                         saving = id
@@ -288,7 +297,10 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        picked?.let { p ->
+            PickBar(p.size, { dialog = "delete-here" }) { picked = null }
+        }
+        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // The fading envelope cycles the disappearing timer, like Ctrl+T.
             Column(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
@@ -344,6 +356,10 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
             runCatching { a.clearChat(index) }.onFailure { m.note = it.message ?: "$it" }
         }
         "introduce" -> Introduce(m, index) { dialog = null }
+        "delete-here" -> Confirm(m, "Delete the selected?", DELETE_HERE, "Delete", { dialog = null }) {
+            runCatching { a.deleteHere(index, picked.orEmpty().toList()) }.onFailure { m.note = it.message ?: "$it" }
+            picked = null
+        }
         else -> ContactDialog(m, c, d) { dialog = null }
     }
     forwarding?.let { at -> ForwardTo(m, Place.Chat(index), at) { forwarding = null } }
@@ -363,6 +379,18 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
             },
             dismissButton = { Flat("Cancel", color = Tc.dim) { unsend = null } },
         )
+    }
+}
+
+internal const val DELETE_HERE = "Delete the selected messages here on this device? The others, and your other devices, keep theirs. What is still on its way stays. This cannot be undone."
+
+/** Instead of the input while picking: how many, Delete here, Cancel. */
+@Composable
+internal fun PickBar(n: Int, delete: () -> Unit, cancel: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("$n selected", style = Tc.mono.copy(color = Tc.dim), modifier = Modifier.weight(1f))
+        Flat("Delete here", enabled = n > 0, color = Tc.danger) { delete() }
+        Flat("Cancel", color = Tc.dim) { cancel() }
     }
 }
 
@@ -464,7 +492,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, star: (() -> Unit)? = null, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, star: (() -> Unit)? = null, picking: Boolean = false, marked: Boolean = false, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
@@ -488,8 +516,15 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                 Modifier
                     .widthIn(max = 300.dp)
                     .background(if (msg.mine) Tc.mine else Tc.theirs, corner)
-                    // ADR-025: a long press for answers, reactions, edits and deletes.
-                    .pointerInput(msg.pointable) { detectTapGestures(onLongPress = { if (!msg.deleted && msg.fileName == null) menu = true }) }
+                    .then(if (marked) Modifier.border(2.dp, Tc.lime, corner) else Modifier)
+                    // ADR-025: a long press for answers, reactions, edits and deletes;
+                    // while picking, a tap picks.
+                    .pointerInput(msg.pointable, picking) {
+                        detectTapGestures(
+                            onTap = { if (picking && msg.id != null) act("pick") },
+                            onLongPress = { if (!picking && !msg.deleted && msg.fileName == null) menu = true },
+                        )
+                    }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
                 msg.quote?.let { IconText("reply", it, gone, Tc.dim) }
@@ -530,6 +565,7 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     item("Edit", "edit")
                     item(if (group) "Delete for everyone" else if (star != null) "Delete" else "Delete for both", "delete")
                 }
+                if (msg.id != null) item("Select", "pick")
             }
         }
         if (msg.fileUnsaved) {

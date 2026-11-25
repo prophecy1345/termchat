@@ -159,6 +159,8 @@ pub enum Popup {
     LeaveGroup,
     /// Clear the open chat's or group's history on this device?
     ClearHistory,
+    /// Delete the marked messages on this device?
+    DeleteHere,
     /// ADR-028: this device's link code, to paste on the main device.
     LinkCode(String),
     /// Our devices, with the highlighted row.
@@ -232,6 +234,9 @@ pub struct Main {
     pub status: String,
     /// The message picked with Shift+Up or Ctrl+N, by index (ADR-025).
     pub picked: Option<usize>,
+    /// Messages marked with Space to delete on this device, by id: rows
+    /// move as older messages expire.
+    pub marked: Vec<Ref>,
     /// ADR-046 amendment 1: which notes Notes shows.
     pub note_filter: NoteFilter,
     pub compose: Compose,
@@ -659,6 +664,7 @@ impl Main {
             alerts: Vec::new(),
             status: String::new(),
             picked: None,
+            marked: Vec::new(),
             note_filter: NoteFilter::All,
             compose: Compose::New,
             idle: Idle::default(),
@@ -1055,7 +1061,27 @@ impl Main {
             KeyCode::Char('r' | '1'..='9') | KeyCode::Enter if note => {}
             KeyCode::Up => self.picked = Some(all[pos.saturating_sub(1)]),
             KeyCode::Down => self.picked = all.get(pos + 1).copied(),
-            KeyCode::Esc => self.picked = None,
+            KeyCode::Esc => {
+                self.picked = None;
+                self.marked.clear();
+            }
+            KeyCode::Char(' ') => {
+                if let Some(r) = target {
+                    match self.marked.iter().position(|m| *m == r) {
+                        Some(k) => drop(self.marked.remove(k)),
+                        None => self.marked.push(r),
+                    }
+                }
+            }
+            // The marked ones, or else the picked one.
+            KeyCode::Char('x') => {
+                if self.marked.is_empty()
+                    && let Some(r) = target
+                {
+                    self.marked.push(r);
+                }
+                self.popup = Some(Popup::DeleteHere);
+            }
             KeyCode::Char('r') | KeyCode::Enter => match rich {
                 true => {
                     self.compose = target.map_or(Compose::New, Compose::Reply);
@@ -1112,6 +1138,7 @@ impl Main {
         self.selected = i;
         self.scroll = 0;
         self.picked = None;
+        self.marked.clear();
         self.compose = Compose::New;
         match i.checked_sub(n) {
             Some(g) => self.engine.data.groups[g].unread = 0,
@@ -1982,6 +2009,22 @@ impl Main {
                     };
                     self.status = match done {
                         Ok(()) => "history cleared on this device".into(),
+                        Err(e) => e,
+                    };
+                }
+                None
+            }
+            Popup::DeleteHere => {
+                if k.code == KeyCode::Char('y') {
+                    let marked = std::mem::take(&mut self.marked);
+                    let rows: Vec<usize> = marked.iter().filter_map(|r| self.locate(*r)).collect();
+                    let done = match self.group_index() {
+                        Some(g) => self.engine.delete_group_here(g, &rows),
+                        None => self.engine.delete_here(self.selected, &rows),
+                    };
+                    self.picked = None;
+                    self.status = match done {
+                        Ok(n) => format!("{n} deleted on this device"),
                         Err(e) => e,
                     };
                 }
