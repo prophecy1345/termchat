@@ -127,20 +127,22 @@ internal fun laterSpan(s: Long) = when {
 }
 
 /** When a message waiting for later goes: the local time, with the day if not today. */
-internal fun laterAt(at: ULong): String {
+internal fun laterAt(context: android.content.Context, at: ULong): String {
     val ms = at.toLong() * 1000
     val sameDay = android.text.format.DateUtils.isToday(ms)
     val flags = android.text.format.DateUtils.FORMAT_SHOW_TIME or if (sameDay) 0 else android.text.format.DateUtils.FORMAT_SHOW_DATE
-    return android.text.format.DateUtils.formatDateTime(null, ms, flags)
+    // A real context: the 12/24-hour setting is read from it (null crashed the app).
+    return android.text.format.DateUtils.formatDateTime(context, ms, flags)
 }
 
 /** PLAN Q4: the messages waiting to go later, each with a cross to cancel. */
 @Composable
 internal fun LaterStrip(items: List<app.termchat.engine.LaterView>, cancel: (UInt) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     items.forEachIndexed { n, l ->
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Later ${laterAt(l.at)} · ${l.text.lineSequence().first()}",
+                "Later ${laterAt(context, l.at)} · ${l.text.lineSequence().first()}",
                 style = Tc.small.copy(color = Tc.dim),
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
