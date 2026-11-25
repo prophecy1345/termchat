@@ -83,6 +83,8 @@ Archived chats sit above the others, under their own heading; pin a chat to keep
 
 **Ctrl+V** in the terminal, ⋮ → **Mute** in a chat or **Mute** in a group in the desktop app, ⋮ → **Mute** on Android: off → 1 hour → 1 day → always; each tap takes the next step, and the menu stays open until you pick. In the list a muted chat or group has a struck bell beside its name, in the terminal a dim **~** before its count. A muted chat makes no sound and no notification; its unread count still grows, and a new contact request always alerts. On Android, a wake-up that arrives while the app is locked cannot tell which chat it is for, so it still says "New message".
 
+**Mentions:** in a group, write `@` and someone's nickname (`@ann`) to reach them even if they muted the group: their app notices its own name in the text and alerts anyway (the desktop app and Android; the terminal has no group alerts). Nothing new is sent: a mention is plain text, and only the person's own app recognizes it.
+
 ## Export a chat
 
 Save a chat or group as a plain text file: each message with its time in UTC and who wrote it, documents as their names. **The file is not encrypted.** Anyone who can read it reads the chat, disappearing messages included, so keep it somewhere safe and delete it when you are done.

@@ -472,6 +472,24 @@ fn later(text: &str, at: u64) -> Result<data::Later, String> {
     })
 }
 
+/// PLAN Q3: whether `text` says `@nickname`, any case, as a whole name
+/// (`@ann` is not `@anna`). Only text: nothing new goes on the wire.
+pub fn mentions(text: &str, nickname: &str) -> bool {
+    let (text, name) = (
+        text.to_lowercase(),
+        format!("@{}", nickname.trim().to_lowercase()),
+    );
+    if name.len() < 2 {
+        return false;
+    }
+    text.match_indices(&name).any(|(at, _)| {
+        text[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '-')
+    })
+}
+
 /// Drops messages `rows` that are not on their way; how many went.
 fn drop_rows(messages: &mut Vec<Msg>, rows: &[usize]) -> usize {
     let (before, mut row) = (messages.len(), 0);
@@ -1652,9 +1670,22 @@ impl Engine {
     }
 
     /// A muted chat or group still counts unread, without a sound or a
-    /// notification; a stranger's request is never muted. From `before` on.
+    /// notification; a stranger's request is never muted, nor a group
+    /// message that mentions us by `@nickname` (PLAN Q3). From `before` on.
     fn quiet_muted(&mut self, before: usize) {
+        let ours: Vec<Ed25519Key> = (0..self.cores.len()).map(|s| self.key_of(s)).collect();
         let data = &self.data;
+        let mentioned = |g: &data::Group| {
+            let Some(last) = g.messages.last().filter(|m| !m.mine) else {
+                return false;
+            };
+            // Our name in the group's roster; before one comes, our nickname.
+            let mut names = g.members().iter().filter(|m| ours.contains(&m.ed25519));
+            match names.next() {
+                Some(m) => mentions(&last.text, &m.nickname),
+                None => mentions(&last.text, &data.nickname),
+            }
+        };
         let mut n = 0;
         self.happened.retain(|h| {
             n += 1;
@@ -1670,7 +1701,7 @@ impl Engine {
                     Happened::GroupAlert { group } => !data
                         .groups
                         .iter()
-                        .any(|g| g.id == *group && muted(g.muted_until)),
+                        .any(|g| g.id == *group && muted(g.muted_until) && !mentioned(g)),
                     _ => true,
                 }
         });
@@ -4175,6 +4206,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_mention_is_the_whole_nickname_in_any_case() {
+        assert!(mentions("@Ann look", "ann"));
+        assert!(mentions("hi @ann, look", "Ann"));
+        assert!(mentions("for @Ann Lee.", "Ann Lee"));
+        assert!(mentions("@ann", "ann"));
+        assert!(!mentions("@anna look", "ann"));
+        assert!(!mentions("ann look", "ann"));
+        assert!(!mentions("@ann_b", "ann"));
+        assert!(!mentions("@", ""));
+    }
+
     #[tokio::test]
     async fn a_message_for_later_goes_when_due_and_not_before() {
         let (mut e, dir) = offline("later");
@@ -4547,6 +4590,20 @@ mod tests {
         }];
         e.quiet_muted(0);
         assert_eq!(e.happened.len(), 1, "an expired mute is off");
+
+        // PLAN Q3: a message that says @me gets through the group's mute.
+        let said = |text: &str| {
+            let mut m = data::Msg::default();
+            m.text = text.into();
+            m.status = Status::Received;
+            m
+        };
+        for (text, heard) in [("@me look", 1), ("@meadow look", 0), ("look", 0)] {
+            e.data.groups[g].messages.push(said(text));
+            e.happened = vec![Happened::GroupAlert { group }];
+            e.quiet_muted(0);
+            assert_eq!(e.happened.len(), heard, "{text}");
+        }
 
         let hour = next_mute(None).unwrap() - now();
         assert!((3599..=3600).contains(&hour));
