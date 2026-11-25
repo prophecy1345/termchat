@@ -300,7 +300,7 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
         picked?.let { p ->
             PickBar(p.size, { dialog = "delete-here" }) { picked = null }
         }
-        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // The fading envelope cycles the disappearing timer, like Ctrl+T.
             Column(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
@@ -333,7 +333,7 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     c.needsInvite -> "Ask them for a new invite, or send yours"
                     else -> "Encrypted message"
                 },
-                Modifier.weight(1f), singleLine = false,
+                Modifier.weight(1f), singleLine = false, maxLines = 6,
             )
             Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime) {
                 runCatching {

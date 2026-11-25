@@ -131,14 +131,14 @@ fun Group(m: Model, index: UInt) {
         picked?.let { p ->
             PickBar(p.size, { dialog = "delete-here" }) { picked = null }
         }
-        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (g.expiresIn != null) IconText("timer", span(g.expiresIn), Tc.small, Tc.lime)
             Box(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
-            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false)
+            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false, maxLines = 6)
             Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime) {
                 runCatching {
                     val cm = compose

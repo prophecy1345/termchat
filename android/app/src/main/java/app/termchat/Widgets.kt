@@ -84,6 +84,8 @@ fun Field(
     modifier: Modifier = Modifier,
     secret: Boolean = false,
     singleLine: Boolean = true,
+    // Taller text scrolls inside the field instead of pushing the screen away.
+    maxLines: Int = 8,
 ) {
     // Text put in from outside (an edit, a clear) gets the cursor at its end.
     var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
@@ -95,6 +97,7 @@ fun Field(
             if (it.text != value) onChange(it.text)
         },
         singleLine = singleLine,
+        maxLines = if (singleLine) 1 else maxLines,
         textStyle = Tc.mono,
         cursorBrush = SolidColor(Tc.lime),
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
