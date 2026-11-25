@@ -14,13 +14,17 @@ const ALICE: usize = 0;
 const BOB: usize = 1;
 
 async fn start_relay() -> String {
+    start_relay_with(Limits::default()).await
+}
+
+async fn start_relay_with(limits: Limits) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://127.0.0.1:{}/", listener.local_addr().unwrap().port());
     let config = Config {
         trust_proxy: false,
         db: None,
         reports: None,
-        limits: Limits::default(),
+        limits,
     };
     tokio::spawn(termchat_relay::serve(listener, None, config));
     url
@@ -34,7 +38,10 @@ fn state(dir: &Path, name: &str) -> PathBuf {
 }
 
 async fn world(name: &str) -> (Vec<Box<Engine>>, PathBuf) {
-    let url = start_relay().await;
+    world_on(name, start_relay().await).await
+}
+
+async fn world_on(name: &str, url: String) -> (Vec<Box<Engine>>, PathBuf) {
     let dir = std::env::temp_dir().join(format!("termchat-11e-{name}-{}", std::process::id()));
     let e = ["alice", "bob"]
         .iter()
@@ -195,5 +202,25 @@ async fn a_large_document_survives_restarts_on_both_sides() {
     pump(&mut e, |e| e[BOB].unsaved_file(from_alice).is_some()).await;
     let saved = e[BOB].save_file(from_alice, m, &dir).unwrap();
     assert_eq!(std::fs::read(&saved).unwrap(), doc);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Finding 7: a queue the relay refused for its rate limit is asked for
+/// again later, and every owner still gets its own queue.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_queue_is_asked_for_again() {
+    let limits = Limits {
+        queues_per_ip: termchat_relay::Rate {
+            burst: 1.0,
+            per_sec: 0.5,
+        },
+        ..Limits::default()
+    };
+    let (mut e, dir) = world_on("refused", start_relay_with(limits).await).await;
+    befriend(&mut e, ALICE, BOB).await;
+    let (ka, kb) = (e[ALICE].me(), e[BOB].me());
+    let i = e[ALICE].index(&kb).unwrap();
+    e[ALICE].send(i, "through").unwrap();
+    pump(&mut e, |e| has(&e[BOB], &ka, "through")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }

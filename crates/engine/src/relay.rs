@@ -761,7 +761,7 @@ async fn sleep_until(at: Option<Instant>) {
 }
 
 /// 50-100 % of `delay`, so clients do not reconnect in lockstep.
-fn jitter(delay: Duration) -> Duration {
+pub(crate) fn jitter(delay: Duration) -> Duration {
     let r = f64::from(getrandom::u32().unwrap_or(u32::MAX)) / f64::from(u32::MAX);
     delay.mul_f64(0.5 + r / 2.0)
 }

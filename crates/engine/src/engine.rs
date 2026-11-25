@@ -34,6 +34,7 @@ mod notes;
 pub use notes::{NOTES_KEY, NoteFilter, note_shown, tags_of};
 #[path = "receipts.rs"]
 mod receipts;
+use crate::relay::jitter;
 use crate::{Bridges, Dial, Error, Event, Relay, parse_version, password};
 pub use group::GroupScriptError;
 use subtle::ConstantTimeEq;
@@ -344,6 +345,11 @@ struct Live {
     connected: bool,
     /// Whose `CreateQueue` frames are out, in order: the relay answers in order.
     creating: Vec<Ed25519Key>,
+    /// Whose `CreateQueue` the relay refused (its rate limit): asked again
+    /// at `create_due`, the wait doubling up to `MAX_CREATE_WAIT`.
+    refused: Vec<Ed25519Key>,
+    create_due: Option<Instant>,
+    create_wait: Duration,
     /// `Subscribe` frames waiting for their answer: an unknown queue then is ours, gone.
     subscribing: Vec<QueueId>,
     /// An unanswered heartbeat per contact, retained across reconnects of this link.
@@ -359,6 +365,10 @@ impl Drop for Live {
     }
 }
 
+/// First wait before a refused `CreateQueue` goes again; the relay
+/// allows 20 an hour per address (one every 3 minutes once spent).
+const CREATE_WAIT: Duration = Duration::from_secs(5);
+const MAX_CREATE_WAIT: Duration = Duration::from_secs(15 * 60);
 /// After `NoKeys`, when to claim again.
 const RECLAIM_AFTER: Duration = Duration::from_secs(15);
 /// How long a queue being deleted may take (ADR-014, ADR-023).
@@ -543,6 +553,9 @@ fn start(
         relay,
         connected: false,
         creating: Vec::new(),
+        refused: Vec::new(),
+        create_due: None,
+        create_wait: CREATE_WAIT,
         subscribing: Vec::new(),
         heartbeats: BTreeMap::new(),
         version: None,
@@ -981,6 +994,7 @@ impl Engine {
         if let Some(l) = self.live_mut(&who, &home)
             && l.connected
             && !l.creating.contains(&who)
+            && !l.refused.contains(&who)
         {
             l.creating.push(who);
             let _ = l.relay.send(ClientFrame::CreateQueue);
@@ -1680,9 +1694,17 @@ impl Engine {
                 send_id,
                 token,
             } => {
+                // Any waiting owner can take it: a queue is not bound to one.
                 let owner = match self.links.get_mut(link) {
-                    Some(l) if !l.creating.is_empty() => l.creating.remove(0),
-                    _ => who,
+                    Some(l) => {
+                        l.create_wait = CREATE_WAIT;
+                        match (l.creating.is_empty(), l.refused.is_empty()) {
+                            (false, _) => l.creating.remove(0),
+                            (true, false) => l.refused.remove(0),
+                            (true, true) => who,
+                        }
+                    }
+                    None => who,
                 };
                 let q = Queue {
                     relay_url: link.relay.clone(),
@@ -1794,6 +1816,18 @@ impl Engine {
                 let lost = match self.links.get_mut(link) {
                     Some(l) if code == ErrorCode::UnknownQueue && !l.subscribing.is_empty() => {
                         Some(l.subscribing.remove(0))
+                    }
+                    // The relay answers in order, so the oldest `CreateQueue`
+                    // is taken as the one refused; were it a `ClaimKey`, its
+                    // `QueueCreated` still finds the owner in `refused`.
+                    Some(l) if code == ErrorCode::RateLimited && !l.creating.is_empty() => {
+                        let owner = l.creating.remove(0);
+                        l.refused.push(owner);
+                        if l.create_due.is_none() {
+                            l.create_due = Some(Instant::now() + jitter(l.create_wait));
+                            l.create_wait = (l.create_wait * 2).min(MAX_CREATE_WAIT);
+                        }
+                        return;
                     }
                     _ => None,
                 };
@@ -2502,6 +2536,21 @@ impl Engine {
 
     /// ADR-038, a setting: the chat and group on screen skip the rest of
     /// their spread. Called from `tick`.
+    /// Asks again for the queues the relay refused, once their wait is over.
+    fn create_refused(&mut self) {
+        let t = Instant::now();
+        let mut again = Vec::new();
+        for l in self.links.values_mut() {
+            if l.connected && l.create_due.is_some_and(|at| t >= at) {
+                l.create_due = None;
+                again.append(&mut l.refused);
+            }
+        }
+        for who in again {
+            self.ensure_queue(who);
+        }
+    }
+
     fn hurry_open_links(&self) {
         if !self.data.hurry_open {
             return;
@@ -2539,6 +2588,7 @@ impl Engine {
         self.retry_group_moves();
         self.retire_old_queues();
         self.hurry_open_links();
+        self.create_refused();
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
             self.claiming.clear();
