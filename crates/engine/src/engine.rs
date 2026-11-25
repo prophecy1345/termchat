@@ -497,6 +497,8 @@ fn why(code: ErrorCode) -> String {
 /// A backup is a state file without sessions or messages: restoring is a copy.
 pub fn restore(state: &Path, backup: &Path) -> Result<(), String> {
     let bytes = std::fs::read(backup).map_err(|e| format!("cannot read backup: {e}"))?;
+    // Audit 2026-11-25, finding 8: a wrong file would leave a state that never opens.
+    termchat_core::store::params(&bytes).map_err(|_| "not a termchat.app backup".to_string())?;
     data::write_atomic(state, &bytes).map_err(|e| e.to_string())?;
     // ADR-003: the copy brought onto this device is erased with it.
     data::remember_backup(state, backup, &bytes).map_err(|e| e.to_string())

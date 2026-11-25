@@ -190,16 +190,13 @@ pub fn file_id(file: &[u8]) -> Option<[u8; SALT]> {
     file.get(SLOTS_AT..SLOTS_AT + SALT)?.try_into().ok()
 }
 
-pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>), Error> {
-    if file.len() < HEADER + NONCE + 16 {
+/// The KDF parameters of a state file, if its header is one this version
+/// opens; no password needed, so a picked file can be checked before use.
+pub fn params(file: &[u8]) -> Result<KdfParams, Error> {
+    if file.len() < HEADER + NONCE + 16 || file[..2] != FORMAT_VERSION.to_le_bytes() {
         return Err(Error::CorruptState);
     }
-    let (header, rest) = file.split_at(HEADER);
-    let (nonce, body) = rest.split_at(NONCE);
-    if header[..2] != FORMAT_VERSION.to_le_bytes() {
-        return Err(Error::CorruptState);
-    }
-    let le = |i: usize| u32::from_le_bytes(arr(&header[i..i + 4]));
+    let le = |i: usize| u32::from_le_bytes(arr(&file[i..i + 4]));
     let params = KdfParams {
         m_kib: le(2),
         t: le(6),
@@ -211,6 +208,13 @@ pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>
     if params.m_kib > 4 * KdfParams::DEFAULT.m_kib || params.t > 8 || params.p > 4 {
         return Err(Error::CorruptState);
     }
+    Ok(params)
+}
+
+pub fn open(password: &[u8], file: &[u8]) -> Result<(FileKey, Zeroizing<Vec<u8>>), Error> {
+    let params = params(file)?;
+    let (header, rest) = file.split_at(HEADER);
+    let (nonce, body) = rest.split_at(NONCE);
 
     // Derive for both slots and decrypt the body exactly once on every path
     // (with a dummy key if needed): either password, or a wrong one, takes the

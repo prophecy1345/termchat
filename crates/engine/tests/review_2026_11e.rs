@@ -224,3 +224,22 @@ async fn a_refused_queue_is_asked_for_again() {
     pump(&mut e, |e| has(&e[BOB], &ka, "through")).await;
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Finding 8: a file that is no backup is not installed as the state;
+/// a real backup is.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_a_backup_is_restored() {
+    let (mut e, dir) = world("restore").await;
+    let (state, photo, backup) = (
+        state(&dir, "new"),
+        dir.join("photo.jpg"),
+        dir.join("backup"),
+    );
+    std::fs::write(&photo, vec![0xff; 4096]).unwrap();
+    assert!(termchat_engine::engine::restore(&state, &photo).is_err());
+    assert!(!state.exists());
+    e[ALICE].backup(&backup, PASSWORD).unwrap();
+    termchat_engine::engine::restore(&state, &backup).unwrap();
+    assert_eq!(unlock(&state).me(), e[ALICE].me());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
