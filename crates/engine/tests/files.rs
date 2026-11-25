@@ -112,7 +112,8 @@ async fn documents_travel_both_ways_but_not_before_acceptance() {
             .all(|m| m.file.is_none())
     );
 
-    let doc: Vec<u8> = (0..170_000u32).map(|n| (n % 251) as u8).collect();
+    // More chunks than one burst (ADR-047), so the file is still going.
+    let doc: Vec<u8> = (0..600_000u32).map(|n| (n % 251) as u8).collect();
     bob.send_file(0, "report.pdf", doc.clone()).unwrap();
     assert_eq!(
         bob.send_file(0, "second.pdf", vec![1]),
