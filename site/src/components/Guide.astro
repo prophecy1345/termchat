@@ -2,7 +2,7 @@
 // A page of the user guide: the sections on the left (a fold-out list on a
 // phone), the text, and the way to the next section.
 import Doc from "./Doc.astro";
-import { sections, written } from "../guide";
+import { docPages, sections, written } from "../guide";
 import type { Lang } from "../i18n";
 
 interface Props {
@@ -25,18 +25,11 @@ const prev = at > 0 ? list[at - 1] : at === 0 ? { slug: "", title: { en: "Overvi
 const words = lang === "en"
   ? { sections: "Sections", overview: "Overview", next: "Next", prev: "Back" }
   : { sections: "Разделы", overview: "Обзор", next: "Дальше", prev: "Назад" };
-// Links between documents point at their pages, as on the other doc pages.
-const pages: Record<string, string> = {
-  "threat-model.md": "/threat-model/",
-  "threat-model.ru.md": "/ru/threat-model/",
-  "self-host.md": "/docs/relay/",
-  "self-host.ru.md": "/ru/docs/relay/",
-};
 const body = html
   .replace(/<h1[^>]*>.*?<\/h1>/s, "")
   // "Русская версия: …" is for GitHub; the site has its language switch.
   .replace(/<p>(?:Русская версия|English version): <a[^>]*>[^<]*<\/a>\.<\/p>/, "")
-  .replace(/href="(?:\.\.\/)?([\w.-]+\.md)"/g, (all, f) => (pages[f] ? `href="${url(pages[f])}"` : all))
+  .replace(/href="(?:\.\.\/)?([\w.-]+\.md)"/g, (all, f) => (docPages[f] ? `href="${url(docPages[f][0])}"` : all))
   .replace(/href="([\w-]+)(?:\.ru)?\.md(#[^"]*)?"/g, (all, s, hash) =>
     sections.some((x) => x.slug === s) ? `href="${href(s)}${hash ?? ""}"` : all,
   );

@@ -51,3 +51,12 @@ export function file(slug: string, lang: Lang): Md | undefined {
 
 /** The sections written in `lang`, in order. */
 export const written = (lang: Lang) => sections.filter((s) => file(s.slug, lang));
+
+/** The documents outside the guide and their pages: links between the
+ * documents point at these, from the guide and from the standalone pages. */
+export const docPages: Record<string, [string, string]> = {
+  "threat-model.md": ["/threat-model/", "threat model"],
+  "threat-model.ru.md": ["/ru/threat-model/", "модель угроз"],
+  "self-host.md": ["/docs/relay/", "running your own relay"],
+  "self-host.ru.md": ["/ru/docs/relay/", "свой relay"],
+};

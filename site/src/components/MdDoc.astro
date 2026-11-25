@@ -2,6 +2,7 @@
 // A document from docs/, published as a page: one source, read on GitHub or here.
 import Doc from "./Doc.astro";
 import type { Lang } from "../i18n";
+import { docPages as pages } from "../guide";
 
 interface Props {
   lang: Lang;
@@ -17,12 +18,6 @@ const url = (path: string) => import.meta.env.BASE_URL.replace(/\/$/, "") + path
 // The document's own title becomes the page heading; links between the
 // documents point at their pages.
 const h1 = html.match(/<h1[^>]*>(.*?)<\/h1>/s)?.[1]?.replace(/<[^>]+>/g, "") ?? page.title;
-const pages: Record<string, [string, string]> = {
-  "threat-model.md": ["/threat-model/", "threat model"],
-  "threat-model.ru.md": ["/ru/threat-model/", "модель угроз"],
-  "self-host.md": ["/docs/relay/", "running your own relay"],
-  "self-host.ru.md": ["/ru/docs/relay/", "свой relay"],
-};
 const body = html
   .replace(/<h1[^>]*>.*?<\/h1>/s, "")
   .replace(/href="([^"#]+\.md)">([^<]*)</g, (all, file, text) => {
