@@ -1395,7 +1395,6 @@ impl Main {
         if c.notes {
             let label = |f: &NoteFilter| match f {
                 NoteFilter::All => "all".to_string(),
-                NoteFilter::Untagged => "untagged".into(),
                 NoteFilter::Favorites => "favorites".into(),
                 NoteFilter::Links => "links".into(),
                 NoteFilter::Tag(t) => format!("#{t}"),
@@ -1438,8 +1437,7 @@ impl Main {
             }
             return;
         }
-        let mut all = vec![NoteFilter::All, NoteFilter::Untagged, NoteFilter::Favorites];
-        all.push(NoteFilter::Links);
+        let mut all = vec![NoteFilter::All, NoteFilter::Favorites, NoteFilter::Links];
         all.extend(
             self.engine
                 .note_tags()

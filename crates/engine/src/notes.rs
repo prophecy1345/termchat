@@ -10,8 +10,6 @@ use termchat_core::proto::NOTES_LEVEL;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoteFilter {
     All,
-    /// Notes with no tag: the inbox.
-    Untagged,
     Favorites,
     Links,
     /// Notes with this tag, lower case, without the `#`.
@@ -47,7 +45,6 @@ pub fn note_shown(m: &Msg, filter: &NoteFilter) -> bool {
     }
     match filter {
         NoteFilter::All => true,
-        NoteFilter::Untagged => tags_of(&m.text).is_empty(),
         NoteFilter::Favorites => m.my_reaction.is_some(),
         NoteFilter::Links => ["http://", "https://", "www."]
             .iter()
@@ -287,8 +284,7 @@ mod tests {
         let plain = note("buy milk", Some(0));
         assert!(note_shown(&link, &NoteFilter::Links));
         assert!(!note_shown(&plain, &NoteFilter::Links));
-        assert!(note_shown(&plain, &NoteFilter::Untagged));
-        assert!(!note_shown(&link, &NoteFilter::Untagged));
+        assert!(!note_shown(&plain, &NoteFilter::Tag("read".into())));
         assert!(note_shown(&plain, &NoteFilter::Favorites));
         assert!(note_shown(&link, &NoteFilter::Tag("read".into())));
         assert!(note_shown(&link, &NoteFilter::All));

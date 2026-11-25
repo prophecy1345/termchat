@@ -3,6 +3,12 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## Unreleased
+
+- Notes filters (ADR-046, amendment 3): tap a filter again to go back to
+  All. Tags moved into one By Tags drop-down, shown once a note has a tag,
+  with a cross to clear it. Untagged is gone.
+
 ## 0.33.2
 
 - Notes written while your other device was not updated yet now reach it

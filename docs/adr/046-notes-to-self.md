@@ -87,6 +87,14 @@ The receiving device already drops a `Note { Message }` whose id it holds, so a 
 
 **Rejected:** keeping notes queued until every device reads them: one device left on an old version would hold every note back for the others, and show them as unsent forever.
 
+## Amendment 3 (2026-11-25, proposed by the owner): easier filters
+
+- A filter tapped or clicked again goes back to **All**.
+- **Untagged** is gone. The tags no longer get a filter each: one **By Tags** drop-down lists them with their counts, shown only while at least one note has a tag. Picking a tag filters by it; the cross next to the drop-down goes back to All. When the last note with the picked tag goes, the filter goes back to All.
+- In the terminal **Ctrl+P**, **f** still steps through All, Favorites, Links and each tag.
+
+UI only: nothing on the wire or in storage changes.
+
 ## Implementation notes (2026-11-24)
 
 - **Notes is a contact that is no one** (`notes`, key `NOTES_KEY`, all 0xff), so every chat feature works on it in all three apps. It has no identity slot, so no queue, key or session is ever made for it; sending to it marks the note sent and passes it to our devices.

@@ -14,7 +14,7 @@ description: "Sending messages and documents in termchat.app, answering, editing
 - **On one device nothing leaves it.** Notes stay in the encrypted state file and never go on the wire.
 - **With linked devices** each note, edit and delete reaches your other devices, end-to-end encrypted, directly between them. A contact can never write into your Notes.
 - A newly linked device sees notes written from then on, not older ones; a device offline for more than 14 days misses what was written meanwhile.
-- **Keep it in order:** write `#tags` in a note (`#work`, `#read-later`). Over Notes a row of filters shows **All**, **Untagged** (notes with no tag), **Favorites**, **Links** and each tag with its count. Star a note to keep it in Favorites: **Star** under it on the desktop, the long-press menu on Android, **Shift+↑** then **s** in the terminal (**Ctrl+P**, **f** steps through the filters there). Tags and stars reach your other devices too. Links are never opened or previewed.
+- **Keep it in order:** write `#tags` in a note (`#work`, `#read-later`). Over Notes a row of filters shows **All**, **Favorites**, **Links** and, once a note has a tag, **By Tags**: a list of your tags with their counts, with a cross next to it to go back to All. Tap a filter again to go back to All. Star a note to keep it in Favorites: **Star** under it on the desktop, the long-press menu on Android, **Shift+↑** then **s** in the terminal (**Ctrl+P**, **f** steps through the filters there). Tags and stars reach your other devices too. Links are never opened or previewed.
 - Documents in Notes are not supported yet.
 
 ## Sending

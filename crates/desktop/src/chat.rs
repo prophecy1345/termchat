@@ -505,28 +505,60 @@ impl Chat {
         lock
     }
 
-    /// ADR-046 amendment 1: one row of filters over Notes.
+    /// ADR-046 amendment 1: one row of filters over Notes. A filter clicked
+    /// again goes back to All (amendment 3); tags sit in one drop-down.
     fn note_filters(&mut self, ui: &mut egui::Ui, p: &Pal) {
-        let mut all = vec![
-            (NoteFilter::All, "All".to_string()),
-            (NoteFilter::Untagged, "Untagged".to_string()),
-            (NoteFilter::Favorites, "Favorites".to_string()),
-            (NoteFilter::Links, "Links".to_string()),
-        ];
-        for (tag, n) in self.engine.note_tags() {
-            let label = format!("#{} {n}", termchat_engine::clean(&tag));
-            all.push((NoteFilter::Tag(tag), label));
+        let tags = self.engine.note_tags();
+        // The last note with this tag is gone: nothing left to show under it.
+        if let NoteFilter::Tag(t) = &self.note_filter
+            && !tags.iter().any(|(x, _)| x == t)
+        {
+            self.note_filter = NoteFilter::All;
         }
         egui::Frame::new()
             .fill(p.bg)
             .inner_margin(egui::Margin::symmetric(12, 6))
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    for (f, label) in all {
+                    for (f, label) in [
+                        (NoteFilter::All, "All"),
+                        (NoteFilter::Favorites, "Favorites"),
+                        (NoteFilter::Links, "Links"),
+                    ] {
                         let on = self.note_filter == f;
                         if ui.selectable_label(on, label).clicked() {
-                            self.note_filter = f;
+                            self.note_filter = if on { NoteFilter::All } else { f };
                         }
+                    }
+                    if tags.is_empty() {
+                        return;
+                    }
+                    let picked = match &self.note_filter {
+                        NoteFilter::Tag(t) => Some(t.clone()),
+                        _ => None,
+                    };
+                    let shown = picked.as_ref().map_or("By Tags".to_string(), |t| {
+                        format!("#{}", termchat_engine::clean(t))
+                    });
+                    egui::ComboBox::from_id_salt("note_tags")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for (tag, n) in tags {
+                                let label = format!("#{} {n}", termchat_engine::clean(&tag));
+                                let on = picked.as_ref() == Some(&tag);
+                                if ui.selectable_label(on, label).clicked() {
+                                    self.note_filter = if on {
+                                        NoteFilter::All
+                                    } else {
+                                        NoteFilter::Tag(tag)
+                                    };
+                                }
+                            }
+                        });
+                    if picked.is_some()
+                        && sprites::button(ui, p, Icon::Close, "Show every note").clicked()
+                    {
+                        self.note_filter = NoteFilter::All;
                     }
                 });
             });

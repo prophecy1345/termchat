@@ -699,7 +699,6 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         if c.notes {
             let shown = match &m.note_filter {
                 crate::engine::NoteFilter::All => String::new(),
-                crate::engine::NoteFilter::Untagged => " · untagged".into(),
                 crate::engine::NoteFilter::Favorites => " · favorites".into(),
                 crate::engine::NoteFilter::Links => " · links".into(),
                 crate::engine::NoteFilter::Tag(t) => format!(" · #{}", clean(t)),

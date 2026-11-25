@@ -154,12 +154,27 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
         }
         // ADR-046 amendment 1: the filters, and only the notes they show.
         if (c.notes) {
+            // Amendment 3: a filter tapped again goes back to All; tags sit in one menu.
             val tags = runCatching { a.noteTags() }.getOrDefault(emptyList())
-            val chips = listOf("all" to "All", "untagged" to "Untagged", "favorites" to "Favorites", "links" to "Links") +
-                tags.map { "#${it.tag}" to "#${it.tag} ${it.count}" }
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                chips.forEach { (key, label) ->
-                    Flat(label, color = if (noteFilter == key) Tc.lime else Tc.dim) { noteFilter = key }
+            val tag = noteFilter.takeIf { it.startsWith("#") }
+            // The last note with this tag is gone: nothing left to show under it.
+            if (tag != null && tags.none { "#${it.tag}" == tag }) noteFilter = "all"
+            val pick = { key: String -> noteFilter = if (noteFilter == key) "all" else key }
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("all" to "All", "favorites" to "Favorites", "links" to "Links").forEach { (key, label) ->
+                    Flat(label, color = if (noteFilter == key) Tc.lime else Tc.dim) { pick(key) }
+                }
+                if (tags.isNotEmpty()) {
+                    var open by remember { mutableStateOf(false) }
+                    Box {
+                        Flat(tag ?: "By Tags", color = if (tag != null) Tc.lime else Tc.dim) { open = true }
+                        DropdownMenu(open, { open = false }, containerColor = Tc.surface) {
+                            tags.forEach { t ->
+                                DropdownMenuItem({ Text("#${t.tag} ${t.count}", style = Tc.mono.copy(color = if (tag == "#${t.tag}") Tc.lime else Tc.text)) }, { open = false; pick("#${t.tag}") })
+                            }
+                        }
+                    }
+                    if (tag != null) IconTap("close", "Show every note") { noteFilter = "all" }
                 }
             }
         }

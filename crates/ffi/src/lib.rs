@@ -1145,11 +1145,10 @@ impl Account {
     }
 
     /// ADR-046 amendment 1: indices of the notes `filter` shows: "all",
-    /// "untagged", "favorites", "links" or "#tag".
+    /// "favorites", "links" or "#tag".
     pub fn notes_shown(&self, filter: String) -> Vec<u32> {
         use engine::NoteFilter;
         let f = match filter.as_str() {
-            "untagged" => NoteFilter::Untagged,
             "favorites" => NoteFilter::Favorites,
             "links" => NoteFilter::Links,
             t if t.starts_with('#') => NoteFilter::Tag(t[1..].to_lowercase()),
