@@ -107,7 +107,7 @@ fun Field(
         ),
         modifier = modifier.border(1.dp, Tc.line, corner).padding(horizontal = 14.dp, vertical = 13.dp),
         decorationBox = { inner ->
-            Box {
+            Box(contentAlignment = Alignment.CenterStart) {
                 if (value.isEmpty()) Text(hint, style = Tc.mono.copy(color = Tc.dim))
                 inner()
             }

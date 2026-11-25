@@ -138,8 +138,8 @@ fun Group(m: Model, index: UInt) {
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
-            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f), singleLine = false, maxLines = 6)
-            Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime) {
+            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6)
+            Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime, modifier = Modifier.height(48.dp)) {
                 runCatching {
                     val cm = compose
                     when {

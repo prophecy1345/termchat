@@ -333,9 +333,9 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     c.needsInvite -> "Ask them for a new invite, or send yours"
                     else -> "Encrypted message"
                 },
-                Modifier.weight(1f), singleLine = false, maxLines = 6,
+                Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6,
             )
-            Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime) {
+            Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime, modifier = Modifier.height(48.dp)) {
                 runCatching {
                     val cm = compose
                     when {
