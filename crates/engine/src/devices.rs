@@ -866,7 +866,7 @@ impl Engine {
 
     /// Where `body` for contact `i` goes besides their primary: each other
     /// device of theirs, and each of ours.
-    fn copies_of(&self, i: usize) -> Vec<(Ed25519Key, Addr)> {
+    pub(super) fn copies_of(&self, i: usize) -> Vec<(Ed25519Key, Addr)> {
         let c = &self.data.contacts[i];
         let listed = |k: &Ed25519Key| {
             c.their_devices

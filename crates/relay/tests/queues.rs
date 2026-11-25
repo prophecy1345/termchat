@@ -369,8 +369,8 @@ async fn writes_are_limited_per_queue_whoever_writes() {
     );
 }
 
-/// ADR-043 amendment 1: parts of a large document have a budget of their
-/// own, so they neither use up nor wait for the one text needs.
+/// ADR-043 amendment 1, ADR-047: document chunks (any body above 8 KiB)
+/// have a budget of their own, so they neither use up nor wait for text's.
 #[tokio::test]
 async fn parts_are_paced_apart_from_text() {
     let slow = Rate {
@@ -392,7 +392,7 @@ async fn parts_are_paced_apart_from_text() {
         envelope: Envelope {
             version: termchat_proto::VERSION,
             olm_type: 1,
-            body: vec![7; termchat_proto::SMALL_BODY_BYTES + 1],
+            body: vec![7; termchat_proto::MEDIUM_BODY_BYTES + 1],
         },
     };
     for id in 1..=2 {
@@ -434,11 +434,13 @@ async fn queue_creation_is_limited_per_ip() {
 
 #[tokio::test]
 async fn a_lagging_reader_is_cut_off_and_finds_everything_queued() {
+    let fast = Rate {
+        burst: 1000.0,
+        per_sec: 1000.0,
+    };
     let url = start(Limits {
-        sends_per_queue: Rate {
-            burst: 1000.0,
-            per_sec: 1000.0,
-        },
+        sends_per_queue: fast,
+        parts_per_queue: fast,
         ..Limits::default()
     })
     .await;

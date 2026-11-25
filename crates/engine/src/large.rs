@@ -26,6 +26,11 @@ const LARGE_EVERY: f64 = 0.3;
 /// there a part goes at most this often, so texts still fit.
 const SLOW_EVERY: Duration = Duration::from_millis(1500);
 const FAST_RELAY: (u32, u32, u32) = (0, 30, 0);
+/// ADR-047: from this relay on, parts and the chunks of small documents
+/// share a budget of ten a second; the client keeps below it.
+const FASTER_RELAY: (u32, u32, u32) = (0, 34, 0);
+pub(super) const FASTER_BURST: f64 = 30.0;
+pub(super) const FASTER_EVERY: f64 = 0.12;
 /// An offer nobody answered is dropped on both sides.
 const OFFER_TTL: u64 = 7 * 86_400;
 /// The sender's offers waiting or moving, and their bytes, at once.
@@ -43,7 +48,26 @@ fn aad(id: u32, index: u16) -> [u8; 6] {
     a
 }
 
+/// Adds what `budget` earned since it was last counted, up to `burst`.
+pub(super) fn refill(budget: &mut (f64, Instant), every: f64, burst: f64) {
+    budget.0 = (budget.0 + budget.1.elapsed().as_secs_f64() / every).min(burst);
+    budget.1 = Instant::now();
+}
+
 impl Engine {
+    /// ADR-047: every queue a document to contact `i` goes into is on a relay
+    /// that paces its chunks with parts, so they may share the parts' budget.
+    pub(super) fn faster(&self, i: usize) -> bool {
+        let key = self.data.contacts[i].key;
+        let addrs = self.out_addr(i).into_iter().cloned();
+        let mut addrs = addrs.chain(self.copies_of(i).into_iter().map(|(_, a)| a));
+        addrs.all(|a| {
+            self.live(&key, &a.relay_url)
+                .and_then(|l| l.version)
+                .is_some_and(|v| v >= FASTER_RELAY)
+        })
+    }
+
     fn spool_path(&self, name: &str) -> PathBuf {
         data::spool_dir(&self.path).join(name)
     }
@@ -126,9 +150,6 @@ impl Engine {
     /// Offers waiting to go out and parts the receiver asked for, as the
     /// budget and the window allow. `true` if anything went.
     pub(super) fn send_parts(&mut self) -> bool {
-        let (tokens, at) = &mut self.large_budget;
-        *tokens = (*tokens + at.elapsed().as_secs_f64() / LARGE_EVERY).min(LARGE_BURST);
-        *at = Instant::now();
         let mut sent = false;
         for i in 0..self.data.contacts.len() {
             let c = &self.data.contacts[i];
@@ -161,10 +182,14 @@ impl Engine {
                 continue;
             };
             let relay = self.out_addr(i).map(|a| a.relay_url.clone());
-            let fast = relay
+            let version = relay
                 .and_then(|r| self.live(&key, &r))
-                .and_then(|l| l.version)
-                .is_some_and(|v| v >= FAST_RELAY);
+                .and_then(|l| l.version);
+            let fast = version.is_some_and(|v| v >= FAST_RELAY);
+            match version.is_some_and(|v| v >= FASTER_RELAY) {
+                true => refill(&mut self.large_budget, FASTER_EVERY, FASTER_BURST),
+                false => refill(&mut self.large_budget, LARGE_EVERY, LARGE_BURST),
+            }
             while self.large_budget.0 >= 1.0 {
                 if !fast && self.slow_part_at.elapsed() < SLOW_EVERY {
                     break;

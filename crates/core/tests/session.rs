@@ -518,3 +518,29 @@ fn contact_queue_keys_are_fresh_and_signed() {
     alice.add_contact(&bob.identity()).unwrap();
     alice.start_session(&ed(&bob), &two[0]).unwrap();
 }
+
+/// ADR-047: the relay paces bodies over `MEDIUM_BODY_BYTES` with document
+/// parts. A text in the 512 or 4096 bucket must stay under it, pre-key
+/// message or not, and one in the 16 KiB bucket must be over it.
+#[test]
+fn medium_body_bytes_splits_the_buckets() {
+    use termchat_core::proto::MEDIUM_BODY_BYTES;
+    let (mut alice, mut bob) = pair();
+    let (a, b) = (ed(&alice), ed(&bob));
+    let first = alice.encrypt(&b, text("hi")).unwrap();
+    bob.decrypt(Some(&a), &first).unwrap();
+    for len in (0..=16_000).step_by(100) {
+        let t = text(&"x".repeat(len));
+        let pre_key = alice.encrypt(&b, t.clone()).unwrap();
+        let normal = bob.encrypt(&a, t).unwrap();
+        assert_eq!((pre_key.olm_type, normal.olm_type), (0, 1));
+        for env in [pre_key, normal] {
+            let n = env.body.len();
+            assert!(
+                !(6 * 1024..=16 * 1024).contains(&n),
+                "{len} chars: {n} bytes"
+            );
+        }
+    }
+    assert!((6 * 1024..16 * 1024).contains(&MEDIUM_BODY_BYTES));
+}

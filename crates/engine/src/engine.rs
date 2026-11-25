@@ -73,7 +73,8 @@ const CONTACT_KEYS: u32 = 2;
 const MAX_HIDDEN: usize = 5;
 const MAX_REJECTED: usize = 1000;
 /// ADR-017: file chunks go in a burst of this many, then one per `FILE_EVERY`,
-/// so the relay's send limit (30, then one per 2 s) never refuses one.
+/// so the relay's send limit (30, then one per 2 s) never refuses one. Not
+/// to a relay that paces them with parts (ADR-047), and not in groups.
 const FILE_BURST: f64 = 10.0;
 const FILE_EVERY: f64 = 3.0;
 /// ADR-019: a fallback key is replaced at this age, used or not, so a relay
@@ -3071,12 +3072,18 @@ impl Engine {
         Ok(())
     }
 
+    /// Chunks we may send now: on the parts' budget if `fast` (ADR-047).
+    fn tokens(&mut self, fast: bool) -> &mut f64 {
+        match fast {
+            true => &mut self.large_budget.0,
+            false => &mut self.chunk_budget.0,
+        }
+    }
+
     /// Sends queued file chunks as the budget allows (ADR-017), one file per
     /// contact at a time. The last chunk's relay answer marks the file sent.
     fn send_chunks(&mut self) {
-        let (tokens, at) = &mut self.chunk_budget;
-        *tokens = (*tokens + at.elapsed().as_secs_f64() / FILE_EVERY).min(FILE_BURST);
-        *at = Instant::now();
+        large::refill(&mut self.chunk_budget, FILE_EVERY, FILE_BURST);
         let mut sent = false;
         for i in 0..self.data.contacts.len() {
             let c = &self.data.contacts[i];
@@ -3090,7 +3097,15 @@ impl Engine {
             if c.blocked || c.left || !self.has_session(&key) {
                 continue;
             }
-            while self.chunk_budget.0 >= 1.0 {
+            let fast = self.faster(i);
+            if fast {
+                large::refill(
+                    &mut self.large_budget,
+                    large::FASTER_EVERY,
+                    large::FASTER_BURST,
+                );
+            }
+            while *self.tokens(fast) >= 1.0 {
                 let Some(f) = self.data.contacts[i].messages[m].file.as_mut() else {
                     break;
                 };
@@ -3100,7 +3115,7 @@ impl Engine {
                 // Counted before the send, so a restart never repeats a chunk.
                 f.done += 1;
                 let last = f.complete();
-                self.chunk_budget.0 -= 1.0;
+                *self.tokens(fast) -= 1.0;
                 sent = true;
                 // ADR-028: every device of theirs; ours hear of the first chunk.
                 let first = matches!(body, Body::File { index: 0, .. });

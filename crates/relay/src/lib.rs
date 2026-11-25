@@ -20,8 +20,8 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
 use termchat_proto::{
-    ClientFrame, Envelope, ErrorCode, MAX_FRAME_BYTES, MAX_GROUP_MEMBERS, QueueId, QueueToken,
-    SMALL_BODY_BYTES, ServerFrame, VERSION, VERSION_HEADER,
+    ClientFrame, Envelope, ErrorCode, MAX_FRAME_BYTES, MAX_GROUP_MEMBERS, MEDIUM_BODY_BYTES,
+    QueueId, QueueToken, ServerFrame, VERSION, VERSION_HEADER,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, mpsc};
@@ -57,8 +57,8 @@ pub struct Limits {
     pub onion_queues: Rate,
     /// Writes into one queue, whoever writes: the relay does not know senders.
     pub sends_per_queue: Rate,
-    /// ADR-043 amendment 1: envelopes above `SMALL_BODY_BYTES`, parts of a
-    /// large document, on a budget of their own so text keeps its own.
+    /// ADR-043 amendment 1, ADR-047: envelopes above `MEDIUM_BODY_BYTES`,
+    /// mostly document chunks, on a budget of their own so text keeps its own.
     pub parts_per_queue: Rate,
     /// Each `PublishKeys` costs up to 100 inserts; a client needs a handful per day.
     pub publishes_per_queue: Rate,
@@ -123,10 +123,10 @@ impl Default for Limits {
                 burst: 30.0,
                 per_sec: 1.0,
             },
-            // 25 MiB in about two minutes; the queue quota bounds the bytes.
+            // ADR-047: 25 MiB in under a minute; the queue quota bounds the bytes.
             parts_per_queue: Rate {
-                burst: 30.0,
-                per_sec: 4.0,
+                burst: 60.0,
+                per_sec: 10.0,
             },
             publishes_per_queue: Rate::per(30.0, HOUR),
             claims_per_connection: Rate::per(30.0, HOUR),
@@ -870,7 +870,7 @@ fn put(
         .mem
         .entry(to)
         .or_insert_with(|| QueueMem::new(limits, now));
-    let paced = match envelope.body.len() > SMALL_BODY_BYTES {
+    let paced = match envelope.body.len() > MEDIUM_BODY_BYTES {
         true => q.parts.take(limits.parts_per_queue, now),
         false => q.sends.take(limits.sends_per_queue, now),
     };

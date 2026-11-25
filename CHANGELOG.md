@@ -3,11 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
-## Unreleased
+## 0.34.0
 
 - Notes filters (ADR-046, amendment 3): tap a filter again to go back to
   All. Tags moved into one By Tags drop-down, shown once a note has a tag,
   with a cross to clear it. Untagged is gone.
+- Documents go much faster (ADR-047): 1 MiB in under 10 seconds instead
+  of about 3 minutes, 25 MiB in under a minute instead of about 2, once
+  your relay is 0.34.0 or later. Encryption does not change; the relay
+  paces document chunks apart from text, at up to 10 a second.
 
 ## 0.33.2
 
