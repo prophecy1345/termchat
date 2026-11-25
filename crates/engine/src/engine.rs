@@ -3374,12 +3374,7 @@ impl Engine {
             create_file_key(password.as_bytes(), KdfParams::DEFAULT).map_err(|e| e.to_string())?;
         let mut copy = self.data.clone();
         copy.backed_up = true;
-        // No messages at all, a pending request's held texts included.
-        copy.contacts.iter_mut().for_each(|c| {
-            c.messages.clear();
-            c.hidden.clear();
-            c.held_back = 0;
-        });
+        copy.strip_conversations();
         let states = (1..self.cores.len())
             .map(|s| self.core_at(s).without_sessions().export())
             .collect::<Result<Vec<_>, _>>()

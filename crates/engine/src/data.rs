@@ -793,6 +793,27 @@ impl FileMsg {
 pub const MAX_UNSAVED: usize = 8 << 20;
 
 impl Data {
+    /// For a backup (audit 2026-11-25, finding 1): no conversation at all,
+    /// in chats and groups, a pending request's held texts, drafts and
+    /// unsent edits included.
+    pub fn strip_conversations(&mut self) {
+        for c in &mut self.contacts {
+            c.messages.clear();
+            c.hidden.clear();
+            c.held_back = 0;
+            c.unread = 0;
+            c.draft.clear();
+            c.outbox.clear();
+            c.device_outbox.clear();
+        }
+        for g in &mut self.groups {
+            g.messages.clear();
+            g.unread = 0;
+            g.draft.clear();
+            g.outbox.clear();
+        }
+    }
+
     /// One received chunk for contact `i` (ADR-017): in order, one file per
     /// contact at a time. `true` once the file is whole.
     pub fn take_chunk(&mut self, i: usize, chunk: Body, at: u64) -> bool {
@@ -1474,6 +1495,30 @@ fn is_zero(n: &u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backup_keeps_no_group_or_chat_text() {
+        let said = |t: &str| {
+            let mut m = Msg::default();
+            m.text = t.into();
+            m
+        };
+        let mut d = Data::default();
+        d.contacts.push(Contact {
+            messages: vec![said("direct secret")],
+            draft: "draft secret".into(),
+            ..Default::default()
+        });
+        d.groups.push(Group {
+            messages: vec![said("group secret")],
+            draft: "group draft".into(),
+            ..Default::default()
+        });
+        d.strip_conversations();
+        let json = String::from_utf8(serde_json::to_vec(&d).unwrap()).unwrap();
+        assert!(!json.contains("secret") && !json.contains("group draft"));
+        assert_eq!(d.groups.len(), 1, "the group itself stays");
+    }
 
     #[cfg(unix)]
     #[test]
