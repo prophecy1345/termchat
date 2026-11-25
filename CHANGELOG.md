@@ -3,6 +3,11 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.36.1
+
+- Android: a chat with a message waiting to go later crashed the app on
+  open. Fixed; the waiting message itself was kept and still goes.
+
 ## 0.36.0
 
 - Send later: write a message now and let it go in 10 minutes, 1, 3 or
