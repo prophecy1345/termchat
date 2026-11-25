@@ -109,6 +109,12 @@ fn on_accent(t: &Palette) -> Color {
 
 pub fn render(f: &mut Frame, app: &App) {
     let t = crate::theme::by_name(&app.settings.theme);
+    // The theme's own background under everything, as in the desktop app;
+    // "terminal" keeps the terminal's (`Color::Reset`).
+    f.render_widget(
+        Block::new().style(Style::new().bg(t.panel_bg).fg(t.text)),
+        f.area(),
+    );
     let mut h = app.hits.borrow_mut();
     *h = Hits::default();
     match &app.screen {
