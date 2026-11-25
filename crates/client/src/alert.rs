@@ -194,8 +194,26 @@ pub fn incidents(
     (!list.is_empty()).then_some(list)
 }
 
+/// Quiet hours (`termchat hook --quiet`): an Alertmanager body with a
+/// firing alert whose `severity` label is `critical` or `page` goes through.
+pub fn critical(format: Format, body: &[u8]) -> bool {
+    if matches!(format, Format::Kuma | Format::Text) {
+        return false;
+    }
+    let Ok(v) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let status = v["status"].as_str().unwrap_or("firing");
+    v["alerts"].as_array().is_some_and(|alerts| {
+        alerts.iter().any(|a| {
+            a["status"].as_str().unwrap_or(status) == "firing"
+                && matches!(a["labels"]["severity"].as_str(), Some("critical" | "page"))
+        })
+    })
+}
+
 /// At most `MAX_CHARS`, cut after the last whole line that fits.
-fn cut(text: &str) -> String {
+pub fn cut(text: &str) -> String {
     if text.chars().count() <= MAX_CHARS {
         return text.to_string();
     }
@@ -212,6 +230,27 @@ mod tests {
         {"status":"firing","labels":{"alertname":"DiskFull","instance":"web-1:9100","job":"node","secret_host":"10.0.0.7"},
          "annotations":{"summary":"Disk 95% full","description":"long"}},
         {"status":"resolved","labels":{"alertname":"HighLoad"},"annotations":{"description":"load\nback to normal"}}]}"#;
+
+    #[test]
+    fn only_firing_critical_alertmanager_alerts_are_critical() {
+        let am = |status: &str, sev: &str| {
+            format!(
+                r#"{{"status":"{status}","alerts":[{{"labels":{{"alertname":"x","severity":"{sev}"}}}}]}}"#
+            )
+        };
+        assert!(critical(Format::Auto, am("firing", "critical").as_bytes()));
+        assert!(critical(
+            Format::Alertmanager,
+            am("firing", "page").as_bytes()
+        ));
+        assert!(!critical(Format::Auto, am("firing", "warning").as_bytes()));
+        assert!(!critical(
+            Format::Auto,
+            am("resolved", "critical").as_bytes()
+        ));
+        assert!(!critical(Format::Text, am("firing", "critical").as_bytes()));
+        assert!(!critical(Format::Auto, br#"{"msg":"down"}"#));
+    }
 
     #[test]
     fn alertmanager_keeps_name_instance_note_and_only_named_labels() {

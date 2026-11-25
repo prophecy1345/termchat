@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
@@ -26,9 +26,11 @@ use termchat_engine::data;
 const USAGE: &str = "usage:
   termchat hook --token-file PATH --route NAME=contact:CONTACT[:FORMAT] [--route ...]
                 [--route NAME=group:GROUP[:FORMAT] | NAME=group-id:ID[:FORMAT]]
-                [--listen 127.0.0.1:9099] [--labels LABEL,...]
+                [--listen 127.0.0.1:9099] [--labels LABEL,...] [--quiet HH:MM-HH:MM]
   termchat hook --new-token PATH
-FORMAT: auto (default), alertmanager, kuma or text. Needs a running termchat daemon.";
+FORMAT: auto (default), alertmanager, kuma or text. Needs a running termchat daemon.
+--quiet, in UTC: only Alertmanager alerts with severity critical or page go
+through; the rest wait and come as one summary per route when it ends.";
 
 /// The request body limit (ADR-039, section 3).
 const MAX_BODY: usize = 1 << 20;
@@ -46,6 +48,87 @@ const MIN_TOKEN: usize = 43;
 const REPEAT_WINDOW: Duration = Duration::from_secs(600);
 /// Alert texts not seen for this long are forgotten, counted repeats too.
 const REPEAT_MEMORY: Duration = Duration::from_secs(86_400);
+/// Different alerts a route keeps for its summary in quiet hours; more are only counted.
+const MAX_HELD: usize = 100;
+
+/// Quiet hours in UTC, as minutes after midnight; `from` after `to` wraps midnight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Quiet {
+    from: u32,
+    to: u32,
+}
+
+impl Quiet {
+    /// `HH:MM-HH:MM`.
+    fn parse(spec: &str) -> Option<Self> {
+        let minute = |t: &str| {
+            let (h, m) = t.trim().split_once(':')?;
+            let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
+            (h < 24 && m < 60).then_some(h * 60 + m)
+        };
+        let (from, to) = spec.split_once('-')?;
+        let (from, to) = (minute(from)?, minute(to)?);
+        (from != to).then_some(Self { from, to })
+    }
+
+    fn holds(self, minute: u32) -> bool {
+        match self.from < self.to {
+            true => (self.from..self.to).contains(&minute),
+            false => minute >= self.from || minute < self.to,
+        }
+    }
+
+    fn now() -> u32 {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        (secs % 86_400 / 60) as u32
+    }
+}
+
+impl std::fmt::Display for Quiet {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let (a, b) = (self.from, self.to);
+        write!(f, "{:02}:{:02}-{:02}:{:02}", a / 60, a % 60, b / 60, b % 60)
+    }
+}
+
+/// What quiet hours held back on a route: each alert with how often it
+/// came, and how many more did not fit.
+#[derive(Default)]
+struct Held {
+    alerts: Vec<(String, u32)>,
+    more: u32,
+}
+
+impl Held {
+    fn add(&mut self, alert: String) {
+        let room = self.alerts.len() < MAX_HELD;
+        match self.alerts.iter_mut().find(|(a, _)| *a == alert) {
+            Some((_, n)) => *n = n.saturating_add(1),
+            None if room => self.alerts.push((alert, 1)),
+            None => self.more = self.more.saturating_add(1),
+        }
+    }
+
+    /// One message for all of it.
+    fn summary(&self, quiet: Quiet) -> String {
+        let total = self.alerts.iter().map(|(_, n)| *n).sum::<u32>() + self.more;
+        let mut out = format!("QUIET HOURS {quiet} UTC: {total} alert(s) held");
+        for (alert, n) in self.alerts.iter().take(alert::MAX_ALERTS) {
+            out.push_str("\n\n");
+            out.push_str(alert);
+            if *n > 1 {
+                out.push_str(&format!("\n(came {n} times)"));
+            }
+        }
+        let left = self.alerts.len().saturating_sub(alert::MAX_ALERTS) as u32 + self.more;
+        if left > 0 {
+            out.push_str(&format!("\n\nand {left} more"));
+        }
+        alert::cut(&out)
+    }
+}
 
 #[derive(Clone)]
 enum Target {
@@ -71,6 +154,9 @@ struct Hook {
     sent: Mutex<HashMap<String, VecDeque<Instant>>>,
     /// Per route and alert text: when it was last sent, repeats since.
     repeats: Mutex<HashMap<(String, String), (Instant, u32)>>,
+    quiet: Option<Quiet>,
+    /// Per route: what quiet hours held back for the summary.
+    held: Mutex<HashMap<String, Held>>,
 }
 
 /// `termchat hook ...`, `args` without the command name.
@@ -80,6 +166,7 @@ pub(super) async fn run(args: &[String]) -> Result<(), Fail> {
     let mut new_token = None;
     let mut routes = HashMap::new();
     let mut labels = Vec::new();
+    let mut quiet = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut next = || {
@@ -108,6 +195,12 @@ pub(super) async fn run(args: &[String]) -> Result<(), Fail> {
                     .filter(|l| !l.is_empty())
                     .map(String::from)
                     .collect();
+            }
+            "--quiet" => {
+                quiet =
+                    Some(Quiet::parse(&next()?).ok_or_else(|| {
+                        Fail(2, "--quiet takes UTC hours like 22:00-08:00".into())
+                    })?);
             }
             "--help" | "-h" => return fail(2, USAGE),
             other => return fail(2, format!("unknown option {other}\n{USAGE}")),
@@ -152,7 +245,12 @@ pub(super) async fn run(args: &[String]) -> Result<(), Fail> {
         labels,
         sent: Mutex::new(HashMap::new()),
         repeats: Mutex::new(HashMap::new()),
+        quiet,
+        held: Mutex::new(HashMap::new()),
     });
+    if quiet.is_some() {
+        tokio::spawn(summaries(Arc::clone(&hook)));
+    }
     serve(listener, hook).await
 }
 
@@ -421,6 +519,12 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
     let Some(alert) = alert::render(route.format, &body, &hook.labels) else {
         return answer(StatusCode::BAD_REQUEST, "not this route's format\n");
     };
+    if hook.quiet.is_some_and(|q| q.holds(Quiet::now())) && !alert::critical(route.format, &body) {
+        if let Ok(mut held) = hook.held.lock() {
+            held.entry(path.to_string()).or_default().add(alert);
+        }
+        return answer(StatusCode::OK, "quiet hours: held for the summary\n");
+    }
     // The same alert again soon: counted, said with the next one sent.
     let Some(text) = hook.unless_repeat(path, &alert, Instant::now()) else {
         return answer(StatusCode::OK, "repeat: counted, not sent\n");
@@ -431,25 +535,9 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
             "too many alerts: try again later\n",
         );
     }
-    let request = match &route.target {
-        Target::Contact(to) => {
-            json!({ "cmd": "send", "to": to, "text": text, "timeout": SEND_TIMEOUT, "expires": null })
-        }
-        Target::Group(group) => {
-            let send = GroupRequest::GroupSend {
-                group: group.clone(),
-                text,
-                timeout: SEND_TIMEOUT,
-            };
-            match serde_json::to_value(send) {
-                Ok(v) => v,
-                Err(_) => return answer(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n"),
-            }
-        }
-        // Handled above, before the body became one message.
-        Target::Page { .. } => {
-            return answer(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n");
-        }
+    // Pages were handled above, before the body became one message.
+    let Some(request) = send_request(&route.target, text) else {
+        return answer(StatusCode::INTERNAL_SERVER_ERROR, "internal error\n");
     };
     match call(&hook.home, &request).await {
         Some(Ok(_)) => {
@@ -465,6 +553,56 @@ async fn respond(hook: &Hook, path: &str, req: Request<Incoming>) -> Response<Fu
             StatusCode::INTERNAL_SERVER_ERROR,
             "not sent: check the route\n",
         ),
+    }
+}
+
+/// The daemon request that sends `text` to a contact or group route.
+fn send_request(target: &Target, text: String) -> Option<Value> {
+    match target {
+        Target::Contact(to) => Some(
+            json!({ "cmd": "send", "to": to, "text": text, "timeout": SEND_TIMEOUT, "expires": null }),
+        ),
+        Target::Group(group) => serde_json::to_value(GroupRequest::GroupSend {
+            group: group.clone(),
+            text,
+            timeout: SEND_TIMEOUT,
+        })
+        .ok(),
+        Target::Page { .. } => None,
+    }
+}
+
+/// Once quiet hours end, each route's held alerts go as one message; a
+/// summary the daemon did not take waits for the next minute.
+async fn summaries(hook: Arc<Hook>) {
+    let Some(quiet) = hook.quiet else { return };
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        if quiet.holds(Quiet::now()) {
+            continue;
+        }
+        let held = match hook.held.lock() {
+            Ok(mut held) => std::mem::take(&mut *held),
+            Err(_) => continue,
+        };
+        for (path, h) in held {
+            let request = hook
+                .routes
+                .get(&path)
+                .and_then(|r| send_request(&r.target, h.summary(quiet)));
+            let Some(request) = request else { continue };
+            if !matches!(call(&hook.home, &request).await, Some(Ok(_)))
+                && let Ok(mut held) = hook.held.lock()
+            {
+                let back = held.entry(path).or_default();
+                for (alert, n) in h.alerts {
+                    for _ in 0..n {
+                        back.add(alert.clone());
+                    }
+                }
+                back.more = back.more.saturating_add(h.more);
+            }
+        }
     }
 }
 
@@ -605,6 +743,8 @@ mod tests {
             labels: Vec::new(),
             sent: Mutex::new(HashMap::new()),
             repeats: Mutex::new(HashMap::new()),
+            quiet: None,
+            held: Mutex::new(HashMap::new()),
         };
         let t0 = Instant::now();
         let later = |s: u64| t0 + Duration::from_secs(s);
@@ -637,6 +777,44 @@ mod tests {
     }
 
     #[test]
+    fn quiet_hours_parse_wrap_and_sum_up() {
+        let night = Quiet::parse("22:00-08:30").unwrap();
+        assert_eq!(night.to_string(), "22:00-08:30");
+        assert!(night.holds(23 * 60) && night.holds(0) && night.holds(8 * 60 + 29));
+        assert!(!night.holds(8 * 60 + 30) && !night.holds(12 * 60));
+        let lunch = Quiet::parse("12:00-13:00").unwrap();
+        assert!(lunch.holds(12 * 60) && !lunch.holds(13 * 60) && !lunch.holds(11 * 60));
+        for bad in [
+            "",
+            "22:00",
+            "24:00-01:00",
+            "10:60-11:00",
+            "09:00-09:00",
+            "a-b",
+        ] {
+            assert_eq!(Quiet::parse(bad), None, "{bad}");
+        }
+        let mut h = Held::default();
+        for a in ["disk full", "disk full", "cpu hot"] {
+            h.add(a.into());
+        }
+        let text = h.summary(night);
+        assert!(
+            text.starts_with("QUIET HOURS 22:00-08:30 UTC: 3 alert(s) held"),
+            "{text}"
+        );
+        assert!(text.contains("disk full\n(came 2 times)") && text.contains("cpu hot"));
+        for n in 0..MAX_HELD + 5 {
+            h.add(format!("alert {n}"));
+        }
+        assert!(
+            h.summary(night).ends_with("and 97 more"),
+            "{}",
+            h.summary(night)
+        );
+    }
+
+    #[test]
     fn a_route_takes_at_most_its_share_a_minute() {
         let hook = Hook {
             home: PathBuf::new(),
@@ -645,6 +823,8 @@ mod tests {
             labels: Vec::new(),
             sent: Mutex::new(HashMap::new()),
             repeats: Mutex::new(HashMap::new()),
+            quiet: None,
+            held: Mutex::new(HashMap::new()),
         };
         for _ in 0..PER_MINUTE {
             assert!(hook.take_slot("ops"));
