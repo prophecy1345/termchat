@@ -296,6 +296,10 @@ pub struct Engine {
     large_budget: (f64, Instant),
     /// The last part sent, for relays that pace parts with text.
     slow_part_at: Instant,
+    /// Deliveries decrypted but not saved: the session moved on in memory,
+    /// so their acks wait for a save, and the relay's copies are not taken
+    /// again meanwhile (audit 2026-11-25, finding 2).
+    unsaved: Vec<Unsaved>,
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
@@ -309,6 +313,13 @@ pub struct Engine {
 }
 
 /// One connection: whose it is (one of our identities, for its invite
+/// A delivery whose ack waits for a save: on a link, or in a group.
+#[derive(Clone, PartialEq, Eq)]
+enum Unsaved {
+    Link(Link, QueueId, u64),
+    Group(proto::GroupId, QueueId, u64),
+}
+
 /// queue, or a contact) and the relay it goes to (ADR-023).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Link {
@@ -693,6 +704,7 @@ impl Engine {
             chunk_budget: (FILE_BURST, Instant::now()),
             large_budget: (large::LARGE_BURST, Instant::now()),
             slow_part_at: Instant::now(),
+            unsaved: Vec::new(),
             chunks: BTreeMap::new(),
             heartbeat: None,
             unreachable: BTreeSet::new(),
@@ -1730,10 +1742,14 @@ impl Engine {
                     .is_some_and(|q| same_url(&q.relay_url, &link.relay));
                 let mut ignore = |_, _: &str| {};
                 let observe = if queue_relay { observe } else { &mut ignore };
-                // Not saved means not acked: the relay keeps it for the next connection.
-                if self.receive(owner, &envelope, observe)
-                    && let Some(l) = self.links.get(link)
-                {
+                let unsaved = Unsaved::Link(link.clone(), recv_id, relay_id);
+                if self.unsaved.contains(&unsaved) {
+                    return;
+                }
+                // Not saved means not acked: the relay keeps it until a save works.
+                if !self.receive(owner, &envelope, observe) {
+                    self.unsaved.push(unsaved);
+                } else if let Some(l) = self.links.get(link) {
                     let _ = l.relay.send(ClientFrame::Ack { recv_id, relay_id });
                 }
             }
@@ -1991,6 +2007,27 @@ impl Engine {
             p.code = None;
         }
         ok
+    }
+
+    /// Acks the deliveries held back by a failed save, once a save works.
+    fn ack_saved(&mut self) {
+        if self.unsaved.is_empty() || !self.persist() {
+            return;
+        }
+        for u in std::mem::take(&mut self.unsaved) {
+            match u {
+                Unsaved::Link(link, recv_id, relay_id) => {
+                    if let Some(l) = self.links.get(&link) {
+                        let _ = l.relay.send(ClientFrame::Ack { recv_id, relay_id });
+                    }
+                }
+                Unsaved::Group(id, recv_id, relay_id) => {
+                    if let Some(g) = self.data.groups.iter().position(|x| x.id == id) {
+                        self.group_send(g, ClientFrame::Ack { recv_id, relay_id });
+                    }
+                }
+            }
+        }
     }
 
     /// Decrypts and stores one delivery from the queue of `who`: one of our
@@ -2485,6 +2522,7 @@ impl Engine {
     /// Timers: disappearing messages, the rotated-out fallback key, a wipe
     /// waiting for the relay. Call about once a second.
     pub fn tick(&mut self) {
+        self.ack_saved();
         self.retry_group_moves();
         self.retire_old_queues();
         self.hurry_open_links();

@@ -156,7 +156,7 @@ impl Engine {
             .collect()
     }
 
-    fn group_send(&self, g: usize, frame: ClientFrame) -> bool {
+    pub(super) fn group_send(&self, g: usize, frame: ClientFrame) -> bool {
         self.group_send_scoped(g, frame, None)
     }
 
@@ -1354,7 +1354,14 @@ impl Engine {
                 {
                     return;
                 }
-                if self.group_receive(g, &envelope) {
+                // Audit 2026-11-25, finding 2: see `Engine::unsaved`.
+                let unsaved = Unsaved::Group(self.data.groups[g].id, recv_id, relay_id);
+                if self.unsaved.contains(&unsaved) {
+                    return;
+                }
+                if !self.group_receive(g, &envelope) {
+                    self.unsaved.push(unsaved);
+                } else {
                     self.group_send(g, ClientFrame::Ack { recv_id, relay_id });
                 }
             }
