@@ -3,6 +3,14 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.37.0
+
+- Mentions in groups: write @ and someone's nickname to reach them even
+  if they muted the group. Their own app recognizes its name in the
+  text; nothing new is sent.
+- Android: Connect the open chat at once now shows its new state when
+  tapped. It changed before too, but the screen kept saying off.
+
 ## 0.36.1
 
 - Android: a chat with a message waiting to go later crashed the app on

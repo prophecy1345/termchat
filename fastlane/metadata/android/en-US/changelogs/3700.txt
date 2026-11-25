@@ -1,0 +1,1 @@
+Mentions in groups: @nickname reaches someone even if they muted the group. Connect the open chat at once shows its state again.
