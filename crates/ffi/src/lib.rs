@@ -17,6 +17,8 @@ uniffi::setup_scaffolding!();
 /// How often the relay's events are taken in.
 /// Polling, 200 ms of latency; await the channel if that shows.
 const POLL: Duration = Duration::from_millis(200);
+/// A document named by its id that no message holds any more.
+const GONE: &str = "this file is gone";
 
 fn runtime() -> &'static Runtime {
     static RT: OnceLock<Runtime> = OnceLock::new();
@@ -181,6 +183,9 @@ pub struct MessageView {
     pub file_name: Option<String>,
     /// A received document still waiting to be saved or discarded.
     pub file_unsaved: bool,
+    /// The document's id: it names a received document in the calls that
+    /// save, view or forget it, which outlive the row (audit 2026-11-25, 3).
+    pub file_id: Option<u32>,
     /// ADR-043: a document offered to us, not asked for or declined yet.
     pub file_offered: bool,
     /// ADR-044: a received image that can be viewed now.
@@ -556,6 +561,7 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
         },
         file_name: m.file.as_ref().map(|f| engine::safe_name(&f.name)),
         file_unsaved: !m.mine && m.file.as_ref().is_some_and(|f| f.complete() && f.held()),
+        file_id: m.file.as_ref().map(|f| f.id),
         file_offered: !m.mine && m.file.as_ref().is_some_and(|f| f.offered()),
         file_picture: !m.mine && m.file.as_ref().is_some_and(|f| f.viewable()),
         pointable: m.id.is_some() && !m.deleted && m.status != Status::System,
@@ -957,23 +963,33 @@ impl Account {
         Ok(self.with_group(group, |e, g| e.send_group_file(g, &name, bytes))??)
     }
 
-    /// ADR-044: received group image `msg`, decoded within limits. Call it
-    /// off the main thread; the engine stays unlocked while it decodes.
-    pub fn view_group_image(&self, group: u32, msg: u32) -> Result<Picture> {
-        let bytes = self.with_group(group, |e, g| e.group_image_bytes(g, msg as usize))??;
+    /// ADR-044: received group image `file` (its id), decoded within limits.
+    /// Call it off the main thread; the engine stays unlocked while it decodes.
+    pub fn view_group_image(&self, group: u32, file: u32) -> Result<Picture> {
+        let bytes = self.with_group(group, |e, g| {
+            e.group_image_bytes(
+                g,
+                e.group_file_row(g, file).ok_or_else(|| GONE.to_string())?,
+            )
+        })??;
         Ok(picture(&bytes)?)
     }
 
-    /// The bytes of received group document `msg`, for "Save as".
-    pub fn group_file_bytes(&self, group: u32, msg: u32) -> Result<Option<Vec<u8>>> {
+    /// The bytes of received group document `file` (its id), for "Save as".
+    pub fn group_file_bytes(&self, group: u32, file: u32) -> Result<Option<Vec<u8>>> {
         self.with_group(group, |e, g| {
-            e.group_file_bytes(g, msg as usize).map(|(_, b)| b)
+            let m = e.group_file_row(g, file)?;
+            e.group_file_bytes(g, m).map(|(_, b)| b)
         })
     }
 
-    /// Forgets the bytes of received group document `msg`.
-    pub fn forget_group_file(&self, group: u32, msg: u32) -> Result<()> {
-        self.with_group(group, |e, g| e.discard_group_file(g, msg as usize))
+    /// Forgets the bytes of received group document `file` (its id).
+    pub fn forget_group_file(&self, group: u32, file: u32) -> Result<()> {
+        self.with_group(group, |e, g| {
+            if let Some(m) = e.group_file_row(g, file) {
+                e.discard_group_file(g, m);
+            }
+        })
     }
 
     pub fn reply_group(&self, group: u32, msg: u32, text: String) -> Result<()> {
@@ -1124,10 +1140,12 @@ impl Account {
         Ok(self.with(index, |e, i| e.send_file(i, &name, bytes))??)
     }
 
-    /// ADR-044: received image `msg`, decoded within limits. Call it off the
-    /// main thread; the engine stays unlocked while it decodes.
-    pub fn view_image(&self, index: u32, msg: u32) -> Result<Picture> {
-        let bytes = self.with(index, |e, i| e.image_bytes(i, msg as usize))??;
+    /// ADR-044: received image `file` (its id), decoded within limits. Call
+    /// it off the main thread; the engine stays unlocked while it decodes.
+    pub fn view_image(&self, index: u32, file: u32) -> Result<Picture> {
+        let bytes = self.with(index, |e, i| {
+            e.image_bytes(i, e.file_row(i, file).ok_or_else(|| GONE.to_string())?)
+        })??;
         Ok(picture(&bytes)?)
     }
 
@@ -1231,14 +1249,23 @@ impl Account {
         Ok(self.with(index, |e, i| e.download_file(i, msg as usize))??)
     }
 
-    /// The bytes of received document `msg`, for the system "Save as" dialog.
-    pub fn file_bytes(&self, index: u32, msg: u32) -> Result<Option<Vec<u8>>> {
-        self.with(index, |e, i| e.file_bytes(i, msg as usize).map(|(_, b)| b))
+    /// The bytes of received document `file` (its id), for the system
+    /// "Save as" dialog.
+    pub fn file_bytes(&self, index: u32, file: u32) -> Result<Option<Vec<u8>>> {
+        self.with(index, |e, i| {
+            let m = e.file_row(i, file)?;
+            e.file_bytes(i, m).map(|(_, b)| b)
+        })
     }
 
-    /// Forgets the bytes of received document `msg`, once saved or declined.
-    pub fn forget_file(&self, index: u32, msg: u32) -> Result<()> {
-        self.with(index, |e, i| e.discard_file(i, msg as usize))
+    /// Forgets the bytes of received document `file` (its id), once saved
+    /// or declined.
+    pub fn forget_file(&self, index: u32, file: u32) -> Result<()> {
+        self.with(index, |e, i| {
+            if let Some(m) = e.file_row(i, file) {
+                e.discard_file(i, m);
+            }
+        })
     }
 
     /// Adds a contact from their invite; returns its index. `incognito`

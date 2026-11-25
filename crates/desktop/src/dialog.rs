@@ -71,9 +71,10 @@ pub enum Dialog {
         path: String,
         error: String,
     },
-    /// Message `m` of the open chat, a received document.
+    /// Received document `id` of the open chat: by id, as rows move when
+    /// older messages expire (audit 2026-11-25, finding 3).
     SaveFile {
-        m: usize,
+        id: u32,
         folder: String,
         error: String,
     },
@@ -150,9 +151,9 @@ impl Dialog {
         }
     }
 
-    pub fn save_file(m: usize) -> Self {
+    pub fn save_file(id: u32) -> Self {
         Self::SaveFile {
-            m,
+            id,
             folder: "~/Downloads".into(),
             error: String::new(),
         }
@@ -1411,18 +1412,26 @@ impl Chat {
                 }
                 stay
             }
-            Dialog::SaveFile { m, folder, error } => {
+            Dialog::SaveFile { id, folder, error } => {
                 let group = self.open_group();
+                let m = match (group, open) {
+                    (Some(g), _) => self.engine.group_file_row(g, *id),
+                    (None, Some(i)) => self.engine.file_row(i, *id),
+                    (None, None) => None,
+                };
+                let Some(m) = m else {
+                    return false;
+                };
                 // By name only: a document from the spool is opened on Save,
                 // not every frame (ADR-043).
                 let name = match (group, open) {
-                    (Some(g), _) => self.engine.group_file_bytes(g, *m).map(|(n, _)| n),
+                    (Some(g), _) => self.engine.group_file_bytes(g, m).map(|(n, _)| n),
                     (None, Some(i)) => self
                         .engine
                         .data
                         .contacts
                         .get(i)
-                        .and_then(|c| c.messages.get(*m))
+                        .and_then(|c| c.messages.get(m))
                         .filter(|x| !x.mine)
                         .and_then(|x| x.file.as_ref())
                         .filter(|f| f.complete() && f.held())
@@ -1458,8 +1467,8 @@ impl Chat {
                     if ui.button("Save").clicked() {
                         let dir = data::expand(folder);
                         let saved = match (group, open) {
-                            (Some(g), _) => self.engine.save_group_file(g, *m, &dir),
-                            (None, Some(i)) => self.engine.save_file(i, *m, &dir),
+                            (Some(g), _) => self.engine.save_group_file(g, m, &dir),
+                            (None, Some(i)) => self.engine.save_file(i, m, &dir),
                             (None, None) => Err("nothing open".into()),
                         };
                         match saved {
@@ -1472,8 +1481,8 @@ impl Chat {
                     }
                     if ui.button("Discard").clicked() {
                         match (group, open) {
-                            (Some(g), _) => self.engine.discard_group_file(g, *m),
-                            (None, Some(i)) => self.engine.discard_file(i, *m),
+                            (Some(g), _) => self.engine.discard_group_file(g, m),
+                            (None, Some(i)) => self.engine.discard_file(i, m),
                             (None, None) => {}
                         }
                         keep = false;

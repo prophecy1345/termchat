@@ -12,8 +12,8 @@ use crate::chat::{Chat, Pal};
 use crate::dialog::Dialog;
 
 pub struct Viewer {
-    /// The message, in the open chat or group.
-    m: usize,
+    /// The document's id, in the open chat or group (audit 2026-11-25, 3).
+    id: u32,
     name: String,
     coming: Option<Receiver<Result<Picture, String>>>,
     texture: Option<egui::TextureHandle>,
@@ -23,14 +23,14 @@ pub struct Viewer {
 }
 
 impl Viewer {
-    /// Starts decoding `bytes` of message `m` off the interface thread.
-    pub fn open(m: usize, name: String, bytes: Vec<u8>) -> Self {
+    /// Starts decoding `bytes` of document `id` off the interface thread.
+    pub fn open(id: u32, name: String, bytes: Vec<u8>) -> Self {
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(decode(&bytes));
         });
         Self {
-            m,
+            id,
             name,
             coming: Some(rx),
             texture: None,
@@ -81,7 +81,7 @@ impl Chat {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     keep &= !ui.button("Close").clicked();
                     if ui.button("Save").clicked() {
-                        self.dialog = Some(Dialog::save_file(v.m));
+                        self.dialog = Some(Dialog::save_file(v.id));
                         keep = false;
                     }
                 });

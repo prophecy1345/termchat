@@ -115,9 +115,10 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
         }.onSuccess { m.note = "" }.onFailure { m.note = it.message ?: "$it" }
         m.changed()
     }
-    // The received document being saved: its bytes go where the user picked, then are forgotten.
+    // The received document being saved, by its id (rows move as messages expire):
+    // its bytes go where the user picked, then are forgotten.
     var saving by remember { mutableStateOf<UInt?>(null) }
-    // ADR-044: the received image open in the viewer.
+    // ADR-044: the received image open in the viewer, by its id.
     var viewing by remember { mutableStateOf<UInt?>(null) }
     // ADR-046 amendment 1: which notes Notes shows.
     var noteFilter by rememberSaveable { mutableStateOf("all") }
@@ -135,7 +136,7 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
     }
 
     viewing?.let { at ->
-        val name = messages.getOrNull(at.toInt())?.fileName ?: "image"
+        val name = messages.firstOrNull { !it.mine && it.fileId == at }?.fileName ?: "image"
         ImageViewer(
             name,
             load = { a.viewImage(index, at) },
@@ -211,12 +212,13 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     runCatching { a.downloadFile(index, at) }.onFailure { m.note = it.message ?: "$it" }
                     m.changed()
                 }
-                Bubble(msg, c.rich, act, download = download, view = { viewing = at }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null) { keep ->
-                    if (keep) {
-                        saving = at
+                Bubble(msg, c.rich, act, download = download, view = { viewing = msg.fileId }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null) { keep ->
+                    val id = msg.fileId
+                    if (id != null) if (keep) {
+                        saving = id
                         save.launch(msg.fileName ?: "file")
                     } else {
-                        runCatching { a.forgetFile(index, at) }
+                        runCatching { a.forgetFile(index, id) }
                         m.changed()
                     }
                 }

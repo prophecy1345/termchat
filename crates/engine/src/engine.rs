@@ -313,6 +313,11 @@ pub struct Engine {
 }
 
 /// One connection: whose it is (one of our identities, for its invite
+fn file_row(msgs: &[Msg], id: u32) -> Option<usize> {
+    msgs.iter()
+        .position(|m| !m.mine && m.file.as_ref().is_some_and(|f| f.id == id))
+}
+
 /// A delivery whose ack waits for a save: on a link, or in a group.
 #[derive(Clone, PartialEq, Eq)]
 enum Unsaved {
@@ -3209,6 +3214,17 @@ impl Engine {
 
     /// Name and bytes of a received file `m` of contact `i` that is whole and
     /// not yet saved or discarded.
+    /// Audit 2026-11-25, finding 3: the row of received document `id` now.
+    /// Rows move as older messages expire, so a dialog keeps the id.
+    pub fn file_row(&self, i: usize, id: u32) -> Option<usize> {
+        file_row(&self.data.contacts.get(i)?.messages, id)
+    }
+
+    /// `file_row` in group `g`.
+    pub fn group_file_row(&self, g: usize, id: u32) -> Option<usize> {
+        file_row(&self.data.groups.get(g)?.messages, id)
+    }
+
     pub fn file_bytes(&self, i: usize, m: usize) -> Option<(String, Vec<u8>)> {
         let msg = self.data.contacts.get(i)?.messages.get(m)?;
         let f = msg.file.as_ref().filter(|f| !msg.mine && f.complete())?;
@@ -3801,6 +3817,26 @@ mod tests {
         assert_eq!(notices(&c), ["⚠ 2 message(s) missing so far"]);
         show_missed(&mut c, 0);
         assert!(c.messages.is_empty());
+    }
+
+    /// Audit 2026-11-25, finding 3: a document is found by its id after an
+    /// older message expired, never by the row it had.
+    #[test]
+    fn a_document_is_found_by_id_after_rows_move() {
+        let doc = |id, mine| {
+            let mut m = Msg::default();
+            m.mine = mine;
+            let mut f = FileMsg::default();
+            f.id = id;
+            m.file = Some(f);
+            m
+        };
+        let mut msgs = vec![doc(1, false), doc(2, false), doc(3, true)];
+        assert_eq!(file_row(&msgs, 2), Some(1));
+        msgs.remove(0);
+        assert_eq!(file_row(&msgs, 2), Some(0));
+        assert_eq!(file_row(&msgs, 1), None);
+        assert_eq!(file_row(&msgs, 3), None, "only documents we received");
     }
 
     #[test]

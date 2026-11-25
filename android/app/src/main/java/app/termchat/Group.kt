@@ -64,7 +64,8 @@ fun Group(m: Model, index: UInt) {
     }
 
     viewing?.let { at ->
-        val name = messages.getOrNull(at.toInt())?.fileName ?: "image"
+        // By the document's id: rows move as messages expire.
+        val name = messages.firstOrNull { !it.mine && it.fileId == at }?.fileName ?: "image"
         ImageViewer(
             name,
             load = { a.viewGroupImage(index, at) },
@@ -96,12 +97,13 @@ fun Group(m: Model, index: UInt) {
                             m.changed()
                         }
                     }
-                }, group = true, view = { viewing = at }) { keep ->
-                    if (keep) {
-                        saving = at
+                }, group = true, view = { viewing = msg.fileId }) { keep ->
+                    val id = msg.fileId
+                    if (id != null) if (keep) {
+                        saving = id
                         save.launch(msg.fileName ?: "file")
                     } else {
-                        runCatching { a.forgetGroupFile(index, at) }
+                        runCatching { a.forgetGroupFile(index, id) }
                         m.changed()
                     }
                 }

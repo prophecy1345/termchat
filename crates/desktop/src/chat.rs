@@ -983,17 +983,25 @@ impl Chat {
             Open::Group(_) => true,
         };
         match act {
-            Act::Save(n) => self.dialog = Some(Dialog::save_file(n)),
+            Act::Save(n) => {
+                if let Some(f) = msgs.get(n).and_then(|m| m.file.as_ref()) {
+                    self.dialog = Some(Dialog::save_file(f.id));
+                }
+            }
             Act::View(n) => {
                 let bytes = match at {
                     Open::Chat(i) => self.engine.image_bytes(i, n),
                     Open::Group(g) => self.engine.group_image_bytes(g, n),
                 };
                 let name = msgs.get(n).map(|m| m.text.clone()).unwrap_or_default();
+                let id = msgs
+                    .get(n)
+                    .and_then(|m| m.file.as_ref())
+                    .map_or(0, |f| f.id);
                 match bytes {
                     Ok(bytes) => {
                         let name = termchat_engine::engine::clean_text(&name);
-                        self.viewer = Some(crate::viewer::Viewer::open(n, name, bytes));
+                        self.viewer = Some(crate::viewer::Viewer::open(id, name, bytes));
                     }
                     Err(e) => self.status = e,
                 }
@@ -2160,7 +2168,7 @@ mod tests {
                 "YOUR FINGERPRINT",
             ),
             (Dialog::Notice("all good".into()), "all good"),
-            (Dialog::save_file(4), "Save a file"),
+            (Dialog::save_file(0), "Save a file"),
             (
                 Dialog::SendFile {
                     path: String::new(),
