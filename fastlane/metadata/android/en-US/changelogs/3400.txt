@@ -1,0 +1,1 @@
+Notes filters: tap a filter again to go back to All; tags moved into one By Tags menu. Documents go much faster: 1 MiB in under 10 seconds, 25 MiB in under a minute, with relay 0.34.0.
