@@ -393,8 +393,13 @@ fn progress(e: &mut Engine, pending: &mut Vec<Pending>, readers: &mut Vec<Reader
             Waiting::GroupSent { group, id } => group::send_result(e, &group, id, p.until)
                 .map(|result| result.map(|()| ok(json!({})))),
             Waiting::Sent { i, m } => match status_of(e, i, m) {
-                Some(Status::Sent) | None => Some(Ok(ok(json!({})))),
+                Some(Status::Sent) => Some(Ok(ok(json!({})))),
                 Some(Status::Failed(why)) => Some(Err(Fail(5, why))),
+                // Audit 2026-11-25, finding 6: gone (it expired) is not sent.
+                None => Some(Err(Fail(
+                    4,
+                    "it disappeared before the relay took it".into(),
+                ))),
                 _ => None,
             },
             Waiting::Added { i } => {
