@@ -44,6 +44,12 @@ How:
 
 A contact on 0.8 or older cannot read these. Until their app says it can, yours sends them plain messages and offers no answers or reactions in that chat ("their app is older"). When you first update, contacts still on 0.8 see one "could not be decrypted" line and one "1 message lost": nothing is lost in fact.
 
+## Send later
+
+Write a message now and let it go later: in 10 minutes, 1, 3 or 8 hours, or a day. On Android long-press **Send**; in the desktop app right-click **SEND**; in the terminal type the message, then **Ctrl+P**, **u** and a number. What waits is listed over the field (on Android and the desktop) or in the same **Ctrl+P**, **u** window (terminal), where you can cancel it.
+
+The message waits only on this device, in its encrypted state, and goes out as an ordinary message when its time comes, so the relay learns nothing in advance. It goes only while the app is unlocked (open, or in the background on Android); if it is locked then, the message goes at the next unlock. A chat without history keeps nothing for later.
+
 ## Forward
 
 Send a message or a received document on to another chat or group. It goes as a new message of yours, with no mark of where it came from, and follows the timer of the chat it lands in. A document can be forwarded until you save or discard it; after that it is a file on your disk, and you send it from there.

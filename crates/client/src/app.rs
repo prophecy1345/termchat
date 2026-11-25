@@ -161,6 +161,8 @@ pub enum Popup {
     ClearHistory,
     /// Delete the marked messages on this device?
     DeleteHere,
+    /// PLAN Q4: send the typed text later, or cancel one waiting.
+    Later(usize),
     /// ADR-028: this device's link code, to paste on the main device.
     LinkCode(String),
     /// Our devices, with the highlighted row.
@@ -1198,6 +1200,37 @@ impl Main {
         if self.current().is_some() || self.group_index().is_some() {
             rows.push(('e', "export this chat to a text file".into()));
             rows.push(('w', "clear this chat's history here".into()));
+            let waiting = self.later_list().len();
+            rows.push(match waiting {
+                0 => ('u', "send later".into()),
+                n => ('u', format!("send later ({n} waiting)")),
+            });
+        }
+        rows
+    }
+
+    /// PLAN Q4: what waits to go later in the open chat or group.
+    pub fn later_list(&self) -> &[crate::data::Later] {
+        match (self.group_index(), self.current()) {
+            (Some(g), _) => &self.engine.data.groups[g].later,
+            (None, Some(c)) => &c.later,
+            (None, None) => &[],
+        }
+    }
+
+    /// The rows of the send-later window: 1-5 send the typed text then,
+    /// a letter cancels one waiting.
+    pub fn later_rows(&self) -> Vec<(char, String)> {
+        let mut rows = Vec::new();
+        if !self.input.to_string().trim().is_empty() && matches!(self.compose, Compose::New) {
+            for (k, s) in ('1'..).zip(engine::LATER) {
+                rows.push((k, format!("send in {}", engine::span(s))));
+            }
+        }
+        for (k, l) in ('a'..='z').zip(self.later_list()) {
+            let text = engine::clean_text(&l.text);
+            let first = text.lines().next().unwrap_or_default().to_string();
+            rows.push((k, format!("cancel: {}: {first}", engine::later_in(l.at))));
         }
         rows
     }
@@ -1610,6 +1643,7 @@ impl Main {
                 }
                 Ok(Some('e')) => Some(Popup::Form(Form::new(Kind::Export))),
                 Ok(Some('w')) => Some(Popup::ClearHistory),
+                Ok(Some('u')) => Some(Popup::Later(0)),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {
                     return self.on_key(
@@ -2014,6 +2048,40 @@ impl Main {
                 }
                 None
             }
+            Popup::Later(at) => match pick(&self.later_rows(), at, k) {
+                Err(at) => Some(Popup::Later(at)),
+                Ok(None) => None,
+                Ok(Some(c @ '1'..='9')) => {
+                    let s = engine::LATER[c as usize - '1' as usize];
+                    let text = self.input.to_string();
+                    let done = match self.group_index() {
+                        Some(g) => self.engine.send_group_later(g, &text, engine::now() + s),
+                        None => self
+                            .engine
+                            .send_later(self.selected, &text, engine::now() + s),
+                    };
+                    match done {
+                        Ok(()) => {
+                            self.input = Input::default();
+                            self.stash_draft();
+                            self.status = format!("goes in {}", engine::span(s));
+                        }
+                        Err(e) => self.status = e,
+                    }
+                    None
+                }
+                Ok(Some(c)) => {
+                    let n = c as usize - 'a' as usize;
+                    let done = match self.group_index() {
+                        Some(g) => self.engine.cancel_group_later(g, n),
+                        None => self.engine.cancel_later(self.selected, n),
+                    };
+                    if let Err(e) = done {
+                        self.status = e;
+                    }
+                    (!self.later_rows().is_empty()).then_some(Popup::Later(0))
+                }
+            },
             Popup::DeleteHere => {
                 if k.code == KeyCode::Char('y') {
                     let marked = std::mem::take(&mut self.marked);

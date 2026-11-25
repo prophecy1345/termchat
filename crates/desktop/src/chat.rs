@@ -8,7 +8,7 @@ use termchat_core::proto::{REACTIONS, Ref};
 use termchat_engine::data::{Contact, Group, Msg, Status};
 use termchat_engine::engine::{IntroAnswer, NoteFilter, PendingIntro, note_shown};
 use termchat_engine::engine::{
-    OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, next_timer, span,
+    LATER, OLDER_APP, REACTION_NAMES, TIMERS, age, clean_text, later_in, next_timer, now, span,
 };
 use termchat_engine::icons::Icon;
 use termchat_engine::notify::{self, SOUND_GAP};
@@ -1040,6 +1040,10 @@ impl Chat {
                         Some(k) => drop(picked.remove(k)),
                         None => picked.push(r),
                     }
+                    // The last one unpicked ends picking.
+                    if picked.is_empty() {
+                        self.picked = None;
+                    }
                 }
             }
             _ if !rich => self.status = OLDER_APP.into(),
@@ -1095,6 +1099,34 @@ impl Chat {
         match at {
             Open::Chat(i) => self.engine.delete_here(i, &rows),
             Open::Group(g) => self.engine.delete_group_here(g, &rows),
+        }
+    }
+
+    /// PLAN Q4: what waits to go later here, each with Cancel.
+    fn later_strip(&mut self, ui: &mut egui::Ui, p: &Pal, at: Open) {
+        let list = match at {
+            Open::Chat(i) => &self.engine.data.contacts[i].later,
+            Open::Group(g) => &self.engine.data.groups[g].later,
+        };
+        let mut cancel = None;
+        for (n, l) in list.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.small_button("Cancel").clicked() {
+                    cancel = Some(n);
+                }
+                let first = clean_text(&l.text);
+                let first = first.lines().next().unwrap_or_default().to_string();
+                let line = format!("{}: {first}", later_in(l.at));
+                ui.add(egui::Label::new(RichText::new(line).monospace().color(p.dim)).truncate());
+            });
+        }
+        let Some(n) = cancel else { return };
+        let done = match at {
+            Open::Chat(i) => self.engine.cancel_later(i, n),
+            Open::Group(g) => self.engine.cancel_group_later(g, n),
+        };
+        if let Err(e) = done {
+            self.status = e;
         }
     }
 
@@ -1334,6 +1366,8 @@ impl Chat {
         let (margin, stroke_width): (i8, f32) = (6, 1.0);
         let field_height = rows + 2.0 * (f32::from(margin) + stroke_width);
         let mut send = false;
+        let mut later = None;
+        self.later_strip(ui, p, at);
         let banner = match self.compose {
             Compose::New => None,
             Compose::Reply(r) => Some(match self.locate(at, r) {
@@ -1374,6 +1408,18 @@ impl Chat {
                     ui.set_min_height(field_height);
                     let button = crate::synth::button(ui, p, "SEND", egui::vec2(send_width, 28.0));
                     send = button.clicked();
+                    // PLAN Q4: a new message can wait to go later.
+                    if matches!(self.compose, Compose::New) {
+                        let button = button.on_hover_text("Right-click: send later");
+                        button.context_menu(|ui| {
+                            for s in LATER {
+                                if ui.button(format!("Send in {}", span(s))).clicked() {
+                                    later = Some(now() + s);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
                     // File and the timer sit on the field's bottom edge.
                     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                         ui.horizontal(|ui| {
@@ -1468,6 +1514,24 @@ impl Chat {
                     });
             });
         });
+        if let Some(at_time) = later
+            && !self.input.trim().is_empty()
+        {
+            let done = match at {
+                Open::Chat(i) => self.engine.send_later(i, &self.input, at_time),
+                Open::Group(g) => self.engine.send_group_later(g, &self.input, at_time),
+            };
+            match done {
+                Ok(()) => {
+                    self.input.clear();
+                    if let Some(draft) = self.draft_slot() {
+                        draft.clear();
+                    }
+                }
+                Err(e) => self.status = e,
+            }
+            return;
+        }
         if !send || self.input.trim().is_empty() {
             return;
         }

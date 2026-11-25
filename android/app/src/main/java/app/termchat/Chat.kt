@@ -205,7 +205,8 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                         "pick" -> msg.id?.let { id ->
                             val p = Picked(id, msg.mine)
                             val now = picked.orEmpty()
-                            picked = if (p in now) now - p else now + p
+                            // The last one unpicked ends picking.
+                            picked = (if (p in now) now - p else now + p).ifEmpty { null }
                         }
                         else -> {
                             // A reaction; the same one again takes it back.
@@ -284,6 +285,11 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
             }
         }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
+        // PLAN Q4: what waits to go later, each with a cross.
+        LaterStrip(runCatching { a.later(index) }.getOrDefault(emptyList())) { n ->
+            runCatching { a.cancelLater(index, n) }.onFailure { m.note = it.message ?: "$it" }
+            m.changed()
+        }
         compose?.let { cm ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconText(
@@ -335,17 +341,32 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                 },
                 Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6,
             )
-            Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime, modifier = Modifier.height(48.dp)) {
-                runCatching {
-                    val cm = compose
-                    when {
-                        cm == null -> a.send(index, text)
-                        cm.edit -> a.editMessage(index, cm.at, text)
-                        else -> a.reply(index, cm.at, text)
+            // A long press on Send sends a new message later (PLAN Q4).
+            var later by remember { mutableStateOf(false) }
+            Box {
+                Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
+                    runCatching {
+                        val cm = compose
+                        when {
+                            cm == null -> a.send(index, text)
+                            cm.edit -> a.editMessage(index, cm.at, text)
+                            else -> a.reply(index, cm.at, text)
+                        }
+                    }
+                        .onSuccess { a.setDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }
+                        .onFailure { m.note = it.message ?: "$it" }
+                }
+                DropdownMenu(later, { later = false }, containerColor = Tc.surface) {
+                    LATER.forEach { s ->
+                        DropdownMenuItem({ Text("Send in ${laterSpan(s)}", style = Tc.mono) }, {
+                            later = false
+                            runCatching { a.sendLater(index, text, (System.currentTimeMillis() / 1000 + s).toULong()) }
+                                .onSuccess { a.setDraft(index, ""); text = ""; m.note = "" }
+                                .onFailure { m.note = it.message ?: "$it" }
+                            m.changed()
+                        })
                     }
                 }
-                    .onSuccess { a.setDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }
-                    .onFailure { m.note = it.message ?: "$it" }
             }
         }
     }

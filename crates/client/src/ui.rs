@@ -1408,6 +1408,19 @@ fn popup_pane(
                 click_row(h, body, i, key(KeyCode::Char(*c)));
             }
         }
+        Popup::Later(at) => {
+            let items = m.later_rows();
+            let lines = match items.is_empty() {
+                true => plain(
+                    "Type a message first, then pick when it goes.\nNothing waits to go later here.",
+                ),
+                false => menu_rows(t, &items, *at, 60),
+            };
+            let body = window(f, t, h, "send later", lines, close, 64, false);
+            for (i, (c, _)) in items.iter().enumerate() {
+                click_row(h, body, i, key(KeyCode::Char(*c)));
+            }
+        }
         Popup::Settings { tab, at } => settings_pane(f, t, h, m, settings, *tab, *at),
         Popup::Pager {
             doc,

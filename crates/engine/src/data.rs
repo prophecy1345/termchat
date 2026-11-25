@@ -129,6 +129,9 @@ pub struct Group {
     /// Text typed and not sent yet, kept with the state.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
+    /// Messages to send later, soonest first (PLAN Q4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub later: Vec<Later>,
     /// As for a chat: quiet until then, `u64::MAX` for always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted_until: Option<u64>,
@@ -425,6 +428,14 @@ pub struct Invites {
     pub public: Option<InviteCode>,
 }
 
+/// A message to send later (PLAN Q4), kept only on this device: at `at`
+/// (Unix seconds) it goes as any message would.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct Later {
+    pub at: u64,
+    pub text: String,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Contact {
     pub key: Ed25519Key,
@@ -450,6 +461,9 @@ pub struct Contact {
     /// Text typed and not sent yet, kept with the state (not for `no_history`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
+    /// Messages to send later, soonest first (PLAN Q4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub later: Vec<Later>,
     /// No sound or notification for its messages until then (Unix seconds,
     /// `u64::MAX` for always); unread still counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -807,6 +821,7 @@ impl Data {
             c.held_back = 0;
             c.unread = 0;
             c.draft.clear();
+            c.later.clear();
             c.outbox.clear();
             c.device_outbox.clear();
         }
@@ -814,6 +829,7 @@ impl Data {
             g.messages.clear();
             g.unread = 0;
             g.draft.clear();
+            g.later.clear();
             g.outbox.clear();
         }
     }

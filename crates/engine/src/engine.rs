@@ -92,6 +92,15 @@ pub const DEFAULT_ONION: &str =
 /// Disappearing timer steps, in the order a button cycles them.
 pub const TIMERS: [Option<u32>; 5] = [None, Some(300), Some(3600), Some(86_400), Some(604_800)];
 
+/// PLAN Q4: how much later a message can go, in seconds; the same in
+/// every app (Android lists them again in Kotlin).
+pub const LATER: [u64; 5] = [600, 3600, 3 * 3600, 8 * 3600, 86_400];
+
+/// When a message waiting for later goes, from now: "in 2h", "in 5m".
+pub fn later_in(at: u64) -> String {
+    format!("in {}", span(at.saturating_sub(now()).max(60)))
+}
+
 pub fn next_timer(now: Option<u32>) -> Option<u32> {
     let at = TIMERS.iter().position(|t| *t == now).unwrap_or(0);
     TIMERS[(at + 1) % TIMERS.len()]
@@ -438,6 +447,31 @@ impl Engine {
 }
 
 /// A message clearing a chat keeps: not sent yet, or a document still arriving.
+fn drop_later(list: &mut Vec<data::Later>, n: usize) -> Result<(), String> {
+    if n >= list.len() {
+        return Err("it went already".into());
+    }
+    list.remove(n);
+    Ok(())
+}
+
+/// A message for later: not empty, not too long, not in the past.
+fn later(text: &str, at: u64) -> Result<data::Later, String> {
+    if text.trim().is_empty() {
+        return Err("nothing to send".into());
+    }
+    if text.len() > proto::MAX_TEXT_BYTES {
+        return Err("message too long".into());
+    }
+    if at <= now() {
+        return Err("pick a time from now on".into());
+    }
+    Ok(data::Later {
+        at,
+        text: text.to_string(),
+    })
+}
+
 /// Drops messages `rows` that are not on their way; how many went.
 fn drop_rows(messages: &mut Vec<Msg>, rows: &[usize]) -> usize {
     let (before, mut row) = (messages.len(), 0);
@@ -2639,6 +2673,7 @@ impl Engine {
         self.retire_old_queues();
         self.hurry_open_links();
         self.create_refused();
+        self.send_due();
         if self.reclaim.is_some_and(|at| Instant::now() >= at) {
             self.reclaim = None;
             self.claiming.clear();
@@ -2971,6 +3006,73 @@ impl Engine {
         self.persist();
         self.deliver(i);
         Ok(())
+    }
+
+    /// Sends `text` to chat `i` at `at` (Unix seconds) instead of now (PLAN
+    /// Q4). Kept only here; the relay sees a message only when it goes.
+    pub fn send_later(&mut self, i: usize, text: &str, at: u64) -> Result<(), String> {
+        let c = self.writable(i)?;
+        if c.no_history {
+            return Err("a chat without history keeps nothing for later".into());
+        }
+        let later = later(text, at)?;
+        let list = &mut self.data.contacts[i].later;
+        list.push(later);
+        list.sort_by_key(|l| l.at);
+        self.persist();
+        Ok(())
+    }
+
+    /// As `send_later`, for group `g`.
+    pub fn send_group_later(&mut self, g: usize, text: &str, at: u64) -> Result<(), String> {
+        let later = later(text, at)?;
+        let list = &mut self.data.groups.get_mut(g).ok_or("no such group")?.later;
+        list.push(later);
+        list.sort_by_key(|l| l.at);
+        self.persist();
+        Ok(())
+    }
+
+    /// Drops message `n` waiting to go later in chat `i`.
+    pub fn cancel_later(&mut self, i: usize, n: usize) -> Result<(), String> {
+        let c = self.data.contacts.get_mut(i).ok_or("no such chat")?;
+        drop_later(&mut c.later, n)?;
+        self.persist();
+        Ok(())
+    }
+
+    /// As `cancel_later`, in group `g`.
+    pub fn cancel_group_later(&mut self, g: usize, n: usize) -> Result<(), String> {
+        let group = self.data.groups.get_mut(g).ok_or("no such group")?;
+        drop_later(&mut group.later, n)?;
+        self.persist();
+        Ok(())
+    }
+
+    /// What waits to go later and is due: sent now, in order. One that
+    /// cannot go (a blocked chat, a group left) is dropped with a note.
+    fn send_due(&mut self) {
+        let t = now();
+        for i in 0..self.data.contacts.len() {
+            while self.data.contacts[i]
+                .later
+                .first()
+                .is_some_and(|l| l.at <= t)
+            {
+                let l = self.data.contacts[i].later.remove(0);
+                if let Err(e) = self.send(i, &l.text) {
+                    self.note(format!("a message for later was not sent: {e}"));
+                }
+            }
+        }
+        for g in 0..self.data.groups.len() {
+            while self.data.groups[g].later.first().is_some_and(|l| l.at <= t) {
+                let l = self.data.groups[g].later.remove(0);
+                if let Err(e) = self.send_group(g, &l.text) {
+                    self.note(format!("a message for later was not sent: {e}"));
+                }
+            }
+        }
     }
 
     /// Whether chat `i` can answer, edit, delete and react (ADR-025): their
@@ -4071,6 +4173,43 @@ mod tests {
             verified: true,
             ..Contact::default()
         }
+    }
+
+    #[tokio::test]
+    async fn a_message_for_later_goes_when_due_and_not_before() {
+        let (mut e, dir) = offline("later");
+        let i = e.index(&NOTES_KEY).unwrap();
+        assert!(e.send_later(i, "past", now() - 1).is_err());
+        assert!(e.send_later(i, "  ", now() + 60).is_err());
+        e.send_later(i, "in a day", now() + 86_400).unwrap();
+        e.send_later(i, "in an hour", now() + 3_600).unwrap();
+        let texts = |e: &Engine| -> Vec<String> {
+            e.data.contacts[i]
+                .later
+                .iter()
+                .map(|l| l.text.clone())
+                .collect()
+        };
+        assert_eq!(texts(&e), ["in an hour", "in a day"]);
+        e.send_due();
+        assert!(
+            !e.data.contacts[i]
+                .messages
+                .iter()
+                .any(|m| m.text == "in an hour")
+        );
+        e.data.contacts[i].later[0].at = now();
+        e.send_due();
+        assert!(
+            e.data.contacts[i]
+                .messages
+                .iter()
+                .any(|m| m.text == "in an hour")
+        );
+        assert_eq!(texts(&e), ["in a day"]);
+        e.cancel_later(i, 0).unwrap();
+        assert!(e.data.contacts[i].later.is_empty() && e.cancel_later(i, 0).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

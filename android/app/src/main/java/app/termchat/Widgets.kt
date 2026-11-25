@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -115,13 +116,48 @@ fun Field(
     )
 }
 
+/** PLAN Q4: how much later a message can go, as the engine's `LATER`. */
+internal val LATER = listOf(600L, 3600L, 3 * 3600L, 8 * 3600L, 86_400L)
+
+/** "10m", "3h", "1d", as the engine's `span`. */
+internal fun laterSpan(s: Long) = when {
+    s < 3600 -> "${s / 60}m"
+    s < 86_400 -> "${s / 3600}h"
+    else -> "${s / 86_400}d"
+}
+
+/** When a message waiting for later goes: the local time, with the day if not today. */
+internal fun laterAt(at: ULong): String {
+    val ms = at.toLong() * 1000
+    val sameDay = android.text.format.DateUtils.isToday(ms)
+    val flags = android.text.format.DateUtils.FORMAT_SHOW_TIME or if (sameDay) 0 else android.text.format.DateUtils.FORMAT_SHOW_DATE
+    return android.text.format.DateUtils.formatDateTime(null, ms, flags)
+}
+
+/** PLAN Q4: the messages waiting to go later, each with a cross to cancel. */
+@Composable
+internal fun LaterStrip(items: List<app.termchat.engine.LaterView>, cancel: (UInt) -> Unit) {
+    items.forEachIndexed { n, l ->
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Later ${laterAt(l.at)} · ${l.text.lineSequence().first()}",
+                style = Tc.small.copy(color = Tc.dim),
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconTap("close", "Do not send it") { cancel(n.toUInt()) }
+        }
+    }
+}
+
 /** A flat capitals button, like SEND. */
 @Composable
-fun Flat(label: String, enabled: Boolean = true, color: Color = Tc.lime, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun Flat(label: String, enabled: Boolean = true, color: Color = Tc.lime, modifier: Modifier = Modifier, onLong: (() -> Unit)? = null, onClick: () -> Unit) {
     Box(
         modifier
             .background(Tc.send, corner)
-            .clickable(enabled = enabled, onClick = onClick)
+            .combinedClickable(enabled = enabled, onLongClick = onLong, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) { Text(label.uppercase(), style = Tc.caps.copy(color = if (enabled) color else Tc.dim)) }

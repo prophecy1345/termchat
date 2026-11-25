@@ -171,6 +171,23 @@ pub enum Place {
     Group { index: u32 },
 }
 
+/// A message waiting to go later (PLAN Q4).
+#[derive(uniffi::Record)]
+pub struct LaterView {
+    pub at: u64,
+    pub text: String,
+}
+
+fn views(later: &[termchat_engine::data::Later]) -> Vec<LaterView> {
+    later
+        .iter()
+        .map(|l| LaterView {
+            at: l.at,
+            text: l.text.clone(),
+        })
+        .collect()
+}
+
 /// A message picked to delete: its `MessageView` id and side.
 #[derive(uniffi::Record)]
 pub struct Picked {
@@ -1129,6 +1146,35 @@ impl Account {
     }
 
     /// What was typed in chat `index` and not sent yet, kept with the state.
+    /// PLAN Q4: send `text` to chat `index` at `at` (Unix seconds).
+    pub fn send_later(&self, index: u32, text: String, at: u64) -> Result<()> {
+        Ok(self.with(index, |e, i| e.send_later(i, &text, at))??)
+    }
+
+    pub fn send_group_later(&self, group: u32, text: String, at: u64) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.send_group_later(g, &text, at))??)
+    }
+
+    /// What waits to go later in chat `index`, soonest first.
+    pub fn later(&self, index: u32) -> Vec<LaterView> {
+        self.with(index, |e, i| views(&e.data.contacts[i].later))
+            .unwrap_or_default()
+    }
+
+    pub fn group_later(&self, group: u32) -> Vec<LaterView> {
+        self.with_group(group, |e, g| views(&e.data.groups[g].later))
+            .unwrap_or_default()
+    }
+
+    /// Drops message `n` of `later(index)`.
+    pub fn cancel_later(&self, index: u32, n: u32) -> Result<()> {
+        Ok(self.with(index, |e, i| e.cancel_later(i, n as usize))??)
+    }
+
+    pub fn cancel_group_later(&self, group: u32, n: u32) -> Result<()> {
+        Ok(self.with_group(group, |e, g| e.cancel_group_later(g, n as usize))??)
+    }
+
     pub fn draft(&self, index: u32) -> String {
         self.with(index, |e, i| e.data.contacts[i].draft.clone())
             .unwrap_or_default()

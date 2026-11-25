@@ -97,7 +97,8 @@ fun Group(m: Model, index: UInt) {
                         "pick" -> msg.id?.let { id ->
                             val p = Picked(id, msg.mine)
                             val now = picked.orEmpty()
-                            picked = if (p in now) now - p else now + p
+                            // The last one unpicked ends picking.
+                            picked = (if (p in now) now - p else now + p).ifEmpty { null }
                         }
                         else -> {
                             val r = what.toUByte()
@@ -118,6 +119,11 @@ fun Group(m: Model, index: UInt) {
             }
         }
         if (m.note.isNotEmpty()) Text(m.note, style = Tc.small.copy(color = Tc.warn), modifier = Modifier.padding(horizontal = 12.dp))
+        // PLAN Q4: what waits to go later, each with a cross.
+        LaterStrip(runCatching { a.groupLater(index) }.getOrDefault(emptyList())) { n ->
+            runCatching { a.cancelGroupLater(index, n) }.onFailure(fail)
+            m.changed()
+        }
         compose?.let { (_, edit, label) ->
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconText(
@@ -139,15 +145,30 @@ fun Group(m: Model, index: UInt) {
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
             Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6)
-            Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime, modifier = Modifier.height(48.dp)) {
-                runCatching {
-                    val cm = compose
-                    when {
-                        cm == null -> a.sendGroup(index, text)
-                        cm.second -> a.editGroupMessage(index, cm.first, text)
-                        else -> a.replyGroup(index, cm.first, text)
+            // A long press on Send sends a new message later (PLAN Q4).
+            var later by remember { mutableStateOf(false) }
+            Box {
+                Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
+                    runCatching {
+                        val cm = compose
+                        when {
+                            cm == null -> a.sendGroup(index, text)
+                            cm.second -> a.editGroupMessage(index, cm.first, text)
+                            else -> a.replyGroup(index, cm.first, text)
+                        }
+                    }.onSuccess { a.setGroupDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }.onFailure(fail)
+                }
+                DropdownMenu(later, { later = false }, containerColor = Tc.surface) {
+                    LATER.forEach { s ->
+                        DropdownMenuItem({ Text("Send in ${laterSpan(s)}", style = Tc.mono) }, {
+                            later = false
+                            runCatching { a.sendGroupLater(index, text, (System.currentTimeMillis() / 1000 + s).toULong()) }
+                                .onSuccess { a.setGroupDraft(index, ""); text = ""; m.note = "" }
+                                .onFailure(fail)
+                            m.changed()
+                        })
                     }
-                }.onSuccess { a.setGroupDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }.onFailure(fail)
+                }
             }
         }
     }
