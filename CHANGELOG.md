@@ -3,6 +3,20 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.35.0
+
+- Pick several messages and delete them on this device: in the terminal
+  Shift+Up, then Space marks and x deletes; in the desktop app and on
+  Android, Select in a message's menu, then Delete here. The others and
+  your other devices keep them; what is still on its way stays.
+- Android: a long message no longer fills the screen while you type it.
+  The field stops at 6 lines and scrolls inside, level with the buttons.
+- Terminal: the colour theme now colours the whole screen, not only the
+  input and the text.
+- Alerts: termchat hook --quiet 22:00-08:00 (UTC) holds alerts at night
+  except firing ones with severity critical or page, and sends the rest
+  as one summary per route when the quiet hours end.
+
 ## 0.34.1
 
 - A message that arrives while the disk cannot save it is no longer

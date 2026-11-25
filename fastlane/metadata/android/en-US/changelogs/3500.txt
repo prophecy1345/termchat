@@ -1,0 +1,1 @@
+Select several messages and delete them on this device. A long message no longer fills the screen while you type it.
