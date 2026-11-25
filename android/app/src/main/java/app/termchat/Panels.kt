@@ -222,6 +222,8 @@ fun News(m: Model) = Panel(m, "What's new") {
 @Composable
 fun Settings(m: Model) = Panel(m, "Settings") {
     val a = m.account ?: return@Panel
+    // Rows that read the engine (Connect the open chat at once) redraw on a change.
+    @Suppress("UNUSED_EXPRESSION") m.version
     val context = LocalContext.current
     var form by remember { mutableStateOf<String?>(null) }
     var f1 by remember { mutableStateOf("") }
