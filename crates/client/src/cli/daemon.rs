@@ -372,6 +372,14 @@ fn handle(
             });
             return;
         }
+        // Audit 2026-11-25, finding 5: a document goes once `recv` wrote it.
+        "forget_file" => find(e, s("from")).map(|i| {
+            let id = request["id"].as_u64().and_then(|n| u32::try_from(n).ok());
+            if let Some(m) = id.and_then(|id| e.file_row(i, id)) {
+                e.discard_file(i, m);
+            }
+            ok(json!({}))
+        }),
         _ => Err(Fail(2, format!("unknown request\n{USAGE}"))),
     };
     let _ = reply.send(answer.unwrap_or_else(err));
@@ -431,7 +439,7 @@ fn progress(e: &mut Engine, pending: &mut Vec<Pending>, readers: &mut Vec<Reader
     for (i, m, what) in fresh {
         let wanted = |r: &Reader| r.from.is_none_or(|f| f == i);
         let files = readers.iter().any(|r| wanted(r) && r.files);
-        let line = record(e, i, &m, what, files, true);
+        let line = record(e, i, &m, what, files);
         let mut bare = line.clone();
         if let Some(f) = bare.get_mut("_file") {
             f["data"] = Value::Null;
@@ -456,10 +464,29 @@ fn progress(e: &mut Engine, pending: &mut Vec<Pending>, readers: &mut Vec<Reader
 /// state folder. `None`: there is none, so the command runs by itself.
 pub(super) async fn ask(a: &Args, home: &Path) -> Option<Result<(), Fail>> {
     let stream = UnixStream::connect(home.join(SOCKET)).await.ok()?;
-    Some(talk(a, stream).await)
+    Some(talk(a, stream, home).await)
 }
 
-async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
+/// Tells the daemon a document is on disk, so it may let it go.
+async fn forget(home: &Path, from: &str, id: u32) -> Result<(), Fail> {
+    let gone = |why: std::io::Error| Fail(1, format!("saved, but the daemon keeps it: {why}"));
+    let stream = UnixStream::connect(home.join(SOCKET)).await.map_err(gone)?;
+    let (read, mut write) = stream.into_split();
+    let request = json!({ "cmd": "forget_file", "from": from, "id": id });
+    write
+        .write_all(format!("{request}\n").as_bytes())
+        .await
+        .map_err(gone)?;
+    let mut line = String::new();
+    BufReader::new(read)
+        .take(1024)
+        .read_line(&mut line)
+        .await
+        .map_err(gone)?;
+    Ok(())
+}
+
+async fn talk(a: &Args, stream: UnixStream, home: &Path) -> Result<(), Fail> {
     let request = request(a)?;
     let approval = a.command == "ask" || a.command == "page";
     if (approval || a.group.is_some() || a.command == "groups")
@@ -514,8 +541,8 @@ async fn talk(a: &Args, stream: UnixStream) -> Result<(), Fail> {
                 println!("watch ready");
             } else if a.group.is_some() || a.command == "groups" {
                 group::print(a, &v)?;
-            } else {
-                print_record(a, v)?;
+            } else if let Some((from, id)) = print_record(a, v)? {
+                forget(home, &from, id).await?;
             }
             continue;
         };

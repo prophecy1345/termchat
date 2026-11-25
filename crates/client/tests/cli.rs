@@ -720,6 +720,24 @@ async fn commands_go_through_a_running_daemon() {
     follower.kill().unwrap();
     let _ = follower.wait();
 
+    // Audit 2026-11-25, finding 5: a document that cannot be written
+    // fails the command.
+    phone.send_file(0, "first.txt", b"kept".to_vec()).unwrap();
+    let locked = dir.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let refused = [
+        "recv",
+        "--json",
+        "--wait",
+        "15",
+        "--save-dir",
+        locked.to_str().unwrap(),
+    ];
+    let (code, out, _) = text(&termchat(&mut phone, &home, &refused).await);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(out.contains("not saved"), "{out}");
+
     // A document, saved through the daemon.
     phone
         .send_file(0, "notes.txt", b"all good".to_vec())

@@ -899,11 +899,10 @@ async fn recv(e: &mut Engine, a: &Args) -> Result<(), Fail> {
 }
 
 fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg, what: Fetched) -> Result<(), Fail> {
-    let record = record(e, i, m, what, a.save_dir.is_some(), false);
-    let at = record["_file"]["at"].as_u64();
+    let record = record(e, i, m, what, a.save_dir.is_some());
     // The bytes leave the engine only once they are on disk.
-    if print_record(a, record)?
-        && let Some(at) = at.and_then(|at| usize::try_from(at).ok())
+    if let Some((_, id)) = print_record(a, record)?
+        && let Some(at) = e.file_row(i, id)
     {
         e.discard_file(i, at);
     }
@@ -911,16 +910,10 @@ fn show(e: &mut Engine, a: &Args, i: usize, m: &Msg, what: Fetched) -> Result<()
 }
 
 /// One received message as a `recv --json` line. Keys starting with `_`
-/// are for `print_record` only; with `files`, a document's bytes come along,
-/// and with `hand_over` they leave the engine.
-fn record(
-    e: &mut Engine,
-    i: usize,
-    m: &Msg,
-    what: Fetched,
-    files: bool,
-    hand_over: bool,
-) -> serde_json::Value {
+/// are for `print_record` only; with `files`, a document's bytes come along.
+/// They stay in the engine until `print_record` wrote them (audit
+/// 2026-11-25, finding 5).
+fn record(e: &Engine, i: usize, m: &Msg, what: Fetched, files: bool) -> serde_json::Value {
     let c = &e.data.contacts[i];
     let (name, fingerprint) = (e.name(c), termchat_core::fingerprint(&c.key));
     // Ids as strings: JSON readers lose digits past 2^53.
@@ -968,26 +961,25 @@ fn record(
             .position(|x| x.at == m.at && x.file.as_ref().is_some_and(|y| y.id == f.id));
         let bytes = at
             .filter(|_| files)
-            .and_then(|at| e.file_bytes(i, at).map(|(_, b)| (at, b)));
-        let data = bytes.map(|(at, b)| {
-            if hand_over {
-                e.discard_file(i, at);
-            }
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b)
-        });
+            .and_then(|at| e.file_bytes(i, at).map(|(_, b)| b));
+        let data =
+            bytes.map(|b| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b));
         line["_file"] =
-            serde_json::json!({ "name": clean(&f.name), "size": f.size, "data": data, "at": at });
+            serde_json::json!({ "name": clean(&f.name), "size": f.size, "data": data, "id": f.id });
     }
     line
 }
 
-/// Prints a `record`, saving its document under `--save-dir`; `true` if
-/// a document was saved.
-fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
-    let mut saved = false;
+/// Prints a `record`, saving its document under `--save-dir`: the sender's
+/// fingerprint and the document's id once it is on disk. A document that
+/// cannot be saved fails the command and stays for another try.
+fn print_record(a: &Args, mut v: serde_json::Value) -> Result<Option<(String, u32)>, Fail> {
+    let mut saved = None;
+    let mut failed = None;
     let s = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
     if let Some(f) = v.as_object_mut().and_then(|o| o.remove("_file")) {
         let name = s(&f, "name");
+        let id = f["id"].as_u64().and_then(|n| u32::try_from(n).ok());
         let bytes = f["data"].as_str().and_then(|d| {
             base64::Engine::decode(&base64::engine::general_purpose::STANDARD, d).ok()
         });
@@ -995,13 +987,19 @@ fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
             (Some(dir), Some(bytes)) => {
                 match data::save_new(dir, &termchat_engine::engine::safe_name(&name), &bytes) {
                     Ok(path) => {
-                        saved = true;
+                        saved = id.map(|id| (s(&v, "fingerprint"), id));
                         format!("file saved: {}", path.display())
                     }
-                    Err(why) => format!("file {name} not saved: {why}"),
+                    Err(why) => {
+                        failed = Some(format!("file {name} not saved: {why}"));
+                        format!("file {name} not saved: {why}")
+                    }
                 }
             }
-            (Some(_), None) => format!("file {name} not saved"),
+            (Some(_), None) => {
+                failed = Some(format!("file {name} not saved"));
+                format!("file {name} not saved")
+            }
             (None, _) => format!(
                 "file {name} ({} bytes) arrived; --save-dir saves it",
                 f["size"].as_u64().unwrap_or(0)
@@ -1032,7 +1030,10 @@ fn print_record(a: &Args, mut v: serde_json::Value) -> Result<bool, Fail> {
         (false, _) => writeln!(out, "{name}: {}", text.replace('\n', "\n  ")),
     };
     written.map_err(|e| Fail(1, format!("cannot write: {e}")))?;
-    Ok(saved)
+    match failed {
+        Some(why) => Err(Fail(1, why)),
+        None => Ok(saved),
+    }
 }
 
 #[cfg(test)]
