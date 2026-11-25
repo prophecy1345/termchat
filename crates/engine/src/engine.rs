@@ -301,6 +301,9 @@ pub struct Engine {
     /// so their acks wait for a save, and the relay's copies are not taken
     /// again meanwhile (audit 2026-11-25, finding 2).
     unsaved: Vec<Unsaved>,
+    /// Audit 2026-11-25, finding 11: while `send_chunks` runs, encrypted
+    /// frames wait here, so one save covers them all before any goes out.
+    held: Option<Vec<(Ed25519Key, String, ClientFrame)>>,
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
@@ -728,6 +731,7 @@ impl Engine {
             large_budget: (large::LARGE_BURST, Instant::now()),
             slow_part_at: Instant::now(),
             unsaved: Vec::new(),
+            held: None,
             chunks: BTreeMap::new(),
             parts_out: BTreeMap::new(),
             heartbeat: None,
@@ -1375,19 +1379,52 @@ impl Engine {
         let next = &mut self.data.contacts[i].next_client_id;
         let client_id = *next;
         *next += 1;
+        let frame = ClientFrame::Send {
+            client_id,
+            send_id: to.send_id,
+            envelope,
+        };
+        if let Some(held) = &mut self.held {
+            held.push((*key, to.relay_url, frame));
+            return Ok(client_id);
+        }
         if !self.persist() {
             return Err(self.take_note());
         }
         self.live(key, &to.relay_url)
             .ok_or("relay link closed")?
             .relay
-            .send(ClientFrame::Send {
-                client_id,
-                send_id: to.send_id,
-                envelope,
-            })
+            .send(frame)
             .map_err(|_| "relay link closed")?;
         Ok(client_id)
+    }
+
+    /// Saves once for the frames held while `send_chunks` ran, then sends
+    /// them; if the save fails, none goes and their documents stop.
+    fn release_held(&mut self, save: bool) {
+        let held = self.held.take().unwrap_or_default();
+        if !save && held.is_empty() {
+            return;
+        }
+        if self.persist() {
+            for (key, relay, frame) in held {
+                if let Some(l) = self.live(&key, &relay) {
+                    let _ = l.relay.send(frame);
+                }
+            }
+            return;
+        }
+        let why = self.take_note();
+        for (_, _, frame) in held {
+            let ClientFrame::Send { client_id, .. } = frame else {
+                continue;
+            };
+            self.parts_out.remove(&client_id);
+            if let Some(key) = self.chunks.remove(&client_id) {
+                self.file_failed(&key, why.clone());
+            }
+            self.set_status(client_id, Status::Failed(why.clone()));
+        }
     }
 
     /// Asks their relay for a key to start a session with contact `key`.
@@ -3187,6 +3224,7 @@ impl Engine {
     /// contact at a time. The last chunk's relay answer marks the file sent.
     fn send_chunks(&mut self) {
         large::refill(&mut self.chunk_budget, FILE_EVERY, FILE_BURST);
+        self.held = Some(Vec::new());
         let mut sent = false;
         for i in 0..self.data.contacts.len() {
             let c = &self.data.contacts[i];
@@ -3238,12 +3276,10 @@ impl Engine {
                 break;
             }
         }
-        // ADR-027 amendment: documents in groups, from the same budget.
-        sent |= self.send_group_chunks();
         sent |= self.send_parts();
-        if sent {
-            self.persist();
-        }
+        self.release_held(sent);
+        // ADR-027 amendment: documents in groups, from the same budget.
+        self.send_group_chunks();
     }
 
     /// A chunk of our file to `key` was refused for good: the rest cannot

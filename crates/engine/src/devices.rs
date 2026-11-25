@@ -945,15 +945,20 @@ impl Engine {
             let next = &mut self.data.contacts[i].next_client_id;
             let client_id = *next;
             *next += 1;
+            let frame = ClientFrame::Send {
+                client_id,
+                send_id: addr.send_id,
+                envelope,
+            };
+            if let Some(held) = &mut self.held {
+                held.push((*key, addr.relay_url, frame));
+                continue;
+            }
             if !self.persist() {
                 return Err(self.take_note());
             }
             if let Some(l) = self.live(key, &addr.relay_url) {
-                let _ = l.relay.send(ClientFrame::Send {
-                    client_id,
-                    send_id: addr.send_id,
-                    envelope,
-                });
+                let _ = l.relay.send(frame);
             }
         }
         if waiting {

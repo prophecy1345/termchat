@@ -679,6 +679,8 @@ impl Engine {
     /// if one went out.
     pub(super) fn send_group_chunks(&mut self) -> bool {
         let mut sent = false;
+        // One save for every chunk encrypted here, before any goes out.
+        let mut out = Vec::new();
         for g in 0..self.data.groups.len() {
             let group = &self.data.groups[g];
             let queued = |m: &Msg| m.mine && m.status == Status::Queued && m.file.is_some();
@@ -710,9 +712,6 @@ impl Engine {
                 group.next_client_id += 1;
                 self.chunk_budget.0 -= 1.0;
                 sent = true;
-                if !self.persist() {
-                    return sent;
-                }
                 let frame = ClientFrame::Send {
                     client_id,
                     send_id: self.data.groups[g].send_id,
@@ -722,7 +721,7 @@ impl Engine {
                         body: bytes,
                     },
                 };
-                self.group_send_ciphertext(g, frame);
+                out.push((g, frame));
                 if last {
                     let msg = &mut self.data.groups[g].messages[m];
                     msg.status = Status::Sending(client_id);
@@ -731,6 +730,11 @@ impl Engine {
                     }
                     break;
                 }
+            }
+        }
+        if sent && self.persist() {
+            for (g, frame) in out {
+                self.group_send_ciphertext(g, frame);
             }
         }
         sent
