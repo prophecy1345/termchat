@@ -150,3 +150,50 @@ async fn a_message_not_saved_is_not_lost() {
     assert_eq!(kept(&e[BOB]), 1, "acked: not delivered again");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Finding 4: a large document goes on after either side restarts from
+/// disk in the middle of it, and arrives whole.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_document_survives_restarts_on_both_sides() {
+    let (mut e, dir) = world("large").await;
+    befriend(&mut e, ALICE, BOB).await;
+    let (ka, kb) = (e[ALICE].me(), e[BOB].me());
+    let doc: Vec<u8> = (0..3_000_000u32).map(|n| (n % 253) as u8).collect();
+    let to_bob = e[ALICE].index(&kb).unwrap();
+    e[ALICE].send_file(to_bob, "big.bin", doc.clone()).unwrap();
+    let offered = |e: &Engine| {
+        let i = e.index(&ka)?;
+        e.data.contacts[i]
+            .messages
+            .iter()
+            .position(|m| m.file.as_ref().is_some_and(|f| f.offered()))
+    };
+    pump(&mut e, |e| offered(&e[BOB]).is_some()).await;
+    let m = offered(&e[BOB]).unwrap();
+    let from_alice = e[BOB].index(&ka).unwrap();
+    e[BOB].download_file(from_alice, m).unwrap();
+    let done = |e: &Engine| {
+        e.data.contacts[e.index(&ka).unwrap()].messages[m]
+            .file
+            .as_ref()
+            .map_or(0, |f| f.done)
+    };
+    pump(&mut e, |e| done(&e[BOB]) >= 5).await;
+    // A part counted and saved, then lost with the app before it went out.
+    let mine = e[ALICE].data.contacts[to_bob]
+        .messages
+        .iter()
+        .position(|m| m.mine && m.file.is_some())
+        .unwrap();
+    if let Some(f) = e[ALICE].data.contacts[to_bob].messages[mine].file.as_mut() {
+        f.done += 1;
+    }
+    assert!(e[ALICE].persist());
+    e[ALICE] = unlock(&state(&dir, "alice"));
+    pump(&mut e, |e| done(&e[BOB]) >= 20).await;
+    e[BOB] = unlock(&state(&dir, "bob"));
+    pump(&mut e, |e| e[BOB].unsaved_file(from_alice).is_some()).await;
+    let saved = e[BOB].save_file(from_alice, m, &dir).unwrap();
+    assert_eq!(std::fs::read(&saved).unwrap(), doc);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

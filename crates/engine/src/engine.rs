@@ -303,6 +303,9 @@ pub struct Engine {
     /// Chunks before a file's last one, still unanswered, and whose they are:
     /// no message carries their `client_id` (ADR-020).
     chunks: BTreeMap<u64, Ed25519Key>,
+    /// Parts of large documents the relay has not answered: whose, which
+    /// document and which part (audit 2026-11-25, finding 4).
+    parts_out: BTreeMap<u64, (Ed25519Key, u32, u16)>,
     heartbeat: Option<(Ed25519Key, u64)>,
     /// Why links could not start at the last `start_links`, said once.
     unreachable: BTreeSet<String>,
@@ -711,6 +714,7 @@ impl Engine {
             slow_part_at: Instant::now(),
             unsaved: Vec::new(),
             chunks: BTreeMap::new(),
+            parts_out: BTreeMap::new(),
             heartbeat: None,
             unreachable: BTreeSet::new(),
             reclaim: None,
@@ -1633,6 +1637,7 @@ impl Engine {
                         if owed {
                             self.deliver(i);
                         }
+                        self.resume_large(i);
                     }
                 }
                 if let Some(g) = self.group_of_link(&link) {
@@ -1760,6 +1765,9 @@ impl Engine {
             }
             ServerFrame::Accepted { client_id } => {
                 self.chunks.remove(&client_id);
+                if let Some((key, id, index)) = self.parts_out.remove(&client_id) {
+                    self.part_accepted(&key, id, index);
+                }
                 self.set_status(client_id, Status::Sent);
                 self.goodbye_done(Some(client_id));
             }

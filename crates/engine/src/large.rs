@@ -223,6 +223,7 @@ impl Engine {
                 match self.transmit(&key, body) {
                     Ok(client_id) => {
                         self.chunks.insert(client_id, key);
+                        self.parts_out.insert(client_id, (key, id, index));
                     }
                     Err(e) => {
                         self.stop_large(i, m, true, Some(e));
@@ -398,6 +399,61 @@ impl Engine {
             }
             Body::FilePart { id, index, data } => self.take_part(i, id, index, &data),
             _ => {}
+        }
+    }
+
+    /// Audit 2026-11-25, finding 4: frames still in memory are lost when the
+    /// link drops or the app stops. On each connection to their relay our
+    /// parts go again from the last one they confirmed (they drop the ones
+    /// they have), and our ask or our progress goes again.
+    pub(super) fn resume_large(&mut self, i: usize) {
+        let key = self.data.contacts[i].key;
+        if !self.has_session(&key) {
+            return;
+        }
+        let mut again = Vec::new();
+        for m in &mut self.data.contacts[i].messages {
+            let mine = m.mine;
+            let Some(f) = m.file.as_mut() else { continue };
+            let Some((acked, accepted)) = f
+                .large
+                .as_ref()
+                .filter(|l| l.wanted && l.held && !l.stopped)
+                .map(|l| (l.acked, l.accepted))
+            else {
+                continue;
+            };
+            match mine {
+                true => f.done = f.done.min(acked.max(accepted)),
+                false if f.done == 0 => again.push(Body::FileWant { id: f.id }),
+                false if !f.complete() => again.push(Body::FileAck {
+                    id: f.id,
+                    next: f.done,
+                }),
+                false => {}
+            }
+        }
+        // Answers to frames lost with the link never come.
+        self.parts_out.retain(|_, (k, ..)| *k != key);
+        self.persist();
+        for body in again {
+            let _ = self.transmit(&key, body);
+        }
+        self.send_chunks();
+    }
+
+    /// The relay took part `index` of our document `id` to `key`.
+    pub(super) fn part_accepted(&mut self, key: &Ed25519Key, id: u32, index: u16) {
+        let Some(i) = self.index(key) else { return };
+        let Some(m) = self.find_large(i, id, true) else {
+            return;
+        };
+        if let Some(l) = self.data.contacts[i].messages[m]
+            .file
+            .as_mut()
+            .and_then(|f| f.large.as_mut())
+        {
+            l.accepted = l.accepted.max(index + 1);
         }
     }
 

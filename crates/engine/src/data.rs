@@ -718,6 +718,10 @@ pub struct Large {
     pub stopped: bool,
     /// Sender: parts the receiver confirmed.
     pub acked: u16,
+    /// Sender: parts the relay took; a restart or a dropped link sends again
+    /// from here (audit 2026-11-25, finding 4).
+    #[serde(default)]
+    pub accepted: u16,
     /// The spool file's name, random hex.
     pub spool: String,
 }
