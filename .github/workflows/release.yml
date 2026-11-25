@@ -14,11 +14,13 @@ permissions:
 jobs:
   # Two builds of the same commit, on two runners and in different folders,
   # must be byte-identical. They run beside the release builds; only
-  # publishing waits for the comparison.
+  # publishing waits for the comparison, and checks that what it publishes
+  # is what was compared.
   reproducible:
     strategy:
       matrix:
         dir: [a, elsewhere/b]
+        arch: [x86_64, aarch64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -29,17 +31,20 @@ jobs:
       - run: cargo install cargo-zigbuild@0.23.4 --locked
       - run: |
           cd "${{ matrix.dir }}"
-          rustup target add x86_64-unknown-linux-musl x86_64-unknown-linux-gnu
-          BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-musl
+          cli=${{ matrix.arch }}-unknown-linux-musl
+          gui=${{ matrix.arch }}-unknown-linux-gnu
+          rustup target add "$cli" "$gui"
+          BUILD=zigbuild scripts/build-release.sh "$cli"
           # The desktop app (ADR-018): glibc, as old as Debian 10 / RHEL 8.
-          PACKAGES="-p termchat-desktop" BUILD=zigbuild scripts/build-release.sh x86_64-unknown-linux-gnu.2.28
-          scripts/build-lyrebird.sh linux amd64 target/lyrebird
+          PACKAGES="-p termchat-desktop" BUILD=zigbuild scripts/build-release.sh "$gui.2.28"
+          scripts/build-lyrebird.sh linux ${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }} target/lyrebird
           cd target
-          sha256sum x86_64-unknown-linux-musl/release/termchat x86_64-unknown-linux-musl/release/termchat-relay \
-            x86_64-unknown-linux-gnu/release/termchat-gui lyrebird > "$GITHUB_WORKSPACE/hashes.txt"
+          # By file name alone, the way publish lists the archives.
+          sha256sum "$cli/release/termchat" "$cli/release/termchat-relay" "$gui/release/termchat-gui" lyrebird \
+            | sed 's|  .*/|  |' | sort -u > "$GITHUB_WORKSPACE/hashes.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: hashes-${{ strategy.job-index }}
+          name: hashes-${{ matrix.arch }}-${{ matrix.dir == 'a' && 'a' || 'b' }}
           path: hashes.txt
 
   # F-Droid rebuilds the APK and ships ours only if the bytes match (ADR-011):
@@ -64,12 +69,15 @@ jobs:
           rustup target add aarch64-linux-android x86_64-linux-android
           android/build-rust.sh
           (cd android && ./gradlew --no-daemon assembleRelease)
-          cd android/app/build/outputs/apk/release
-          sha256sum app-arm64-v8a-release-unsigned.apk > "$GITHUB_WORKSPACE/hashes.txt"
+          apk=android/app/build/outputs/apk/release/app-arm64-v8a-release-unsigned.apk
+          sha256sum "$apk" | sed 's|  .*/|  |' > "$GITHUB_WORKSPACE/hashes.txt"
+          scripts/apk-entries.sh "$apk" > "$GITHUB_WORKSPACE/entries.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-hashes-${{ strategy.job-index }}
-          path: hashes.txt
+          path: |
+            hashes.txt
+            entries.txt
 
   same-bytes:
     needs: [reproducible, android-reproducible]
@@ -78,8 +86,10 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
       - run: |
           cat hashes-*/hashes.txt android-hashes-*/hashes.txt
-          diff hashes-0/hashes.txt hashes-1/hashes.txt
+          diff hashes-x86_64-a/hashes.txt hashes-x86_64-b/hashes.txt
+          diff hashes-aarch64-a/hashes.txt hashes-aarch64-b/hashes.txt
           diff android-hashes-0/hashes.txt android-hashes-1/hashes.txt
+          diff android-hashes-0/entries.txt android-hashes-1/entries.txt
 
   build:
     strategy:
@@ -238,9 +248,29 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: "*hashes-*"
+          path: compared
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: src
+      # The Linux programs and the APK going out are the ones built twice
+      # with equal bytes, not only built the same way (macOS and Windows
+      # have no second build).
+      - run: |
+          tag="${{ github.ref_name }}"
+          for arch in x86_64 aarch64; do
+            rm -rf check && mkdir check
+            tar -xzf "termchat-$tag-$arch-unknown-linux-musl.tar.gz" -C check
+            tar -xzf "termchat-gui-$tag-$arch-unknown-linux-gnu.tar.gz" -C check
+            (cd check && sha256sum */termchat */termchat-relay */termchat-gui */lyrebird) \
+              | sed 's|  .*/|  |' | sort -u > published.txt
+            diff "compared/hashes-$arch-a/hashes.txt" published.txt
+          done
+          src/scripts/apk-entries.sh "termchat-$tag-android-arm64.apk" > published.txt
+          diff compared/android-hashes-0/entries.txt published.txt
+          rm -rf check published.txt
       - run: |
           sha256sum termchat-*.tar.gz termchat-*.zip termchat-*.apk termchat-*.aab > SHA256SUMS
           src/scripts/homebrew-formula.sh "${{ github.ref_name }}" SHA256SUMS > termchat.rb
