@@ -1166,7 +1166,16 @@ impl Engine {
     /// a queue of our own.
     fn take_contact(&mut self, l: LinkedContact) {
         let key = l.identity.ed25519;
-        if key == self.me() || self.index(&key).is_some() {
+        if key == self.me() {
+            return;
+        }
+        // ADR-028, amendment of 2026-11-26: a contact we have gives only a higher level.
+        if let Some(i) = self.index(&key) {
+            let c = &mut self.data.contacts[i];
+            if !c.own && l.understands > c.understands {
+                c.understands = l.understands;
+                self.persist();
+            }
             return;
         }
         let Some(theirs) = l.queues.iter().find(|q| q.device == key) else {

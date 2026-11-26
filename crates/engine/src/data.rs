@@ -95,6 +95,9 @@ pub struct Data {
     /// Which Arti folder is current: a new one for each change of bridges.
     pub tor_generation: u32,
     pub understands_resent: bool,
+    /// ADR-028, amendment of 2026-11-26: contacts handed to our devices again
+    /// once, so a device behind on a contact's level catches up.
+    pub levels_handed: bool,
     /// Small private groups (ADR-027).
     pub groups: Vec<Group>,
     /// Invites into groups, waiting for an answer.
@@ -550,7 +553,8 @@ pub struct Contact {
     #[serde(default)]
     pub devices_told: u64,
     /// On the primary: handed to our linked devices (`LinkedContact`), at
-    /// the link or, for a contact made later, once it is complete.
+    /// the link or, for a contact made later, once it is complete; again
+    /// when they tell a higher level (ADR-028, amendment of 2026-11-26).
     #[serde(default)]
     pub handed: bool,
     /// Their device list, signed by them, if they have more than one device.
@@ -1128,6 +1132,10 @@ impl Data {
                 .iter_mut()
                 .filter(heard)
                 .for_each(|c| c.told = 0);
+        }
+        if !data.levels_handed {
+            data.levels_handed = true;
+            data.contacts.iter_mut().for_each(|c| c.handed = false);
         }
         Ok(data)
     }

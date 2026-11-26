@@ -143,3 +143,19 @@ Not a new cryptographic protocol: Megolm and Olm as in ADR-027, and device lists
 1. **Contacts made after a link.** The primary handed its contacts to a new device only at the link, so a contact made later never reached a linked device. It now sends the same `LinkedContact` to each of its devices once a later contact is complete (accepted, with their queue known); each contact is marked as handed so it goes once. No new message kind.
 2. **The first message to a device new to us.** With no session yet with one of a contact's devices, a message to all their devices was dropped for that one while its key was claimed. It now waits in that device's queue (as `transmit_device` already did) and goes once the session is up.
 3. **Setting up only to link.** The first-run screens offer to link instead of creating an identity: the device gets its keys and a placeholder nickname (the primary's replaces it) and shows its link code once the relay is reached. A linked device asks for no backup and makes none: a lost one is removed and another linked.
+
+## Amendment of 2026-11-26 (maintainer, approved by the owner 2026-11-26): a contact's level reaches linked devices
+
+**Problem.** A linked device learns a contact's `Understands` level once, from the `LinkedContact` its primary sends at the link. A contact's app says its level once per raise of ours (ADR-025), and it said it before our new device existed, so only the primary hears a later update. The linked device keeps the old level: below `DEVICES_LEVEL` it refuses to write ("their app knows no second devices yet"), and checks for receipts, large documents and introductions stay behind too. Seen 2026-11-26 with a contact on 0.36.
+
+**Decision.**
+
+1. When the primary hears a higher level from a contact, it sends that contact's `LinkedContact` again to each of its devices, as it already does for contacts made after a link (notes of 2026-11-19, point 1).
+2. A device that already has the contact takes only the level from it, and only if it is higher. Keys, queues, nickname, petname and verification stay as they are.
+3. Once, after updating, the primary sends `LinkedContact` again for every complete contact, so devices that are already behind catch up without waiting for the next raise.
+
+**Compatibility.** A device before this change already ignores `LinkedContact` for a contact it has. No new message kind, no new protocol level, no change on the contact's side.
+
+**What the relay sees.** One more envelope on our own devices' queues per contact's update, and one envelope per contact once after updating. Over Olm between our devices, as before.
+
+Not a new cryptographic protocol: the same `LinkedContact` over the same Olm sessions.

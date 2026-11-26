@@ -781,6 +781,37 @@ async fn a_contact_made_after_linking_reaches_the_linked_device() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// ADR-028, amendment of 2026-11-26: a laptop behind on a contact's level
+/// catches up once the phone, updated, connects.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_laptop_behind_on_a_level_catches_up_after_the_update() {
+    use termchat_core::proto::{DEVICES_LEVEL, UNDERSTANDS};
+    use termchat_engine::Event;
+    use termchat_engine::engine::Link;
+
+    let url = start_relay().await;
+    let dir = std::env::temp_dir().join(format!("termchat-devices-level-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut e = linked_with_bob(&dir, &url).await;
+    let bob = e[2].me();
+    pump(&mut e, |e| e[1].index(&bob).is_some()).await;
+    settle(&mut e, 3000).await;
+    let j = e[1].index(&bob).unwrap();
+    // The laptop stuck on an old level; the phone's data as just updated.
+    e[1].data.contacts[j].understands = DEVICES_LEVEL - 1;
+    assert!(e[1].send(j, "too early").is_err());
+    let i = e[0].index(&bob).unwrap();
+    e[0].data.contacts[i].handed = false;
+    let link = Link {
+        who: bob,
+        relay: url.clone(),
+    };
+    e[0].on_relay((link, Event::Connected));
+    pump(&mut e, |e| e[1].data.contacts[j].understands == UNDERSTANDS).await;
+    e[1].send(j, "from the laptop").unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// ADR-030, section 4 (review 2026-11c, finding 4): a copy from our own device
 /// is filed only under the chat it names, and only if it came in that chat's
 /// queue; a bare one, as a relay could move it, is not filed at all.
@@ -911,6 +942,13 @@ async fn the_admins_device_joins_once_the_last_old_member_updates() {
             .is_some_and(|g| g.reader.is_some() && !g.left)
     })
     .await;
+    // The laptop, which heard bob's old level when it was linked, may write.
+    let j = e[1].index(&bob).unwrap();
+    pump(&mut e, |e| {
+        e[1].data.contacts[j].understands >= DEVICES_LEVEL
+    })
+    .await;
+    e[1].send(j, "from the laptop").unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

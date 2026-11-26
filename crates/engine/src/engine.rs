@@ -711,6 +711,7 @@ impl Engine {
             nickname: s.nickname.into(),
             news_seen: env!("CARGO_PKG_VERSION").into(),
             understands_resent: true,
+            levels_handed: true,
             ..Data::default()
         };
         let mut engine = Self::open(Client::default(), key, data, path.to_owned())?;
@@ -1763,6 +1764,9 @@ impl Engine {
                             || !c.outbox.is_empty()
                             || c.messages.iter().any(|m| m.status == Status::Queued);
                         let owed = owed || self.owes_understands(i);
+                        // ADR-028, amendment of 2026-11-26: a contact our devices await.
+                        let owed =
+                            owed || (!c.handed && self.is_primary() && self.data.devices.is_some());
                         if owed {
                             self.deliver(i);
                         }
@@ -2521,6 +2525,8 @@ impl Engine {
                 let c = &mut self.data.contacts[i];
                 if news {
                     c.told = 0;
+                    // ADR-028, amendment of 2026-11-26: our devices hear it too.
+                    c.handed = false;
                     if !got.request {
                         self.deliver(i);
                         self.invite_awaiting(i);
