@@ -1,0 +1,1 @@
+Markdown in messages: bold, italic, strikethrough, code, quotes, lists and links. A link shows its full address and a tap copies it, nothing opens. Formatting buttons above the input. Show formatting in Settings.

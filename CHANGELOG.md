@@ -3,6 +3,24 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.38.0
+
+- Markdown in messages, groups and Notes: **bold**, *italic*,
+  ~~strikethrough~~, `code`, code blocks, quotes, lists and
+  [label](address) links (ADR-048). One parser in the engine reads it
+  for all three apps; HTML, images and headings stay plain text.
+- A link shows its full address next to the label. Clicking or tapping
+  it copies the address; termchat.app never opens it. In the terminal,
+  pick the message and press l.
+- Formatting buttons above the input on desktop and Android; F2 to F10
+  in the terminal.
+- Copy a whole message: c on a picked message in the terminal, Copy
+  text in the desktop menu.
+- Settings: Show formatting (on by default) shows the source text
+  instead.
+- Recipients on older versions see the source text, which reads fine
+  as it is.
+
 ## 0.37.2
 
 - Desktop: a note on the status line, such as an error, goes after 6
