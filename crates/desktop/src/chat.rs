@@ -31,6 +31,9 @@ const TOAST_FOR: Duration = Duration::from_secs(5);
 const MAX_TOASTS: usize = 4;
 
 /// Shown from an incognito invite asked for until it opens (ADR-014).
+/// How long a note stays on the status line.
+const NOTE_FOR: Duration = Duration::from_secs(6);
+
 pub(crate) const MAKING_IDENTITY: &str = "making a new identity; its invite opens in a moment";
 
 /// The colours the window uses, from a shared theme (`engine::themes`).
@@ -176,6 +179,8 @@ pub struct Chat {
     last_tick: Instant,
     /// One line: the last note from the engine.
     pub(crate) status: String,
+    /// The status line as last seen, and since when.
+    status_seen: (String, Instant),
     pub(crate) dialog: Option<Dialog>,
     /// ADR-046 amendment 1: which notes Notes shows.
     note_filter: NoteFilter,
@@ -239,6 +244,7 @@ impl Chat {
             toasts: Vec::new(),
             last_sound: None,
             last_tick: Instant::now(),
+            status_seen: (String::new(), Instant::now()),
             status: String::new(),
             dialog: None,
             note_filter: NoteFilter::All,
@@ -279,6 +285,12 @@ impl Chat {
             self.engine.data.groups[g].unread = 0;
         }
         self.toasts.retain(|t| t.until > Instant::now());
+        // A note is news, not a state: it goes after a while, as on Android.
+        if self.status != self.status_seen.0 {
+            self.status_seen = (self.status.clone(), Instant::now());
+        } else if self.status_seen.1.elapsed() >= NOTE_FOR && !self.status_waits() {
+            self.status.clear();
+        }
         if self.linking
             && self.dialog.is_none()
             && let Ok(code) = self.engine.link_code()
@@ -416,7 +428,16 @@ impl Chat {
         self.switched();
     }
 
+    /// A line that stands for something still going on, ended by its own event.
+    fn status_waits(&self) -> bool {
+        self.status.starts_with(LINK_CONFIRMED) || self.status == MAKING_IDENTITY
+    }
+
     fn switched(&mut self) {
+        // A note belongs to the chat it was said in.
+        if !self.status_waits() {
+            self.status.clear();
+        }
         self.compose = Compose::New;
         self.picked = None;
         self.search = None;
@@ -2245,7 +2266,20 @@ mod tests {
             "{shown}"
         );
 
+        // A note goes once you leave the chat; one for a link under way stays.
+        chat.status = "their app knows no second devices yet".into();
         chat.select([1; 32]);
+        assert!(chat.status.is_empty());
+        chat.status = MAKING_IDENTITY.into();
+        chat.select([1; 32]);
+        assert_eq!(chat.status, MAKING_IDENTITY);
+        // And goes by itself after a while.
+        chat.status = "invite copied".into();
+        chat.step(true, false);
+        chat.status_seen.1 -= NOTE_FOR;
+        chat.step(true, false);
+        assert!(chat.status.is_empty());
+        chat.status.clear();
         // As after an update: this version's notes are not read yet.
         chat.engine.data.news_seen.clear();
         chat.alert([1; 32], false, false, false);
