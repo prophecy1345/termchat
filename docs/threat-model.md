@@ -65,6 +65,17 @@ that (ADR-023).
 
 ## Partly protected
 
+- **Message formatting and links.** After decryption, one Rust Markdown
+  parser handles up to 16,000 bytes per message in linear time without
+  recursion. Display text is cleaned of control characters and bidi overrides.
+  Clients draw text and styles locally. HTML tags and remote-image markup
+  appear as text. Rendering sends no requests to links, images or preview
+  providers. A link shows its full address and copying puts that address
+  on the system clipboard, outside encrypted state. A sender can still use a misleading label or
+  lookalike characters in an address. Opening the copied address elsewhere
+  can reveal your IP and bypass the app's Tor connection. The relay carries
+  the same encrypted message text. [ADR-048](https://github.com/prophecy1345/termchat/blob/main/docs/adr/048-markdown.md)
+
 - **Metadata.** The relay knows queues, not people (ADR-023), but it still sees:
   - **timing**: when a queue is written to and when it is read, so a message
     into one queue followed by a read from another can link them. Only a

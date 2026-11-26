@@ -27,6 +27,16 @@ If your contact is offline, the relay keeps the encrypted message for up to 14 d
 
 A message you started and did not send stays in its chat as a draft: when you open another chat, lock the app or quit, and on the next start. Drafts live in the encrypted state file, never in a chat with **No history**. Editing one of your sent messages takes the place of the draft.
 
+## Markdown formatting
+
+Markdown works in chats, groups, Notes and reply previews. Use `**bold**`, `*italic*` or `_italic_`, `~~strikethrough~~`, and `` `inline code` ``. Put three backticks on separate lines above and below a code block. Start a line with `> ` for a quote, `- ` or `* ` for a bullet, or `1. ` for a numbered item. A backslash makes the next character literal. HTML tags and image markup appear as text.
+
+On desktop and Android, the pixel buttons above the input wrap a selection or insert Markdown at the cursor. In the terminal, **F2–F9** insert formatting and **F10** starts a new line. The input shows the text that will be sent. Copying a message or forwarding it keeps the Markdown source.
+
+Write a link as `[label](address)`. The chat shows the label followed by the complete address. Click or tap it to copy the address. In the terminal, pick the message with **Ctrl+N**, press **l**, select the address with **↑/↓**, then press **Enter**. **PgUp/PgDn** scroll through a long address. Opening the copied address in another app can reveal your IP to the site. [Terminal keys](terminal.md)
+
+Turn off **Show formatting** to see the source in the chat. Search always looks at and shows the source text. [Settings](settings.md#formatting)
+
 ## Answers, edits, deletes, reactions
 
 Since version 0.9, between apps that both run 0.9 or newer:

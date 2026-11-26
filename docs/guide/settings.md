@@ -19,6 +19,10 @@ The security settings (backup, passwords, Tor, bridges, connections, lock time, 
 
 19 colour themes, light and dark, the same in all three apps; the terminal adds `terminal`, its own 16 colours, for terminals without true colour. In the terminal, moving through the list shows each theme at once; the chat keeps your terminal's background, and the theme colours the bars and windows.
 
+## Formatting
+
+**Show formatting** is on by default. Turn it off to show the Markdown source in messages and reply previews. The composer still lets you insert formatting for recipients. Find the switch in the terminal's **interface** tab or under **Appearance** in Settings on desktop and Android. [Supported Markdown](messages.md#markdown-formatting)
+
 ## Notifications
 
 termchat.app never puts a name or a text where the operating system keeps them.
@@ -45,7 +49,7 @@ The **interface** tab turns the mouse on or off. While it is on, the terminal's 
 |---|---|
 | `~/.termchat/state` | Everything about your identity: keys, contacts, history. One file, encrypted with your password. Windows: `C:\Users\<you>\.termchat\state`. |
 | `~/.termchat/arti` | Tor's directory cache, when Tor is on. |
-| `~/.termchat/settings.json` | Theme, sound, mouse, lock time. Not encrypted, so that the lock screen can use your theme; it holds nothing about your contacts, and a wipe removes it. |
+| `~/.termchat/settings.json` | Theme, sound, mouse, message formatting, lock time. This file is plain text so the lock screen can use your theme. It holds nothing about your contacts. A wipe removes it. |
 | `~/.termchat/lock` | Keeps a second program from opening the same account. |
 
 The terminal client and the desktop app share this folder. Set `TERMCHAT_HOME` to keep a separate identity elsewhere, for example to try termchat.app with two identities on one computer:

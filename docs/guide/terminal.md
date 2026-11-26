@@ -73,6 +73,10 @@ description: "The termchat.app terminal client: what is on the screen, what the 
 
 Editing what you type: **←/→**, **Home/End**, **Alt+←/→** (by word), **Ctrl+W** (delete a word), **Ctrl+U** (delete to the start).
 
+While typing, **F2** inserts bold, **F3** italic, **F4** strikethrough, **F5** inline code, **F6** a code block, **F7** a link, **F8** a quote, **F9** a list item, and **F10** a new line. The input shows the Markdown you will send.
+
+Pick a message with **Shift+↑** or **Ctrl+N**. **c** copies its source text. **l** shows its link addresses, **↑/↓** selects one, **PgUp/PgDn** scrolls a long address, and **Enter** copies it. Links appear in the chat as `label <address>`. Copying uses the terminal clipboard (OSC 52).
+
 ## Groups
 
 A small private group of up to 32 devices (32 people with one each; fewer when members use several), by invitation only ([ADR-027](https://github.com/prophecy1345/termchat/blob/main/docs/adr/027-small-private-groups.md)).
