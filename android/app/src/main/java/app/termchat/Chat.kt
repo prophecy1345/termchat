@@ -25,6 +25,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.geometry.Offset
@@ -32,6 +34,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.graphics.Path
@@ -89,11 +93,19 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
     val c = a.contacts().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.messages(index) }.getOrDefault(emptyList())
     // The draft comes back when the chat opens again, also after a lock.
-    var text by remember(index) { mutableStateOf(runCatching { a.draft(index) }.getOrDefault("")) }
+    var text by remember(index) {
+        val saved = runCatching { a.draft(index) }.getOrDefault("")
+        mutableStateOf(TextFieldValue(saved, TextRange(saved.length)))
+    }
+    val focus = remember(index) { FocusRequester() }
     // Asked from the list's long press on Notes: a dialog, or search.
     var dialog by remember { mutableStateOf(ask?.takeIf { it != "search" }) }
     // ponytail: by index, so a message that expires meanwhile shifts it; ids if that bites.
     var compose by remember(index) { mutableStateOf<Compose?>(null) }
+    val updateText: (TextFieldValue) -> Unit = {
+        if (text.text != it.text && compose?.edit != true) a.setDraft(index, it.text)
+        text = it
+    }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
     // Messages picked to delete on this device, by id and side; `null`: not picking.
@@ -198,7 +210,7 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                 val act: (String) -> Unit = { what ->
                     when (what) {
                         "answer" -> compose = Compose(at, false, msg.text.lineSequence().first())
-                        "edit" -> { compose = Compose(at, true, ""); text = msg.text; a.setDraft(index, "") }
+                        "edit" -> { compose = Compose(at, true, ""); text = TextFieldValue(msg.text, TextRange(msg.text.length)); a.setDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         "forward" -> forwarding = at
@@ -222,7 +234,7 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     m.changed()
                 }
                 val marked = msg.id?.let { Picked(it, msg.mine) in picked.orEmpty() } ?: false
-                Bubble(msg, c.rich, act, download = download, view = { viewing = msg.fileId }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null, picking = picked != null, marked = marked) { keep ->
+                Bubble(msg, c.rich, act, download = download, view = { viewing = msg.fileId }, star = if (c.notes) ({ runCatching { a.toggleStar(at) }.onFailure { m.note = it.message ?: "$it" }; m.changed() }) else null, picking = picked != null, marked = marked, formatted = m.showFormatting && query == null) { keep ->
                     val id = msg.fileId
                     if (id != null) if (keep) {
                         saving = id
@@ -298,13 +310,18 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     Tc.mono, Tc.lime, Modifier.weight(1f),
                 )
                 IconTap("close", "Cancel") {
-                    if (cm.edit) text = ""
+                    if (cm.edit) text = TextFieldValue()
                     compose = null
                 }
             }
         }
         picked?.let { p ->
             PickBar(p.size, { dialog = "delete-here" }) { picked = null }
+        }
+        val closed = c.left || c.blocked || c.needsInvite
+        if (picked == null && !closed) FormatBar { mark ->
+            updateText(mark.insert(text))
+            focus.requestFocus()
         }
         if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // The fading envelope cycles the disappearing timer, like Ctrl+T.
@@ -324,14 +341,13 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                 FadingEnvelope(if (c.expiresIn != null) Tc.lime else Tc.dim)
                 if (c.expiresIn != null) Text(span(c.expiresIn), style = Tc.small.copy(color = Tc.lime))
             }
-            val closed = c.left || c.blocked || c.needsInvite
             Box(
                 Modifier.size(48.dp).border(1.dp, Tc.line, corner)
                     .clickable(enabled = !closed && !c.request) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (closed || c.request) Tc.line else Tc.dim) }
             Field(
-                text, { text = it; if (compose?.edit != true) a.setDraft(index, it) },
+                text, updateText,
                 when {
                     c.left -> "This contact left"
                     c.blocked -> "Blocked"
@@ -339,29 +355,29 @@ fun Chat(m: Model, index: UInt, ask: String? = null) {
                     c.needsInvite -> "Ask them for a new invite, or send yours"
                     else -> "Encrypted message"
                 },
-                Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6,
+                Modifier.weight(1f).heightIn(min = 48.dp).focusRequester(focus), singleLine = false, maxLines = 6,
             )
             // A long press on Send sends a new message later (PLAN Q4).
             var later by remember { mutableStateOf(false) }
             Box {
-                Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.isNotBlank() && !closed, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
+                Flat(if (compose?.edit == true) "Save" else "Send", enabled = text.text.isNotBlank() && !closed, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
                     runCatching {
                         val cm = compose
                         when {
-                            cm == null -> a.send(index, text)
-                            cm.edit -> a.editMessage(index, cm.at, text)
-                            else -> a.reply(index, cm.at, text)
+                            cm == null -> a.send(index, text.text)
+                            cm.edit -> a.editMessage(index, cm.at, text.text)
+                            else -> a.reply(index, cm.at, text.text)
                         }
                     }
-                        .onSuccess { a.setDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }
+                        .onSuccess { a.setDraft(index, ""); text = TextFieldValue(); compose = null; m.note = ""; m.changed() }
                         .onFailure { m.note = it.message ?: "$it" }
                 }
                 DropdownMenu(later, { later = false }, containerColor = Tc.surface) {
                     LATER.forEach { s ->
                         DropdownMenuItem({ Text("Send in ${laterSpan(s)}", style = Tc.mono) }, {
                             later = false
-                            runCatching { a.sendLater(index, text, (System.currentTimeMillis() / 1000 + s).toULong()) }
-                                .onSuccess { a.setDraft(index, ""); text = ""; m.note = "" }
+                            runCatching { a.sendLater(index, text.text, (System.currentTimeMillis() / 1000 + s).toULong()) }
+                                .onSuccess { a.setDraft(index, ""); text = TextFieldValue(); m.note = "" }
                                 .onFailure { m.note = it.message ?: "$it" }
                             m.changed()
                         })
@@ -513,7 +529,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
 }
 
 @Composable
-internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, star: (() -> Unit)? = null, picking: Boolean = false, marked: Boolean = false, file: (save: Boolean) -> Unit) {
+internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, group: Boolean = false, download: () -> Unit = {}, view: () -> Unit = {}, star: (() -> Unit)? = null, picking: Boolean = false, marked: Boolean = false, formatted: Boolean, file: (save: Boolean) -> Unit) {
     if (msg.system) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             val box = Modifier.border(1.dp, Tc.line, corner).padding(horizontal = 12.dp, vertical = 6.dp)
@@ -548,13 +564,23 @@ internal fun Bubble(msg: MessageView, rich: Boolean, act: (String) -> Unit, grou
                     }
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
-                msg.quote?.let { IconText("reply", it, gone, Tc.dim) }
+                msg.quote?.let {
+                    if (formatted && msg.quoteMarkdown) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PixelIcon("reply", Tc.dim)
+                            MarkdownText(it, quote = true, links = !picking)
+                        }
+                    } else {
+                        IconText("reply", it.lineSequence().first(), gone, Tc.dim)
+                    }
+                }
                 when {
                     msg.deleted -> Text("message deleted", style = gone)
                     msg.fileName != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PixelIcon("document", Tc.lime, 14.dp)
                         Text(msg.text, style = Tc.mono)
                     }
+                    formatted -> MarkdownText(msg.text, links = !picking)
                     else -> Text(msg.text, style = Tc.mono)
                 }
             }

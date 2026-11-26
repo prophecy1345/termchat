@@ -123,6 +123,12 @@ pub enum Popup {
     Incognito(Input),
     /// Searching the open chat's history, on this device only.
     Search(Input),
+    /// ADR-048: choose an address from a picked message to copy.
+    Links {
+        message: Ref,
+        at: usize,
+        scroll: usize,
+    },
     /// Tor bridge lines being edited, and the line being typed (ADR-015).
     Bridges {
         lines: Vec<String>,
@@ -453,7 +459,8 @@ impl App {
             Screen::Main(m) => {
                 let hits = self.hits.borrow().clone();
                 let pager = matches!(m.popup, Some(Popup::Pager { .. }));
-                let view = if pager { hits.pager } else { hits.history };
+                let scrollable = pager || matches!(m.popup, Some(Popup::Links { .. }));
+                let view = if scrollable { hits.pager } else { hits.history };
                 let page = isize::try_from(view.height.max(2) - 1).unwrap_or(1);
                 let by = match k.code {
                     KeyCode::PageUp => Some(page),
@@ -475,7 +482,7 @@ impl App {
                             m.select(at);
                         }
                     }
-                } else if let Some(by) = by.filter(|_| pager || m.popup.is_none()) {
+                } else if let Some(by) = by.filter(|_| scrollable || m.popup.is_none()) {
                     scroll(m, by, &hits);
                 } else {
                     m.on_key(k, ctrl, &mut self.settings);
@@ -576,7 +583,9 @@ impl App {
                     ),
                     Some(Popup::Form(f)) => f.paste(&plain),
                     Some(_) => {}
-                    None => m.input.insert(&crate::ui::clean(text)),
+                    None => m.input.insert(&engine::clean_text(
+                        &text.replace("\r\n", "\n").replace('\r', "\n"),
+                    )),
                 }
             }
         }
@@ -835,7 +844,7 @@ impl Main {
             return self.absorb();
         }
         if let Some(at) = self.picked {
-            self.on_pick_key(at, k);
+            self.on_pick_key(at, k, settings.show_formatting);
             return self.absorb();
         }
         let key = self.current().map(|c| c.key);
@@ -897,6 +906,11 @@ impl Main {
                 self.compose = Compose::New;
             }
             (false, KeyCode::F(1)) => self.popup = Some(pager(Doc::Keys)),
+            (false, KeyCode::F(n @ 2..=10))
+                if k.modifiers.is_empty() && (key.is_some() || self.group_index().is_some()) =>
+            {
+                self.input.format(n);
+            }
             (false, KeyCode::Char('?')) if self.input.is_empty() => {
                 self.popup = Some(pager(Doc::Keys))
             }
@@ -1010,10 +1024,14 @@ impl Main {
     /// Messages of the open chat that can be answered or reacted to.
     pub fn pickable(&self) -> Vec<usize> {
         let all = self.messages();
+        let in_notes = self.current().is_some_and(|c| c.notes);
         (0..all.len())
             .filter(|&n| {
                 let m = &all[n];
-                m.id.is_some() && !m.deleted && m.status != crate::data::Status::System
+                m.id.is_some()
+                    && !m.deleted
+                    && m.status != crate::data::Status::System
+                    && (!in_notes || engine::note_shown(m, &self.note_filter))
             })
             .collect()
     }
@@ -1027,8 +1045,15 @@ impl Main {
             .position(|m| m.id == Some(r.id) && (group || m.mine != r.theirs) && !m.deleted)
     }
 
+    pub(crate) fn links(&self, message: Ref) -> Vec<String> {
+        self.locate(message)
+            .and_then(|at| self.messages().get(at))
+            .filter(|m| m.file.is_none())
+            .map_or_else(Vec::new, |m| link_addresses(&m.text))
+    }
+
     /// Keys while a message is picked (ADR-025).
-    fn on_pick_key(&mut self, at: usize, k: KeyEvent) {
+    fn on_pick_key(&mut self, at: usize, k: KeyEvent, show_formatting: bool) {
         let i = self.selected;
         let all = self.pickable();
         let Some(pos) = all.iter().position(|&n| n == at) else {
@@ -1108,6 +1133,25 @@ impl Main {
                     self.status = "nothing here to forward: a saved document goes from disk".into()
                 }
             },
+            KeyCode::Char('c') if k.modifiers.is_empty() && msg.file.is_none() => {
+                copy_to_clipboard(&engine::clean_text(&msg.text));
+                self.status = "message copied".into();
+            }
+            KeyCode::Char('l') if k.modifiers.is_empty() => {
+                if !show_formatting {
+                    self.status = "message formatting is off".into();
+                } else if let Some(message) =
+                    target.filter(|&message| !self.links(message).is_empty())
+                {
+                    self.popup = Some(Popup::Links {
+                        message,
+                        at: 0,
+                        scroll: 0,
+                    });
+                } else {
+                    self.status = "no Markdown links in this message".into();
+                }
+            }
             KeyCode::Char('d') if !mine => self.status = not_ours.into(),
             KeyCode::Char('d') => self.popup = Some(Popup::Unsend(at)),
             KeyCode::Char(c @ '1'..='9') => {
@@ -1287,7 +1331,10 @@ impl Main {
                 row("delivery receipts: tell contacts it arrived", s.receipts),
                 row("read receipts: send yours, see theirs", s.read_receipts),
             ],
-            2 => vec![row("mouse (off: the terminal selects text)", s.mouse)],
+            2 => vec![
+                row("mouse (off: the terminal selects text)", s.mouse),
+                row("show formatting", s.show_formatting),
+            ],
             _ => vec![
                 row(
                     &format!(
@@ -1394,7 +1441,9 @@ impl Main {
             (1, 1) => s.notify = !s.notify,
             (1, 2) => s.receipts = !s.receipts,
             (1, _) => s.read_receipts = !s.read_receipts,
-            _ => s.mouse = !s.mouse,
+            (2, 0) => s.mouse = !s.mouse,
+            (2, 1) => s.show_formatting = !s.show_formatting,
+            _ => {}
         }
         (self.engine.receipts, self.engine.read_receipts) = (s.receipts, s.read_receipts);
         if let Err(e) = s.save(&settings::path(&self.path)) {
@@ -1614,6 +1663,39 @@ impl Main {
                 })
             }
             Popup::Settings { tab, at } => self.on_settings_key(tab, at, k, settings),
+            Popup::Links {
+                message,
+                mut at,
+                mut scroll,
+            } => match k.code {
+                KeyCode::Esc => None,
+                KeyCode::Enter => {
+                    if let Some(address) = self.links(message).get(at) {
+                        copy_to_clipboard(address);
+                        self.status = "address copied".into();
+                    } else {
+                        self.status = "link address no longer here".into();
+                    }
+                    None
+                }
+                code => {
+                    match code {
+                        KeyCode::Up => at = at.saturating_sub(1),
+                        KeyCode::Down => {
+                            at = (at + 1).min(self.links(message).len().saturating_sub(1))
+                        }
+                        _ => {}
+                    }
+                    if matches!(code, KeyCode::Up | KeyCode::Down) {
+                        scroll = 0;
+                    }
+                    Some(Popup::Links {
+                        message,
+                        at,
+                        scroll,
+                    })
+                }
+            },
             Popup::Menu(at) => match pick(&self.menu(), at, k) {
                 Err(at) => Some(Popup::Menu(at)),
                 Ok(None) => None,
@@ -2224,7 +2306,7 @@ impl Main {
 /// Scrolls the open pager, or else the chat: `by` rows up (positive) or down.
 fn scroll(m: &mut Main, by: isize, hits: &Hits) {
     match &mut m.popup {
-        Some(Popup::Pager { scroll, .. }) => {
+        Some(Popup::Pager { scroll, .. } | Popup::Links { scroll, .. }) => {
             *scroll = scroll.saturating_add_signed(-by).min(hits.pager_max);
         }
         None => m.scroll = m.scroll.saturating_add_signed(by).min(hits.max_scroll),
@@ -2251,6 +2333,25 @@ fn pick(items: &[(char, String)], at: usize, k: KeyEvent) -> Result<Option<char>
         KeyCode::Char(c) => Ok(items.iter().any(|i| i.0 == c).then_some(c)),
         _ => Ok(None),
     }
+}
+
+fn link_addresses(text: &str) -> Vec<String> {
+    use crate::markdown::{Block, Span};
+    crate::markdown::parse(text)
+        .into_iter()
+        .flatten()
+        .flat_map(|block| match block {
+            Block::Line { spans }
+            | Block::Quote { spans }
+            | Block::Bullet { spans }
+            | Block::Numbered { spans, .. } => spans,
+            Block::Code { .. } => Vec::new(),
+        })
+        .filter_map(|span| match span {
+            Span::Link { address, .. } => Some(address),
+            _ => None,
+        })
+        .collect()
 }
 
 /// OSC 52: the terminal puts the text on the system clipboard.
@@ -2381,5 +2482,11 @@ mod tests {
         assert_eq!(timer_step(None), "off → 5m");
         assert_eq!(timer_step(Some(3600)), "1h → 1d");
         assert_eq!(timer_step(Some(604_800)), "7d → off");
+    }
+
+    #[test]
+    fn link_selection_uses_only_rendered_markdown_links() {
+        let text = "`[code](code)` ![image](image) https://bare.example\n> [one](https://one)\n- [two](https://two)";
+        assert_eq!(link_addresses(text), ["https://one", "https://two"]);
     }
 }

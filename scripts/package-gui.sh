@@ -16,6 +16,7 @@ version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 rm -rf "$dir"
 mkdir -p "$dir"
 cp LICENSE README.md "$dir/"
+cp crates/desktop/assets/LICENSE.Hack.txt "$dir/"
 cp third_party/lyrebird/LICENSE "$dir/LICENSE.lyrebird"
 cp third_party/lyrebird/LICENSE-GPL3.txt "$dir/LICENSE-GPL3.lyrebird.txt"
 sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
@@ -26,6 +27,7 @@ case $target in
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$bin" "$app/Contents/MacOS/termchat-gui"
     cp "$lyrebird" "$app/Contents/MacOS/lyrebird"
+    cp "$dir/LICENSE.Hack.txt" "$app/Contents/Resources/"
     # The Dock's shape: a rounded square of 824 in 1024 with a clear margin,
     # drawn from docs/logo/termchat-macos.svg.
     mac_icon=crates/desktop/assets/termchat-macos.png

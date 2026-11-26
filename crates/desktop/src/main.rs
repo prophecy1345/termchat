@@ -6,6 +6,7 @@ mod badge;
 mod chat;
 mod dialog;
 mod logo;
+mod markdown;
 mod sprites;
 mod synth;
 mod viewer;

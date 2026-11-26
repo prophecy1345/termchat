@@ -88,6 +88,9 @@ if [ "$name" = termchat-gui ]; then
     *)
         mkdir -p "$dest"
         install -m 755 "$src/termchat-gui" "$dest/termchat-gui"
+        if [ -f "$src/LICENSE.Hack.txt" ]; then
+            install -m 644 "$src/LICENSE.Hack.txt" "$dest/LICENSE.Hack.txt"
+        fi
         install -m 755 "$src/lyrebird" "$dest/lyrebird"
         share=${XDG_DATA_HOME:-$HOME/.local/share}
         mkdir -p "$share/applications" "$share/icons/hicolor/512x512/apps"

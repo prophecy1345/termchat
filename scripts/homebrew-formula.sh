@@ -53,6 +53,7 @@ class TermchatGui < Formula
       bin.write_exec_script prefix/"termchat.app/Contents/MacOS/termchat-gui"
     else
       libexec.install "termchat-gui", "lyrebird"
+      pkgshare.install "LICENSE.Hack.txt"
       bin.write_exec_script libexec/"termchat-gui"
     end
   end

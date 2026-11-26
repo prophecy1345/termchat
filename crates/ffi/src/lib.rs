@@ -12,6 +12,9 @@ use termchat_engine::{Engine, Happened, Unlocked};
 use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
 
+mod markdown;
+pub use markdown::{MarkdownBlock, MarkdownSpan, parse_markdown};
+
 uniffi::setup_scaffolding!();
 
 /// How often the relay's events are taken in.
@@ -234,8 +237,9 @@ pub struct MessageView {
     pub forwardable: bool,
     pub edited: bool,
     pub deleted: bool,
-    /// What it answers: the first line of that message, or a note that it is gone.
+    /// The source of the reply preview, or a note that the message is gone.
     pub quote: Option<String>,
+    pub quote_markdown: bool,
     /// Indices into `reactions()`.
     pub their_reaction: Option<u8>,
     pub my_reaction: Option<u8>,
@@ -577,6 +581,11 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
             }
         }
     }
+    let quoted = m.reply_to.and_then(|r| {
+        // In a group the id alone names it.
+        all.iter()
+            .find(|q| q.id == Some(r.id) && (group.is_some() || q.mine != r.theirs) && !q.deleted)
+    });
     MessageView {
         mine: m.mine,
         id: m.id.filter(|_| !m.deleted),
@@ -606,20 +615,13 @@ fn msg_view(m: &Msg, all: &[Msg], group: Option<&Group>, me: Ed25519Key) -> Mess
         forwardable: m.forwardable().is_some(),
         edited: m.edited,
         deleted: m.deleted,
-        quote: m.reply_to.map(|r| {
-            // In a group the id alone names it.
-            all.iter()
-                .find(|q| {
-                    q.id == Some(r.id) && (group.is_some() || q.mine != r.theirs) && !q.deleted
-                })
-                .map_or_else(
-                    || "message no longer here".into(),
-                    |q| {
-                        let text = engine::clean_text(&q.text);
-                        text.lines().next().unwrap_or_default().to_string()
-                    },
-                )
+        quote: m.reply_to.map(|_| {
+            quoted.map_or_else(
+                || "message no longer here".into(),
+                |q| engine::clean_text(&q.text),
+            )
         }),
+        quote_markdown: quoted.is_some_and(|q| q.file.is_none() && q.status != Status::System),
         their_reaction: if group.is_some() {
             None
         } else {

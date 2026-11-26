@@ -14,6 +14,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.termchat.engine.GroupView
@@ -26,11 +30,19 @@ fun Group(m: Model, index: UInt) {
     @Suppress("UNUSED_EXPRESSION") m.version
     val g = a.groups().firstOrNull { it.index == index } ?: return run { m.screen = Screen.Chats }
     val messages = runCatching { a.groupMessages(index) }.getOrDefault(emptyList())
-    var text by remember(index) { mutableStateOf(runCatching { a.groupDraft(index) }.getOrDefault("")) }
+    var text by remember(index) {
+        val saved = runCatching { a.groupDraft(index) }.getOrDefault("")
+        mutableStateOf(TextFieldValue(saved, TextRange(saved.length)))
+    }
+    val focus = remember(index) { FocusRequester() }
     // "members", "invite", "leave", "stepdown", "make:", "unmake:", "hand:" or
     // "handleave:" and a fingerprint (ADR-042), or a member's fingerprint to remove.
     var dialog by remember(index) { mutableStateOf<String?>(null) }
     var compose by remember(index) { mutableStateOf<Triple<UInt, Boolean, String>?>(null) }
+    val updateText: (TextFieldValue) -> Unit = {
+        if (text.text != it.text && compose?.second != true) a.setGroupDraft(index, it.text)
+        text = it
+    }
     var unsend by remember(index) { mutableStateOf<UInt?>(null) }
     var forwarding by remember(index) { mutableStateOf<UInt?>(null) }
     // Messages picked to delete on this device; `null`: not picking.
@@ -90,7 +102,7 @@ fun Group(m: Model, index: UInt) {
                 Bubble(msg, true, { what ->
                     when (what) {
                         "answer" -> compose = Triple(at, false, msg.text.lineSequence().first())
-                        "edit" -> { compose = Triple(at, true, ""); text = msg.text; a.setGroupDraft(index, "") }
+                        "edit" -> { compose = Triple(at, true, ""); text = TextFieldValue(msg.text, TextRange(msg.text.length)); a.setGroupDraft(index, "") }
                         "delete" -> unsend = at
                         "copy" -> copySensitive(context, msg.text)
                         "forward" -> forwarding = at
@@ -106,7 +118,7 @@ fun Group(m: Model, index: UInt) {
                             m.changed()
                         }
                     }
-                }, group = true, view = { viewing = msg.fileId }, picking = picked != null, marked = msg.id?.let { Picked(it, msg.mine) in picked.orEmpty() } ?: false) { keep ->
+                }, group = true, view = { viewing = msg.fileId }, picking = picked != null, marked = msg.id?.let { Picked(it, msg.mine) in picked.orEmpty() } ?: false, formatted = m.showFormatting) { keep ->
                     val id = msg.fileId
                     if (id != null) if (keep) {
                         saving = id
@@ -131,11 +143,15 @@ fun Group(m: Model, index: UInt) {
                     if (edit) "Editing your message" else "Answering: $label",
                     Tc.mono, Tc.lime, Modifier.weight(1f),
                 )
-                IconTap("close", "Cancel") { if (edit) text = ""; compose = null }
+                IconTap("close", "Cancel") { if (edit) text = TextFieldValue(); compose = null }
             }
         }
         picked?.let { p ->
             PickBar(p.size, { dialog = "delete-here" }) { picked = null }
+        }
+        if (picked == null && !g.left) FormatBar { mark ->
+            updateText(mark.insert(text))
+            focus.requestFocus()
         }
         if (picked == null) Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (g.expiresIn != null) IconText("timer", span(g.expiresIn), Tc.small, Tc.lime)
@@ -144,26 +160,26 @@ fun Group(m: Model, index: UInt) {
                     .clickable(enabled = !g.left) { attach.launch(arrayOf("*/*")) },
                 contentAlignment = Alignment.Center,
             ) { Paperclip(if (g.left) Tc.line else Tc.dim) }
-            Field(text, { text = it; if (compose?.second != true) a.setGroupDraft(index, it) }, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f).heightIn(min = 48.dp), singleLine = false, maxLines = 6)
+            Field(text, updateText, if (g.left) "You are no longer in this group" else "Encrypted message", Modifier.weight(1f).heightIn(min = 48.dp).focusRequester(focus), singleLine = false, maxLines = 6)
             // A long press on Send sends a new message later (PLAN Q4).
             var later by remember { mutableStateOf(false) }
             Box {
-                Flat(if (compose?.second == true) "Save" else "Send", enabled = text.isNotBlank() && !g.left, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
+                Flat(if (compose?.second == true) "Save" else "Send", enabled = text.text.isNotBlank() && !g.left, color = Tc.lime, modifier = Modifier.height(48.dp), onLong = { if (compose == null) later = true }) {
                     runCatching {
                         val cm = compose
                         when {
-                            cm == null -> a.sendGroup(index, text)
-                            cm.second -> a.editGroupMessage(index, cm.first, text)
-                            else -> a.replyGroup(index, cm.first, text)
+                            cm == null -> a.sendGroup(index, text.text)
+                            cm.second -> a.editGroupMessage(index, cm.first, text.text)
+                            else -> a.replyGroup(index, cm.first, text.text)
                         }
-                    }.onSuccess { a.setGroupDraft(index, ""); text = ""; compose = null; m.note = ""; m.changed() }.onFailure(fail)
+                    }.onSuccess { a.setGroupDraft(index, ""); text = TextFieldValue(); compose = null; m.note = ""; m.changed() }.onFailure(fail)
                 }
                 DropdownMenu(later, { later = false }, containerColor = Tc.surface) {
                     LATER.forEach { s ->
                         DropdownMenuItem({ Text("Send in ${laterSpan(s)}", style = Tc.mono) }, {
                             later = false
-                            runCatching { a.sendGroupLater(index, text, (System.currentTimeMillis() / 1000 + s).toULong()) }
-                                .onSuccess { a.setGroupDraft(index, ""); text = ""; m.note = "" }
+                            runCatching { a.sendGroupLater(index, text.text, (System.currentTimeMillis() / 1000 + s).toULong()) }
+                                .onSuccess { a.setGroupDraft(index, ""); text = TextFieldValue(); m.note = "" }
                                 .onFailure(fail)
                             m.changed()
                         })

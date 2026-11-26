@@ -68,6 +68,14 @@ class Model(private val context: Context) : Listener {
 
     // Plain settings, like the terminal's settings.json (ADR-008); wiped with the state.
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    var showFormatting by mutableStateOf(prefs.getBoolean("show_formatting", true))
+        private set
+
+    fun toggleFormatting() {
+        showFormatting = !showFormatting
+        prefs.edit().putBoolean("show_formatting", showFormatting).apply()
+    }
+
     var notify by mutableStateOf(prefs.getBoolean("notify", false))
         private set
     /** Keep the relay connection while the app is in the background (ADR-012). */
@@ -267,6 +275,7 @@ class Model(private val context: Context) : Listener {
         prefs.edit().clear().commit()
         context.deleteSharedPreferences("settings")
         Tc.use(DEFAULT_THEME)
+        showFormatting = true
         notify = false
         stay = false
         lockMinutes = 5

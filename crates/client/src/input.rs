@@ -40,6 +40,39 @@ impl Input {
         self.cursor += s.len();
     }
 
+    pub fn format(&mut self, key: u8) {
+        let (before, after) = match key {
+            2 => ("**", "**"),
+            3 => ("*", "*"),
+            4 => ("~~", "~~"),
+            5 => ("`", "`"),
+            6 => (
+                if self.text[..self.cursor].ends_with('\n') || self.cursor == 0 {
+                    "```\n"
+                } else {
+                    "\n```\n"
+                },
+                if self.text[self.cursor..].starts_with('\n') || self.cursor == self.text.len() {
+                    "\n```"
+                } else {
+                    "\n```\n"
+                },
+            ),
+            7 => ("[", "]()"),
+            8 | 9 => {
+                let start = self.text[..self.cursor].rfind('\n').map_or(0, |n| n + 1);
+                let prefix = if key == 8 { "> " } else { "- " };
+                self.text.insert_str(start, prefix);
+                self.cursor += prefix.len();
+                return;
+            }
+            10 => ("\n", ""),
+            _ => return,
+        };
+        self.text.insert_str(self.cursor, after);
+        self.insert(before);
+    }
+
     /// Empties the field and returns what was in it.
     pub fn take(&mut self) -> Zeroizing<String> {
         self.cursor = 0;
@@ -142,5 +175,30 @@ mod tests {
         i.on_key(key(KeyCode::Char('u'), KeyModifiers::CONTROL));
         assert_eq!(&*i, "");
         assert!(i.on_key(key(KeyCode::Enter, KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn markdown_shortcuts_insert_at_the_cursor_and_start_of_line() {
+        let mut i = Input::from("а\nбв");
+        press(&mut i, KeyCode::Left);
+        i.format(8);
+        i.format(2);
+        press(&mut i, KeyCode::Char('ё'));
+        assert_eq!(&*i, "а\n> б**ё**в");
+
+        let mut i = Input::from("beforeafter");
+        for _ in 0..5 {
+            press(&mut i, KeyCode::Left);
+        }
+        i.format(6);
+        i.insert("code");
+        i.format(10);
+        i.insert("next");
+        assert_eq!(&*i, "before\n```\ncode\nnext\n```\nafter");
+
+        let mut i = Input::default();
+        i.format(7);
+        i.insert("label");
+        assert_eq!(&*i, "[label]()");
     }
 }

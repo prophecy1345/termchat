@@ -255,7 +255,7 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
 
     val allow = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> m.notifyOn(ok) }
-    Text("THEME", style = Tc.caps)
+    Text("APPEARANCE", style = Tc.caps)
     var showThemes by remember { mutableStateOf(false) }
     MenuRow("Colours: ${Tc.theme}", "The same themes as in the terminal") { showThemes = !showThemes }
     if (showThemes) {
@@ -276,6 +276,9 @@ fun Settings(m: Model) = Panel(m, "Settings") {
                 )
             }
         }
+    }
+    MenuRow("Show formatting: ${if (m.showFormatting) "on" else "off"}", "Display Markdown in messages") {
+        m.toggleFormatting()
     }
     Line()
     Text("NOTIFICATIONS", style = Tc.caps)

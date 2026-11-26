@@ -16,7 +16,7 @@ use termchat_engine::settings::Settings;
 use termchat_engine::{Engine, Happened, reactions, themes};
 
 use crate::dialog::{Dialog, LINK_CONFIRMED};
-use crate::sprites;
+use crate::{markdown, sprites};
 
 type Key = [u8; 32];
 
@@ -104,6 +104,7 @@ impl Pal {
                 .or_default()
                 .push(hack);
         }
+        markdown::add_bold_font(&mut fonts);
         ctx.set_fonts(fonts);
     }
 
@@ -230,6 +231,7 @@ enum Act {
     Edit(usize),
     Delete(usize),
     React(usize, u8),
+    Copied(&'static str),
     /// Pick or unpick a message to delete on this device; starts picking.
     Pick(usize),
 }
@@ -526,7 +528,7 @@ impl Chat {
             .show(ui, |ui| lock = self.sidebar(ui, p));
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(0))
-            .show(ui, |ui| self.chat(ui, p));
+            .show(ui, |ui| self.chat(ui, p, s.show_formatting));
         self.toasts(ui.ctx(), p);
         self.dialogs(ui.ctx(), p, s);
         self.viewer(ui.ctx(), p);
@@ -811,7 +813,7 @@ impl Chat {
             .clicked()
     }
 
-    fn group_chat(&mut self, ui: &mut egui::Ui, p: &Pal, g: usize) {
+    fn group_chat(&mut self, ui: &mut egui::Ui, p: &Pal, g: usize, show_formatting: bool) {
         self.group_header(ui, p, g);
         self.search_bar(ui, p);
         egui::Panel::bottom("input")
@@ -834,7 +836,8 @@ impl Chat {
                             group: Some(group),
                             me,
                             rich: true,
-                            query: self.search.as_deref().unwrap_or_default(),
+                            show_formatting,
+                            query: self.search.as_deref(),
                             picked: self.picked.as_deref(),
                         };
                         if let Some(act) = messages(ui, p, view) {
@@ -953,9 +956,9 @@ impl Chat {
         }
     }
 
-    fn chat(&mut self, ui: &mut egui::Ui, p: &Pal) {
+    fn chat(&mut self, ui: &mut egui::Ui, p: &Pal, show_formatting: bool) {
         if let Some(g) = self.open_group() {
-            return self.group_chat(ui, p, g);
+            return self.group_chat(ui, p, g, show_formatting);
         }
         let Some(i) = self.open.and_then(|k| self.engine.index(&k)) else {
             ui.centered_and_justified(|ui| {
@@ -989,7 +992,8 @@ impl Chat {
                             group: None,
                             me: self.engine.me(),
                             rich: self.engine.rich(i),
-                            query: self.search.as_deref().unwrap_or_default(),
+                            show_formatting,
+                            query: self.search.as_deref(),
                             picked: self.picked.as_deref(),
                         };
                         if let Some(act) = messages(ui, p, view) {
@@ -1013,6 +1017,7 @@ impl Chat {
             Open::Group(_) => true,
         };
         match act {
+            Act::Copied(what) => self.status = what.into(),
             Act::Save(n) => {
                 if let Some(f) = msgs.get(n).and_then(|m| m.file.as_ref()) {
                     self.dialog = Some(Dialog::save_file(f.id));
@@ -1421,6 +1426,22 @@ impl Chat {
                 }
             });
         }
+        let id = ui.make_persistent_id(("composer", self.open, self.group));
+        if let Some(icon) = markdown::toolbar(ui, p) {
+            let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+            let selection = if self.focus_input {
+                None
+            } else {
+                state.cursor.char_range()
+            };
+            let cursor = markdown::insert(&mut self.input, selection, icon);
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+            state.store(ui.ctx(), id);
+            self.focus_input = false;
+            ui.memory_mut(|m| m.request_focus(id));
+        }
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let column = Layout::top_down(Align::Min);
@@ -1485,7 +1506,6 @@ impl Chat {
                         });
                     });
                 });
-                let id = ui.make_persistent_id("composer");
                 let focused = ui.memory(|m| m.has_focus(id));
                 // Enter sends; Shift+Enter breaks the line.
                 let enter = focused
@@ -1736,8 +1756,9 @@ struct View<'a> {
     me: Key,
     /// The other side reads answers and reactions (ADR-025); always in a group.
     rich: bool,
-    /// Only messages holding this text, any case; empty shows all.
-    query: &'a str,
+    show_formatting: bool,
+    /// Search shows source text. An empty search still shows all messages.
+    query: Option<&'a str>,
     /// ADR-046 amendment 1: in Notes, the filter chosen.
     filter: Option<&'a NoteFilter>,
     /// Picking messages to delete: a click picks instead.
@@ -1755,12 +1776,14 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
     let width = ui.available_width();
     let mut act = None;
     let mut last_author = None;
-    let query = v.query.trim().to_lowercase();
+    let formatted = v.show_formatting && v.query.is_none();
+    let query = v.query.unwrap_or_default().trim().to_lowercase();
     let mut found = 0;
     for (n, m) in v.msgs.iter().enumerate() {
         let text = match &m.file {
             Some(f) => clean_text(&f.label()),
-            None => clean_text(&m.text),
+            None if !formatted || m.status == Status::System => clean_text(&m.text),
+            None => String::new(),
         };
         if !query.is_empty() {
             if m.status == Status::System || !text.to_lowercase().contains(&query) {
@@ -1829,6 +1852,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
         let on = me.is_some_and(|r| v.picked.is_some_and(|p| p.contains(&r)));
         ui.with_layout(Layout::top_down(align), |ui| {
             ui.set_max_width(width * 0.7);
+            let mut links = Vec::new();
             let bubble = egui::Frame::new()
                 .fill(if m.mine { p.mine } else { p.theirs })
                 .stroke(match on {
@@ -1844,26 +1868,36 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                                 && (v.group.is_some() || q.mine != r.theirs)
                                 && !q.deleted
                         });
-                        let quote = match quoted {
-                            Some(q) => {
-                                let q = clean_text(&q.text);
-                                q.lines().next().unwrap_or_default().to_string()
-                            }
-                            None => "message no longer here".into(),
-                        };
-                        let quote = RichText::new(quote).monospace().italics().color(p.dim);
                         sprites::lead(ui, Icon::Reply, 1.0, p.dim, |ui| {
-                            ui.add(egui::Label::new(quote).truncate())
+                            if let Some(q) = quoted.filter(|q| formatted && q.file.is_none()) {
+                                links.extend(markdown::show(ui, p, &q.text, true));
+                            } else {
+                                let quote = match quoted {
+                                    Some(q) => clean_text(&q.text)
+                                        .lines()
+                                        .next()
+                                        .unwrap_or_default()
+                                        .to_string(),
+                                    None => "message no longer here".into(),
+                                };
+                                let quote = RichText::new(quote).monospace().italics().color(p.dim);
+                                ui.add(egui::Label::new(quote).truncate());
+                            }
                         });
                     }
-                    match m.deleted {
-                        true => ui.label(RichText::new("message deleted").italics().color(p.dim)),
-                        false if m.file.is_some() => {
-                            sprites::lead(ui, Icon::Document, 1.0, p.accent, |ui| {
-                                ui.label(RichText::new(text).monospace())
-                            })
+                    match () {
+                        _ if m.deleted => {
+                            ui.label(RichText::new("message deleted").italics().color(p.dim));
                         }
-                        false => ui.label(RichText::new(text).monospace()),
+                        _ if m.file.is_some() => {
+                            sprites::lead(ui, Icon::Document, 1.0, p.accent, |ui| {
+                                ui.label(RichText::new(text).monospace());
+                            });
+                        }
+                        _ if !formatted => {
+                            ui.label(RichText::new(text).monospace());
+                        }
+                        _ => links.extend(markdown::show(ui, p, &m.text, false)),
                     }
                 })
                 .response;
@@ -1874,7 +1908,7 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                 if me.is_some() && bubble.interact(egui::Sense::click()).clicked() {
                     act = Some(Act::Pick(n));
                 }
-            } else if pointable {
+            } else if pointable || (m.file.is_none() && !m.deleted) {
                 let r = bubble
                     .interact(egui::Sense::click())
                     .on_hover_text(match (note, m.mine) {
@@ -1885,10 +1919,18 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         (false, false) => "Double-click: answer. Right-click: react, forward",
                     });
                 // As in most desktop messengers.
-                if r.double_clicked() && !note {
+                if pointable && r.double_clicked() && !note {
                     act = Some(Act::Reply(n));
                 }
                 r.context_menu(|ui| {
+                    if m.file.is_none() && ui.button("Copy text").clicked() {
+                        ui.ctx().copy_text(clean_text(&m.text));
+                        act = Some(Act::Copied("message copied"));
+                        ui.close();
+                    }
+                    if !pointable {
+                        return;
+                    }
                     if !note {
                         ui.horizontal(|ui| {
                             for r in 0..REACTIONS {
@@ -1928,6 +1970,11 @@ fn messages(ui: &mut egui::Ui, p: &Pal, v: View) -> Option<Act> {
                         ui.close();
                     }
                 });
+            }
+            if v.picked.is_none()
+                && markdown::copy_link(ui, ui.make_persistent_id(("message links", n)), links)
+            {
+                act = Some(Act::Copied("address copied"));
             }
             let unsaved = m
                 .file
@@ -2202,7 +2249,11 @@ mod tests {
             understands: termchat_core::proto::UNDERSTANDS,
             messages: vec![
                 {
-                    let mut m = msg(false, "hi there", Status::Received);
+                    let mut m = msg(
+                        false,
+                        "hi there **жирный** [сайт](https://example.org)",
+                        Status::Received,
+                    );
                     m.id = Some(7);
                     m.their_reaction = Some(1);
                     m
@@ -2245,16 +2296,17 @@ mod tests {
         let mut chat = Chat::new(engine);
         let mut settings = Settings::default();
         let (ctx, pal) = (egui::Context::default(), Pal::named("termchat"));
+        Pal::fonts(&ctx);
         pal.apply(&ctx);
-        let mut frame = |chat: &mut Chat| {
+        let frame = |chat: &mut Chat, settings: &mut Settings| {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                chat.ui(ui, &pal, &mut settings);
+                chat.ui(ui, &pal, settings);
             });
             // No GPU here to take the font atlas.
             out.textures_delta.clear();
             out
         };
-        let shown = texts(&frame(&mut chat));
+        let shown = texts(&frame(&mut chat, &mut settings));
         assert!(shown.contains("Pick a contact"), "{shown}");
         // ADR-046: Notes has its own row, apart from the contacts.
         assert!(
@@ -2288,8 +2340,8 @@ mod tests {
             chat.engine.data.contacts[0].unread, 0,
             "an open chat is read"
         );
-        frame(&mut chat);
-        let shown = texts(&frame(&mut chat));
+        frame(&mut chat, &mut settings);
+        let shown = texts(&frame(&mut chat, &mut settings));
         for want in [
             "ENCRYPTED · NOT VERIFIED",
             "hi there",
@@ -2305,9 +2357,26 @@ mod tests {
         }
         assert!(shown.contains("new message · Alice Smith"), "the card");
         assert!(shown.contains("connecting"), "the status bar");
+        let rendered = "hi there жирный сайт <https://example.org>";
+        assert_eq!(shown.matches(rendered).count(), 2, "{shown}");
+        let source = "hi there **жирный** [сайт](https://example.org)";
+        settings.show_formatting = false;
+        let shown = texts(&frame(&mut chat, &mut settings));
+        assert!(
+            shown.contains(source) && !shown.contains(rendered),
+            "{shown}"
+        );
+        settings.show_formatting = true;
+        chat.search = Some("hi there".into());
+        let shown = texts(&frame(&mut chat, &mut settings));
+        assert!(
+            shown.contains(source) && !shown.contains(rendered),
+            "{shown}"
+        );
+        chat.search = None;
         let alice = chat.engine.index(&[1; 32]).unwrap();
         chat.act(Open::Chat(alice), Act::Reply(0));
-        let shown = texts(&frame(&mut chat));
+        let shown = texts(&frame(&mut chat, &mut settings));
         assert!(shown.contains("Answering: hi there"), "{shown}");
         // Icons are sprites, never an emoji or a stand-in glyph.
         for glyph in ['📌', '📄', '↳', '⚠', '✓', '●', '○', '×', '•'] {
@@ -2372,8 +2441,8 @@ mod tests {
         ];
         for (d, want) in dialogs {
             chat.dialog = Some(d);
-            frame(&mut chat);
-            let shown = texts(&frame(&mut chat));
+            frame(&mut chat, &mut settings);
+            let shown = texts(&frame(&mut chat, &mut settings));
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
             assert!(chat.dialog.is_some(), "{want}: stays open until answered");
         }
@@ -2390,7 +2459,7 @@ mod tests {
         said.author = Some(me);
         group.messages.push(said);
         group.set_reaction(7, me, Some(1));
-        let shown = texts(&frame(&mut chat));
+        let shown = texts(&frame(&mut chat, &mut settings));
         for want in ["Groups  1", "team", "SETTING UP…", "group hello"] {
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
         }
@@ -2420,8 +2489,8 @@ mod tests {
         ];
         for (d, want) in dialogs {
             chat.dialog = Some(d);
-            frame(&mut chat);
-            let shown = texts(&frame(&mut chat));
+            frame(&mut chat, &mut settings);
+            let shown = texts(&frame(&mut chat, &mut settings));
             assert!(shown.contains(want), "{want} missing in:\n{shown}");
         }
         let _ = std::fs::remove_dir_all(&dir);

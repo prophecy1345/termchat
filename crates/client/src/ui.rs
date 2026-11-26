@@ -49,7 +49,8 @@ Ctrl+L       send a file (up to 25 MiB)
 Ctrl+G       save the newest received file
 Ctrl+S       search this chat (on this device only)
 Shift+Up     pick a message (or Ctrl+N): Enter answer, e edit, d delete,
-             f forward, 1-7 react, Space mark, x delete marked here;
+             c copy text, l copy a link address, f forward, 1-7 react,
+             Space mark, x delete marked here;
              Esc back to typing
 Ctrl+P       menu: backup, password, duress, Tor, theme, mouse, wipe,
              g new group
@@ -63,6 +64,8 @@ Ctrl+Q       quit
 PgUp / PgDn  scroll the chat (or the mouse wheel)
 Alt+← / →    word left / right   Home / End   start / end
 Ctrl+W       delete word         Ctrl+U       delete to start
+F2–F5        bold, italic, strikethrough, inline code
+F6–F10       code block, link, quote, list, new line
 Mouse        click a contact, right-click for its actions;
              drag the list edge to resize; Shift+drag selects text
 
@@ -86,15 +89,20 @@ pub(crate) use crate::engine::{age, span};
 
 /// Cuts `s` to `w` columns, with "…" if anything was cut.
 fn fit(s: &str, w: usize) -> String {
+    if w == 0 {
+        return String::new();
+    }
     if Span::raw(s).width() <= w {
         return s.to_string();
     }
     let mut out = String::new();
-    for c in s.chars() {
-        if Span::raw(format!("{out}{c}…")).width() > w {
+    let mut used = 1; // The ellipsis always takes one column.
+    for grapheme in Span::raw(s).styled_graphemes(Style::new()) {
+        used += Span::raw(grapheme.symbol).width();
+        if used > w {
             break;
         }
-        out.push(c);
+        out.push_str(grapheme.symbol);
     }
     out + "…"
 }
@@ -428,7 +436,7 @@ fn main(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, settings: &Settings)
         }
         false => body,
     };
-    chat_pane(f, t, h, m, chat);
+    chat_pane(f, t, h, m, chat, settings.show_formatting);
     status_bar(f, t, h, m, bar);
 
     if let Some(popup) = &m.popup {
@@ -590,6 +598,14 @@ fn wrap(s: &str, w: usize, cursor: usize) -> (Vec<String>, (usize, usize)) {
     let mut col = 0;
     let mut at = None;
     for (i, c) in s.chars().enumerate() {
+        if c == '\n' {
+            if i == cursor {
+                at = Some((rows.len() - 1, col));
+            }
+            rows.push(String::new());
+            col = 0;
+            continue;
+        }
         let cw = Span::raw(c.to_string()).width();
         if col + cw > w {
             rows.push(String::new());
@@ -611,7 +627,14 @@ fn wrap(s: &str, w: usize, cursor: usize) -> (Vec<String>, (usize, usize)) {
     (rows, at)
 }
 
-fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
+fn chat_pane(
+    f: &mut Frame,
+    t: &Palette,
+    h: &mut Hits,
+    m: &Main,
+    area: Rect,
+    show_formatting: bool,
+) {
     let typed = wrap(
         &m.input,
         usize::from(area.width.saturating_sub(4)),
@@ -756,6 +779,8 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
     // Messages in groups, like most chat apps: name and age over a run of
     // messages from one side, so wrapped text stays flush left.
     let muted = Style::new().fg(t.overlay0);
+    let pane = history.inner(Margin::new(1, 1));
+    let width = usize::from(pane.width).max(1);
     let mut lines: Vec<Line> = Vec::new();
     let mut prev: Option<&crate::data::Msg> = None;
     let mut picked_line = None;
@@ -765,16 +790,17 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         if in_notes && !crate::engine::note_shown(msg, &m.note_filter) {
             continue;
         }
-        let text = match &msg.file {
+        let file = match &msg.file {
             Some(f) if !msg.mine && f.complete() && f.held() => {
-                clean(&format!("▤ {} · unsaved, Ctrl+G", f.label()))
+                Some(clean(&format!("▤ {} · unsaved, Ctrl+G", f.label())))
             }
-            Some(f) if !msg.mine && f.offered() => clean(&format!("▤ {}, Ctrl+G", f.label())),
+            Some(f) if !msg.mine && f.offered() => Some(clean(&format!("▤ {}, Ctrl+G", f.label()))),
             // A text mark for a document: the terminal draws no sprites.
-            Some(f) => clean(&format!("▤ {}", f.label())),
-            None => crate::engine::clean_text(&msg.text),
+            Some(f) => Some(clean(&format!("▤ {}", f.label()))),
+            None => None,
         };
         if msg.status == Status::System {
+            let text = file.unwrap_or_else(|| crate::engine::clean_text(&msg.text));
             lines.push(Line::styled(text, muted.add_modifier(Modifier::ITALIC)));
             prev = None;
             continue;
@@ -832,34 +858,40 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                 q.id == Some(r.id) && (group.is_some() || q.mine != r.theirs) && !q.deleted
             });
             let quote = match quoted {
-                Some(q) => {
-                    let first = crate::engine::clean_text(&q.text)
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .to_string();
-                    Span::styled(fit(&first, 60), muted)
+                Some(q) if show_formatting && q.file.is_none() => {
+                    let (lines, _) =
+                        message_lines(t, &q.text, width.saturating_sub(2).max(1), true);
+                    lines.into_iter().next().unwrap_or_default().spans
                 }
-                None => Span::styled(
-                    "message no longer here",
-                    muted.add_modifier(Modifier::ITALIC),
-                ),
+                Some(q) => vec![Span::raw(fit(
+                    &clean(q.text.split('\n').next().unwrap_or_default()),
+                    60,
+                ))],
+                None => vec![Span::styled("message no longer here", Modifier::ITALIC)],
             };
             let arrow = Span::styled("↳ ", Style::new().fg(t.accent));
-            lines.push(Line::from(vec![arrow, quote]).style(row));
+            let mut line = Line::from(arrow).style(row.patch(muted));
+            line.spans.extend(quote);
+            lines.push(line);
         }
         if msg.deleted {
             let gone = muted.add_modifier(Modifier::ITALIC);
             lines.push(Line::styled("message deleted", gone).style(row));
             continue;
         }
-        // Line breaks the sender typed stay; the marks follow the last line.
-        let mut rows: Vec<&str> = text.split('\n').collect();
-        let last = rows.pop().unwrap_or_default().to_string();
-        for line in rows {
-            lines.push(Line::styled(line.to_string(), Style::new().fg(t.text)).style(row));
-        }
-        let mut spans = vec![Span::styled(last, Style::new().fg(t.text))];
+        let (mut body, code_last) = match file {
+            Some(text) => (vec![Line::from(text)], false),
+            None => message_lines(t, &msg.text, width, show_formatting),
+        };
+        // Keep status marks off the clipped code row.
+        let mut last = if code_last {
+            Line::default()
+        } else {
+            body.pop().unwrap_or_default()
+        };
+        let row = row.fg(t.text);
+        lines.extend(body.into_iter().map(|line| line.style(row)));
+        let spans = &mut last.spans;
         if msg.edited {
             spans.push(Span::styled(" (edited)", muted));
         }
@@ -898,25 +930,25 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
                     Span::styled("starred", Style::new().fg(t.yellow)),
                 ]);
             }
-            lines.push(Line::from(spans).style(row));
-            continue;
-        }
-        // Theirs, then ours; the same one twice shows once with a 2.
-        match (msg.their_reaction, msg.my_reaction) {
-            (Some(a), Some(b)) if a == b => {
-                spans.extend([Span::raw("  "), reaction(t, a), Span::styled("2", muted)]);
-            }
-            (a, b) => {
-                for r in [a, b].into_iter().flatten() {
-                    spans.extend([Span::raw("  "), reaction(t, r)]);
+        } else {
+            // Theirs, then ours; the same one twice shows once with a 2.
+            match (msg.their_reaction, msg.my_reaction) {
+                (Some(a), Some(b)) if a == b => {
+                    spans.extend([Span::raw("  "), reaction(t, a), Span::styled("2", muted)]);
+                }
+                (a, b) => {
+                    for r in [a, b].into_iter().flatten() {
+                        spans.extend([Span::raw("  "), reaction(t, r)]);
+                    }
                 }
             }
         }
-        lines.push(Line::from(spans).style(row));
+        if !code_last || !spans.is_empty() {
+            lines.push(last.style(row));
+        }
     }
 
     // Bottom-anchored: `scroll` counts rows up from the newest one.
-    let pane = history.inner(Margin::new(1, 1));
     let rows = |lines: &[Line<'static>]| {
         Paragraph::new(lines.to_vec())
             .wrap(Wrap { trim: false })
@@ -946,10 +978,12 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         // Only one's own messages can be edited or deleted.
         let hint = match msgs.get(at).is_some_and(|p| p.mine) {
             _ if in_notes => {
-                " e edit · d delete · s star · f forward · space mark · x delete here · esc "
+                " c copy · l link · e edit · d delete · s star · f forward · space mark · x delete here · esc "
             }
-            true => " ↵ answer · e edit · d delete · 1–7 react · space mark · x delete here · esc ",
-            false => " ↵ answer · 1–7 react · space mark · x delete here · esc ",
+            true => {
+                " c copy · l link · ↵ answer · e edit · d delete · 1–7 react · space mark · x delete here · esc "
+            }
+            false => " c copy · l link · ↵ answer · 1–7 react · space mark · x delete here · esc ",
         };
         let hint = Span::styled(hint, Style::new().bg(t.panel_bg).fg(t.accent));
         let row = Rect::new(pane.x, pane.bottom().saturating_sub(1), pane.width, 1);
@@ -960,6 +994,67 @@ fn chat_pane(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         f.render_widget(Paragraph::new(hint).alignment(Alignment::Right), row);
     }
     input_bar(f, t, m, input, typed);
+}
+
+/// The history wraps prose and links. Fenced rows are clipped before the widget wraps them.
+fn message_lines(
+    t: &Palette,
+    text: &str,
+    width: usize,
+    show_formatting: bool,
+) -> (Vec<Line<'static>>, bool) {
+    use crate::markdown::{Block, Span as MdSpan};
+
+    let Some(blocks) = show_formatting
+        .then(|| crate::markdown::parse(text))
+        .flatten()
+    else {
+        return (
+            crate::engine::clean_text(text)
+                .split('\n')
+                .map(|line| Line::from(line.to_owned()))
+                .collect(),
+            false,
+        );
+    };
+    let mut lines = Vec::new();
+    let code_last = matches!(blocks.last(), Some(Block::Code { .. }));
+    let code = Style::new().bg(t.surface0);
+    for block in blocks {
+        let (marker, spans) = match block {
+            Block::Line { spans } => (String::new(), spans),
+            Block::Quote { spans } => ("│ ".into(), spans),
+            Block::Bullet { spans } => ("• ".into(), spans),
+            Block::Numbered { number, spans } => (format!("{number}. "), spans),
+            Block::Code { text } => {
+                lines.extend(
+                    text.split('\n')
+                        .map(|line| Line::from(Span::styled(fit(line, width), code))),
+                );
+                continue;
+            }
+        };
+        let mut line = Line::default();
+        if !marker.is_empty() {
+            line.push_span(Span::styled(marker, Style::new().fg(t.overlay0)));
+        }
+        for span in spans {
+            let span = match span {
+                MdSpan::Plain { text } => Span::raw(text),
+                MdSpan::Bold { text } => Span::styled(text, Modifier::BOLD),
+                MdSpan::Italic { text } => Span::styled(text, Modifier::ITALIC),
+                MdSpan::Strike { text } => Span::styled(text, Modifier::CROSSED_OUT),
+                MdSpan::Code { text } => Span::styled(text, code),
+                MdSpan::Link { label, address } => {
+                    line.push_span(Span::styled(label, Style::new().fg(t.accent)));
+                    Span::styled(format!(" <{address}>"), Style::new().fg(t.overlay0))
+                }
+            };
+            line.push_span(span);
+        }
+        lines.push(line);
+    }
+    (lines, code_last)
 }
 
 /// A reaction (ADR-025): one column wide, in the theme's colours.
@@ -1721,6 +1816,41 @@ fn popup_pane(
             let buttons = [("↵ forward", true, key(KeyCode::Enter)), cancel];
             window(f, t, h, "forward to", lines, &buttons, 56, false);
         }
+        Popup::Links {
+            message,
+            at,
+            scroll,
+        } => {
+            let width = usize::from(f.area().width.min(72).saturating_sub(4)).max(1);
+            let page = f.area().height.saturating_sub(5).max(1);
+            let addresses = m.links(*message);
+            let lines = if let Some(address) = addresses.get(*at) {
+                let (mut rows, _) = wrap(address, width, 0);
+                if rows.last().is_some_and(String::is_empty) {
+                    rows.pop();
+                }
+                h.pager_max = rows.len().saturating_sub(usize::from(page));
+                let start = (*scroll).min(h.pager_max);
+                let mut summary = format!("{} of {} · ↑/↓ choose", at + 1, addresses.len());
+                if h.pager_max > 0 {
+                    summary.push_str(" · PgUp/PgDn scroll");
+                }
+                // Keep the summary on one row so a narrow terminal leaves the buttons in view.
+                let mut lines = vec![Line::from(fit(&summary, width))];
+                lines.extend(
+                    rows.into_iter()
+                        .skip(start)
+                        .take(usize::from(page))
+                        .map(Line::from),
+                );
+                lines
+            } else {
+                plain("Link address no longer here.")
+            };
+            let buttons = [("↵ copy address", true, key(KeyCode::Enter)), cancel];
+            let body = window(f, t, h, "link address", lines, &buttons, 72, false);
+            h.pager = Rect::new(body.x, body.y, body.width, page.min(body.height));
+        }
         Popup::InviteToGroup(at) => {
             let Some(gi) = m.group_index() else { return };
             let rows: Vec<(char, String)> = m
@@ -2033,6 +2163,57 @@ mod tests {
         assert_eq!(wrap("", 4, 0), (vec![String::new()], (0, 0)));
         // Wide characters take two columns.
         assert_eq!(wrap("日本語", 4, 3).0, ["日本", "語"]);
+        assert_eq!(
+            wrap("аб\n\nв", 4, 4),
+            (vec!["аб".into(), String::new(), "в".into()], (2, 0))
+        );
+    }
+
+    #[test]
+    fn message_markdown_keeps_full_links_and_clips_fenced_code() {
+        let t = crate::theme::by_name("catppuccin");
+        let address = "https://example.org/complete";
+        let source = format!("> **word** [label]({address})\n```\n日本語です\n```");
+        let (raw, raw_code) = message_lines(t, &source, 5, false);
+        assert!(!raw_code);
+        assert_eq!(
+            raw.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            source
+        );
+        let (lines, code_last) = message_lines(t, &source, 5, true);
+        assert!(code_last);
+        assert_eq!(lines[0].to_string(), format!("│ word label <{address}>"));
+        assert!(
+            lines[0].spans[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert_eq!(lines[1].to_string(), "日本…");
+        assert_eq!(lines[1].width(), 5);
+
+        use ratatui::{Terminal, backend::TestBackend};
+        let Ok(mut terminal) = Terminal::new(TestBackend::new(10, 12));
+        assert!(
+            terminal
+                .draw(|f| {
+                    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), f.area());
+                })
+                .is_ok()
+        );
+        let buffer = terminal.backend().buffer();
+        let shown: String = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .chars()
+            .filter(|ch| *ch != ' ')
+            .collect();
+        assert!(shown.contains(&format!("<{address}>")), "{shown}");
     }
 
     #[test]

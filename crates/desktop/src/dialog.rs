@@ -1225,6 +1225,9 @@ impl Chat {
                                 }
                             });
                         ui.end_row();
+                        ui.label("");
+                        ui.checkbox(&mut s.show_formatting, "Show formatting");
+                        ui.end_row();
                         ui.label("New messages");
                         ui.checkbox(&mut s.sound, "Play the system sound");
                         ui.end_row();

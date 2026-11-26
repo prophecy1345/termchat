@@ -91,12 +91,29 @@ fun Field(
     // Text put in from outside (an edit, a clear) gets the cursor at its end.
     var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
     if (field.text != value) field = TextFieldValue(value, TextRange(value.length))
-    BasicTextField(
-        value = field,
-        onValueChange = {
+    Field(
+        field,
+        {
             field = it
             if (it.text != value) onChange(it.text)
         },
+        hint, modifier, secret, singleLine, maxLines,
+    )
+}
+
+@Composable
+internal fun Field(
+    value: TextFieldValue,
+    onChange: (TextFieldValue) -> Unit,
+    hint: String,
+    modifier: Modifier = Modifier,
+    secret: Boolean = false,
+    singleLine: Boolean = true,
+    maxLines: Int = 8,
+) {
+    BasicTextField(
+        value = value,
+        onValueChange = onChange,
         singleLine = singleLine,
         maxLines = if (singleLine) 1 else maxLines,
         textStyle = Tc.mono,
@@ -109,7 +126,7 @@ fun Field(
         modifier = modifier.border(1.dp, Tc.line, corner).padding(horizontal = 14.dp, vertical = 13.dp),
         decorationBox = { inner ->
             Box(contentAlignment = Alignment.CenterStart) {
-                if (value.isEmpty()) Text(hint, style = Tc.mono.copy(color = Tc.dim))
+                if (value.text.isEmpty()) Text(hint, style = Tc.mono.copy(color = Tc.dim))
                 inner()
             }
         },
