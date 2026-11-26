@@ -52,3 +52,9 @@ name = "picture"
 path = "fuzz_targets/picture.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "markdown"
+path = "fuzz_targets/markdown.rs"
+test = false
+doc = false

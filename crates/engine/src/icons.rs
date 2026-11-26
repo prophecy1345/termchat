@@ -25,10 +25,18 @@ pub enum Icon {
     Unfolded,
     /// A muted chat or group: a bell, struck through.
     Muted,
+    Bold,
+    Italic,
+    Strike,
+    Code,
+    CodeBlock,
+    Link,
+    Quote,
+    List,
 }
 
 /// All of them, in the order `ICONS` lists their names.
-pub const ALL: [Icon; 16] = [
+pub const ALL: [Icon; 24] = [
     Icon::Pin,
     Icon::Document,
     Icon::Warning,
@@ -45,6 +53,14 @@ pub const ALL: [Icon; 16] = [
     Icon::Folded,
     Icon::Unfolded,
     Icon::Muted,
+    Icon::Bold,
+    Icon::Italic,
+    Icon::Strike,
+    Icon::Code,
+    Icon::CodeBlock,
+    Icon::Link,
+    Icon::Quote,
+    Icon::List,
 ];
 
 /// The side of the square every icon is centred in.
@@ -69,12 +85,87 @@ impl Icon {
             Icon::Folded => "folded",
             Icon::Unfolded => "unfolded",
             Icon::Muted => "muted",
+            Icon::Bold => "bold",
+            Icon::Italic => "italic",
+            Icon::Strike => "strike",
+            Icon::Code => "code",
+            Icon::CodeBlock => "code_block",
+            Icon::Link => "link",
+            Icon::Quote => "quote",
+            Icon::List => "list",
         }
     }
 
     /// `1` is a lit pixel: one-pixel lines, at most `SIDE`×`SIDE`.
     fn rows(self) -> &'static [&'static str] {
         match self {
+            Icon::Bold => &[
+                "11111.", //
+                "11...1", //
+                "11...1", //
+                "11111.", //
+                "11...1", //
+                "11...1", //
+                "11111.", //
+            ],
+            Icon::Italic => &[
+                "..11111", //
+                "....1..", //
+                "...1...", //
+                "...1...", //
+                "..1....", //
+                ".1.....", //
+                "11111..", //
+            ],
+            Icon::Strike => &[
+                "..1111...", //
+                ".1....1..", //
+                ".1.......", //
+                "111111111", //
+                "......1..", //
+                ".1....1..", //
+                "..1111...", //
+            ],
+            Icon::Code => &[
+                "..1...1..", //
+                ".1.....1.", //
+                "1.......1", //
+                ".1.....1.", //
+                "..1...1..", //
+            ],
+            Icon::CodeBlock => &[
+                "11111111111", //
+                "1.........1", //
+                "1..1...1..1", //
+                "1.1.....1.1", //
+                "1..1...1..1", //
+                "1.........1", //
+                "11111111111", //
+            ],
+            Icon::Link => &[
+                ".....111.", //
+                "....1...1", //
+                "...1....1", //
+                "..1..1.1.", //
+                ".1.1..1..", //
+                "1....1...", //
+                "1...1....", //
+                ".111.....", //
+            ],
+            Icon::Quote => &[
+                "..1....1.", //
+                ".1....1..", //
+                "111..111.", //
+                "111..111.", //
+                ".1....1..", //
+            ],
+            Icon::List => &[
+                "1..111111", //
+                ".........", //
+                "1..111111", //
+                ".........", //
+                "1..111111", //
+            ],
             Icon::Pin => &[
                 "...11111...", //
                 "....1.1....", //

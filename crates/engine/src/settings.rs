@@ -18,6 +18,8 @@ pub struct Settings {
     pub mouse: bool,
     /// TUI: contact list width, its edge included.
     pub sidebar: u16,
+    /// Render the supported Markdown syntax in chat history (ADR-048).
+    pub show_formatting: bool,
     /// A system sound for new messages (ADR-008).
     pub sound: bool,
     /// A system notification for new messages, without name or text.
@@ -41,6 +43,7 @@ impl Default for Settings {
             theme: themes::THEMES[0].0.into(),
             mouse: true,
             sidebar: 28,
+            show_formatting: true,
             sound: true,
             notify: false,
             desktop_theme: "termchat".into(),
@@ -129,10 +132,13 @@ mod tests {
         assert_eq!(Settings::load(&path), Settings::default());
         let s = Settings {
             theme: "nord".into(),
+            show_formatting: false,
             ..Settings::default()
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
+        std::fs::write(&path, r#"{"theme":"nord"}"#).unwrap();
+        assert!(Settings::load(&path).show_formatting);
         std::fs::write(&path, b"{oops").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
         let _ = std::fs::remove_dir_all(&dir);

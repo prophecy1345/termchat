@@ -5,6 +5,7 @@
 pub mod data;
 pub mod engine;
 pub mod icons;
+pub mod markdown;
 pub mod notify;
 pub mod password;
 pub mod picture;

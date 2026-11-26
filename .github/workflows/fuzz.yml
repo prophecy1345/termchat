@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [envelope, inner, client_frame, server_frame, invite, group, picture, alert]
+        target: [envelope, inner, client_frame, server_frame, invite, group, picture, alert, markdown]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: rustup toolchain install nightly --profile minimal
