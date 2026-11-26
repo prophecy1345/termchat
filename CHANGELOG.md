@@ -3,6 +3,12 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.37.2
+
+- Desktop: a note on the status line, such as an error, goes after 6
+  seconds and when you open another chat, instead of staying until
+  something else replaced it.
+
 ## 0.37.1
 
 - A linked device no longer refuses to write to a contact who updated

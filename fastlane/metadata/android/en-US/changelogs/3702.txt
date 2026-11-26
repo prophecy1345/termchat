@@ -1,0 +1,1 @@
+Desktop fix only: status notes no longer stay on screen.
