@@ -3,6 +3,15 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.37.1
+
+- A linked device no longer refuses to write to a contact who updated
+  after it was linked ("their app knows no second devices yet"). Your
+  main device now passes a contact's newer version to your other
+  devices, and once after updating catches up the ones already behind
+  (ADR-028, amendment of 2026-11-26). Update the main device; the
+  contact need not.
+
 ## 0.37.0
 
 - Mentions in groups: write @ and someone's nickname to reach them even
