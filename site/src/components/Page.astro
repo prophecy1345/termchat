@@ -1,6 +1,6 @@
 ---
 import "../styles/site.css";
-import { REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
+import { REDDIT, REPO, SPONSOR, commands, texts, type Lang } from "../i18n";
 import Cmd from "./Cmd.astro";
 import Head from "./Head.astro";
 import Footer from "./Footer.astro";
@@ -33,7 +33,7 @@ const ld = {
   isAccessibleForFree: true,
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   downloadUrl: `${REPO}/releases/latest`,
-  sameAs: [REPO],
+  sameAs: [REPO, REDDIT],
   inLanguage: t.lang,
 };
 ---

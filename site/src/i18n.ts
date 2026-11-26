@@ -3,6 +3,7 @@
 
 export const REPO = "https://github.com/prophecy1345/termchat";
 export const SPONSOR = "https://github.com/sponsors/prophecy1345";
+export const REDDIT = "https://www.reddit.com/r/termchat_app/";
 const RAW = "https://raw.githubusercontent.com/prophecy1345/termchat/main";
 
 export const commands = {

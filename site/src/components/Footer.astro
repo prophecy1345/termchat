@@ -1,6 +1,6 @@
 ---
 // The same footer on every page, links grouped by what they are for.
-import { REPO, SPONSOR, texts, type Lang } from "../i18n";
+import { REDDIT, REPO, SPONSOR, texts, type Lang } from "../i18n";
 
 interface Props {
   lang: Lang;
@@ -34,6 +34,7 @@ const groups: [string, [string, string][]][] = [
   [g.project, [
     [REPO, "GitHub"],
     [`${REPO}/discussions`, t.footer.discussions],
+    [REDDIT, "Reddit"],
     [url(`${p}/docs/`), t.nav.docs],
     [url(`${p}/docs/relay/`), t.relayLink],
     [blob("LICENSE"), t.footer.licence],
