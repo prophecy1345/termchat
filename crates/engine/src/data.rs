@@ -138,6 +138,9 @@ pub struct Group {
     /// As for a chat: quiet until then, `u64::MAX` for always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted_until: Option<u64>,
+    /// As for a chat: a local icon in place of the letter, never sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub roster: Option<Roster>,
     pub relay_url: String,
     pub onion_url: Option<String>,
@@ -447,6 +450,9 @@ pub struct Contact {
     pub notes: bool,
     /// Local name; never sent anywhere.
     pub petname: Option<String>,
+    /// Local icon in place of the letter (`contact_icons`); never sent anywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// Safety number compared out of band.
     pub verified: bool,
     /// Added from their invite; our `ContactRequest` is not sent yet.

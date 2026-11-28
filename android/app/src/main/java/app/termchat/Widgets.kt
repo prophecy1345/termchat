@@ -45,6 +45,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import app.termchat.engine.icons
+import app.termchat.engine.contactIcons
+import app.termchat.engine.ContactIconDrawing
+import app.termchat.engine.Place
+import androidx.compose.ui.graphics.StrokeJoin
 
 val corner = RoundedCornerShape(6.dp)
 
@@ -64,9 +68,15 @@ fun NoLearning(content: @Composable () -> Unit) = InterceptPlatformTextInput(
     content = content,
 )
 
-/** Square initials, like the reference's avatars. */
+/** Square initials, like the reference's avatars, or the icon chosen for the chat. */
 @Composable
-fun Avatar(name: String, size: Dp = 42.dp) {
+fun Avatar(name: String, size: Dp = 42.dp, icon: String? = null) {
+    if (icon != null && icon in CONTACT_ICONS) {
+        Box(Modifier.size(size).background(Tc.surface, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) {
+            ContactGlyph(icon, Tc.text, size * 0.45f)
+        }
+        return
+    }
     // Only the name: after "·" comes the start of the fingerprint (ADR-007).
     val initials = name.substringBefore('·').split(' ').filter { it.isNotBlank() }.take(2)
         .joinToString("") { it.first().uppercase() }.ifEmpty { "?" }
@@ -211,6 +221,75 @@ internal fun PixelIcon(name: String, color: Color, size: Dp = 14.dp, modifier: M
             drawRect(color, Offset(off + p[2 * k].toInt() * px, off + p[2 * k + 1].toInt() * px), Size(px, px))
         }
     }
+}
+
+/** Contact icons (engine contact_icons.rs): our own line drawings on a 24×24 grid. */
+internal val CONTACT_ICONS: Map<String, ContactIconDrawing> = contactIcons().associateBy { it.name }
+
+/** Contact icon `name` in `color`, stroked with round caps. */
+@Composable
+internal fun ContactGlyph(name: String, color: Color, size: Dp) {
+    val d = CONTACT_ICONS[name] ?: return
+    Canvas(Modifier.size(size)) {
+        val k = this.size.width / 24f
+        val stroke = Stroke(width = 1.75f * k, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        d.lines.forEach { l ->
+            val path = Path()
+            for (i in 0 until l.size / 2) {
+                if (i == 0) path.moveTo(l[0] * k, l[1] * k) else path.lineTo(l[2 * i] * k, l[2 * i + 1] * k)
+            }
+            drawPath(path, color, style = stroke)
+        }
+        for (i in 0 until d.dots.size / 2) drawCircle(color, 1.1f * k, Offset(d.dots[2 * i] * k, d.dots[2 * i + 1] * k))
+    }
+}
+
+/** The local icon of a chat or group, in place of its letter: only on this device. */
+@Composable
+internal fun IconPicker(m: Model) {
+    val a = m.account ?: return
+    val place = m.picking ?: return
+    val now = when (place) {
+        is Place.Chat -> a.contacts().firstOrNull { it.index == place.index }?.icon
+        is Place.Group -> a.groups().firstOrNull { it.index == place.index }?.icon
+    }
+    val pick = { icon: String? ->
+        runCatching {
+            when (place) {
+                is Place.Chat -> a.setIcon(place.index, icon)
+                is Place.Group -> a.setGroupIcon(place.index, icon)
+            }
+        }.onFailure { m.note = it.message ?: "$it" }
+        m.picking = null
+        m.changed()
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { m.picking = null },
+        containerColor = Tc.surface,
+        shape = corner,
+        title = { Text("Icon", style = Tc.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Only on this device: they never see it.", style = Tc.small)
+                CONTACT_ICONS.keys.chunked(5).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { name ->
+                            Box(
+                                Modifier.size(44.dp)
+                                    .background(Tc.bg, RoundedCornerShape(4.dp))
+                                    .border(1.dp, if (name == now) Tc.lime else Tc.line, RoundedCornerShape(4.dp))
+                                    .semantics { contentDescription = name }
+                                    .clickable { pick(name) },
+                                contentAlignment = Alignment.Center,
+                            ) { ContactGlyph(name, Tc.text, 20.dp) }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Flat("Letter", color = if (now == null) Tc.lime else Tc.text) { pick(null) } },
+        dismissButton = { Flat("Cancel", color = Tc.dim) { m.picking = null } },
+    )
 }
 
 /** An icon that is a button, named for TalkBack. */

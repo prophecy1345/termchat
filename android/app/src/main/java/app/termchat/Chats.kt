@@ -104,7 +104,7 @@ fun Chats(m: Model) {
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Avatar(c.name)
+                        Avatar(c.name, icon = c.icon)
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 if (c.pinned) PixelIcon("pin", Tc.lime)
@@ -167,6 +167,7 @@ fun Chats(m: Model) {
                     Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp)) {
                         DropdownMenu(held == "g${g.index}", { held = null }) {
                             KeepOpen("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
+                            item("Icon") { m.picking = app.termchat.engine.Place.Group(g.index) }
                             if (!g.left) item("Leave") { leaving = g.index }
                         }
                     }
@@ -176,7 +177,7 @@ fun Chats(m: Model) {
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Avatar("# ${g.name}")
+                        Avatar("# ${g.name}", icon = g.icon)
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(g.name, style = Tc.mono.copy(color = if (g.left) Tc.dim else Tc.text))
@@ -279,7 +280,7 @@ internal fun ShareTo(m: Model) {
                         }.onSuccess { done(if (share.bytes != null) "Sent ${share.name}" else "", Screen.Chat(c.index)) }
                             .onFailure { done(it.message ?: "$it", Screen.Chats) }
                     }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(c.name, 32.dp)
+                        Avatar(c.name, 32.dp, c.icon)
                         Text(c.name, style = Tc.mono, modifier = Modifier.padding(start = 10.dp))
                     }
                 }
@@ -290,7 +291,7 @@ internal fun ShareTo(m: Model) {
                         }.onSuccess { done(if (share.bytes != null) "Sent ${share.name}" else "", Screen.Group(g.index)) }
                             .onFailure { done(it.message ?: "$it", Screen.Chats) }
                     }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar("# ${g.name}", 32.dp)
+                        Avatar("# ${g.name}", 32.dp, g.icon)
                         Text(g.name, style = Tc.mono, modifier = Modifier.padding(start = 10.dp))
                     }
                 }

@@ -2,6 +2,7 @@
 //! reactions, glowing a little like an arcade screen.
 
 use eframe::egui::{self, Color32, Stroke};
+use termchat_engine::contact_icons::{self, ContactIcon};
 use termchat_engine::icons::{self, Icon};
 
 use crate::chat::Pal;
@@ -33,6 +34,30 @@ pub(crate) fn paint(
         mesh.add_colored_rect(cell(x, y, 0.0), colour);
     }
     painter.add(mesh);
+}
+
+/// A contact icon (engine `contact_icons`) filling the square `rect`.
+pub(crate) fn contact_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    icon: ContactIcon,
+    colour: Color32,
+) {
+    let scale = rect.width() / contact_icons::GRID;
+    let at = |(x, y): (f32, f32)| rect.min + egui::vec2(x, y) * scale;
+    let width = contact_icons::STROKE * scale;
+    let d = contact_icons::drawing(icon);
+    for line in &d.lines {
+        let points: Vec<_> = line.iter().copied().map(at).collect();
+        // Round caps: egui ends a line square.
+        for end in [points.first(), points.last()].into_iter().flatten() {
+            painter.circle_filled(*end, width / 2.0, colour);
+        }
+        painter.add(egui::Shape::line(points, Stroke::new(width, colour)));
+    }
+    for &dot in &d.dots {
+        painter.circle_filled(at(dot), contact_icons::DOT * scale, colour);
+    }
 }
 
 /// An icon in the flow, `px` points per pixel.

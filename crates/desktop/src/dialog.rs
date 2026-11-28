@@ -50,6 +50,8 @@ pub enum Dialog {
     },
     Verify,
     Rename(String),
+    /// The local icon of the open chat or group, in place of its letter.
+    Icon,
     Delete,
     /// Delete our message `m` of the open chat for both sides (ADR-025)?
     DeleteMessage(usize),
@@ -482,6 +484,41 @@ impl Chat {
                 }
                 stay
             }
+            Dialog::Icon => {
+                let group = self.open_group();
+                let now = match (group, open) {
+                    (Some(g), _) => self.engine.data.groups[g].icon.clone(),
+                    (None, Some(i)) => self.engine.data.contacts[i].icon.clone(),
+                    (None, None) => return false,
+                };
+                ui.heading("Icon");
+                ui.label("Only on this device: they never see it.");
+                ui.add_space(8.0);
+                let mut chosen = None;
+                ui.horizontal_wrapped(|ui| {
+                    if ui.selectable_label(now.is_none(), "Letter").clicked() {
+                        chosen = Some(None);
+                    }
+                    for icon in termchat_engine::contact_icons::ALL {
+                        if icon_tile(ui, p, icon, now.as_deref() == Some(icon.name())).clicked() {
+                            chosen = Some(Some(icon.name().to_string()));
+                        }
+                    }
+                });
+                if let Some(icon) = chosen {
+                    match (group, open) {
+                        (Some(g), _) => {
+                            self.engine.data.groups[g].icon = icon;
+                            self.engine.persist();
+                        }
+                        (None, Some(i)) => self.engine.edit(i, |c| c.icon = icon),
+                        (None, None) => {}
+                    }
+                    return false;
+                }
+                ui.add_space(8.0);
+                !ui.button("Close").clicked()
+            }
             Dialog::Export => {
                 let export = match self.open_group() {
                     Some(g) => self.engine.export_group(g),
@@ -633,7 +670,13 @@ impl Chat {
                 let mut change = None;
                 for m in group.members() {
                     row(ui, p, |ui| {
-                        avatar_letter(ui, p, &m.nickname);
+                        let icon = self
+                            .engine
+                            .data
+                            .contacts
+                            .iter()
+                            .find(|c| c.key == m.ed25519);
+                        avatar_letter(ui, p, &m.nickname, icon.and_then(|c| c.icon.as_deref()));
                         ui.vertical(|ui| {
                             let mut name = termchat_engine::clean(&m.nickname);
                             if m.ed25519 == me {
@@ -726,7 +769,7 @@ impl Chat {
                         || group.invited.iter().any(|(k, _)| *k == c.key);
                     let name = self.engine.name(c);
                     row(ui, p, |ui| {
-                        avatar_letter(ui, p, &name);
+                        avatar_letter(ui, p, &name, c.icon.as_deref());
                         ui.label(RichText::new(&name).monospace());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if invited {
@@ -1817,8 +1860,41 @@ fn row(ui: &mut egui::Ui, p: &Pal, add: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(4.0);
 }
 
-/// A square with a name's first letter, as in the contact list.
-fn avatar_letter(ui: &mut egui::Ui, p: &Pal, name: &str) {
+/// One icon to pick: framed when chosen or under the pointer.
+fn icon_tile(
+    ui: &mut egui::Ui,
+    p: &Pal,
+    icon: termchat_engine::contact_icons::ContactIcon,
+    chosen: bool,
+) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, icon.name()));
+    let hot = r.hovered() || r.has_focus();
+    ui.painter().rect_filled(rect, 4, p.surface);
+    if chosen || hot {
+        let colour = if chosen { p.accent } else { p.text };
+        ui.painter().rect_stroke(
+            rect,
+            4,
+            egui::Stroke::new(1.0, colour),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let glyph = egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0));
+    crate::sprites::contact_icon(ui.painter(), glyph, icon, p.text);
+    r.on_hover_text(icon.name())
+}
+
+/// A square with a name's first letter, as in the contact list, or its icon.
+fn avatar_letter(ui: &mut egui::Ui, p: &Pal, name: &str, icon: Option<&str>) {
+    if let Some(icon) = icon.and_then(termchat_engine::contact_icons::ContactIcon::from_name) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 4, p.surface);
+        let glyph = egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0));
+        crate::sprites::contact_icon(ui.painter(), glyph, icon, p.text);
+        ui.add_space(4.0);
+        return;
+    }
     let letter: String = name
         .chars()
         .next()

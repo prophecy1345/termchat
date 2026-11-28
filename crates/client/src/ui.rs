@@ -500,12 +500,14 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             } else {
                 ""
             };
+            let icon = ascii_icon(c.icon.as_deref());
             let label = fit(
                 &name(m, c),
-                width.saturating_sub(5 + quiet.len() + badge.len()),
+                width.saturating_sub(5 + icon.len() + quiet.len() + badge.len()),
             );
-            let pad =
-                width.saturating_sub(4 + Span::raw(&label).width() + quiet.len() + badge.len());
+            let pad = width.saturating_sub(
+                4 + icon.len() + Span::raw(&label).width() + quiet.len() + badge.len(),
+            );
             let style = match (i == m.selected, c.archived) {
                 (true, _) => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
                 (false, true) => Style::new().fg(t.overlay0),
@@ -513,6 +515,7 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
             };
             ListItem::new(Line::from(vec![
                 Span::styled(format!(" {mark} "), Style::new().fg(colour)),
+                Span::styled(icon, Style::new().fg(t.overlay1)),
                 Span::styled(label, style),
                 Span::raw(" ".repeat(pad)),
                 Span::styled(quiet, Style::new().fg(t.overlay0)),
@@ -541,17 +544,20 @@ fn sidebar(f: &mut Frame, t: &Palette, h: &mut Hits, m: &Main, area: Rect) {
         } else {
             ""
         };
+        let icon = ascii_icon(g.icon.as_deref());
         let label = fit(
             &clean(g.name()),
-            width.saturating_sub(5 + quiet.len() + badge.len()),
+            width.saturating_sub(5 + icon.len() + quiet.len() + badge.len()),
         );
-        let pad = width.saturating_sub(4 + Span::raw(&label).width() + quiet.len() + badge.len());
+        let pad = width
+            .saturating_sub(4 + icon.len() + Span::raw(&label).width() + quiet.len() + badge.len());
         let style = match n + gi == m.selected {
             true => Style::new().fg(t.text).add_modifier(Modifier::BOLD),
             false => Style::new().fg(t.subtext0),
         };
         ListItem::new(Line::from(vec![
             Span::styled(" # ", Style::new().fg(colour)),
+            Span::styled(icon, Style::new().fg(t.overlay1)),
             Span::styled(label, style),
             Span::raw(" ".repeat(pad)),
             Span::styled(quiet, Style::new().fg(t.overlay0)),
@@ -2312,4 +2318,11 @@ mod qr_tests {
             }
         }
     }
+}
+
+/// A chat's local icon as the terminal shows it: two ASCII characters and a space.
+fn ascii_icon(icon: Option<&str>) -> String {
+    icon.and_then(termchat_engine::contact_icons::ContactIcon::from_name)
+        .map(|i| format!("{} ", i.ascii()))
+        .unwrap_or_default()
 }

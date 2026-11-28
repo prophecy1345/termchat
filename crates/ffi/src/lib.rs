@@ -154,6 +154,8 @@ pub struct ContactView {
     pub mute: String,
     /// At the top of the list.
     pub pinned: bool,
+    /// The local icon's name (`contact_icons`); `None`: the letter.
+    pub icon: Option<String>,
     /// Above the others, under "Archived".
     pub archived: bool,
     /// Its link has not reached the relay yet: its messages wait (ADR-038).
@@ -279,6 +281,8 @@ pub struct GroupView {
     pub last_at: u64,
     /// As for a chat: "off", "always" or the time left.
     pub mute: String,
+    /// As for a chat: the local icon's name, `None` for the letter.
+    pub icon: Option<String>,
     /// Its link has not reached the relay yet (ADR-038).
     pub connecting: bool,
 }
@@ -361,6 +365,40 @@ pub fn icons() -> Vec<IconSprite> {
                 .collect(),
         })
         .collect()
+}
+
+/// A contact icon (engine `contact_icons`) on a 24×24 grid: polylines as
+/// x, y pairs to stroke, and dots to fill. The app colours it.
+#[derive(uniffi::Record)]
+pub struct ContactIconDrawing {
+    pub name: String,
+    pub lines: Vec<Vec<f32>>,
+    pub dots: Vec<f32>,
+}
+
+#[uniffi::export]
+pub fn contact_icons() -> Vec<ContactIconDrawing> {
+    termchat_engine::contact_icons::ALL
+        .iter()
+        .map(|&i| {
+            let d = termchat_engine::contact_icons::drawing(i);
+            ContactIconDrawing {
+                name: i.name().into(),
+                lines: d
+                    .lines
+                    .iter()
+                    .map(|l| l.iter().flat_map(|&(x, y)| [x, y]).collect())
+                    .collect(),
+                dots: d.dots.iter().flat_map(|&(x, y)| [x, y]).collect(),
+            }
+        })
+        .collect()
+}
+
+/// The name if this version draws it; anything else shows the letter.
+fn known_icon(name: Option<&str>) -> Option<String> {
+    name.and_then(termchat_engine::contact_icons::ContactIcon::from_name)
+        .map(|i| i.name().to_string())
 }
 
 #[uniffi::export]
@@ -683,6 +721,7 @@ fn view(e: &Engine, i: usize, c: &Contact) -> ContactView {
         rich: e.rich(i),
         mute: engine::mute_label(c.muted_until),
         pinned: c.pinned,
+        icon: known_icon(c.icon.as_deref()),
         archived: c.archived,
         connecting: e.chat_connecting(&c.key),
     }
@@ -905,6 +944,7 @@ impl Account {
                 expires_in: x.timer(),
                 last_at: x.messages.last().map_or(0, |m| m.at),
                 mute: engine::mute_label(x.muted_until),
+                icon: known_icon(x.icon.as_deref()),
                 connecting: e.group_connecting(g),
             })
             .collect()
@@ -1430,6 +1470,20 @@ impl Account {
     /// The list is sorted by the app; the order of indices stays.
     pub fn set_pinned(&self, index: u32, on: bool) -> Result<()> {
         self.with(index, |e, i| e.edit(i, |c| c.pinned = on))
+    }
+
+    /// A local icon in place of the letter; `None` or an unknown name: the letter.
+    pub fn set_icon(&self, index: u32, icon: Option<String>) -> Result<()> {
+        let icon = known_icon(icon.as_deref());
+        self.with(index, |e, i| e.edit(i, |c| c.icon = icon))
+    }
+
+    pub fn set_group_icon(&self, group: u32, icon: Option<String>) -> Result<()> {
+        let icon = known_icon(icon.as_deref());
+        self.with_group(group, |e, g| {
+            e.data.groups[g].icon = icon;
+            e.persist();
+        })
     }
 
     pub fn set_archived(&self, index: u32, on: bool) -> Result<()> {

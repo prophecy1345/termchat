@@ -97,6 +97,7 @@ private fun Root(m: Model) {
     }
     // Shared from another app: pick where it goes once the identity is open.
     if (m.share != null && m.account != null && m.screen != Screen.Start) ShareTo(m)
+    if (m.picking != null && m.account != null) IconPicker(m)
     // A note belongs to the screen it was said on: leaving it ends the note,
     // so one from a chat does not linger over the list.
     var noteScreen by remember { mutableStateOf(m.screen) }

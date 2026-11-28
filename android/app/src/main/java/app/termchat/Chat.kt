@@ -467,6 +467,7 @@ internal fun ContactToggles(m: Model, c: ContactView, item: @Composable (String,
     val a = m.account ?: return
     // The menu stays open: each tap picks the next span (owner, 2026-11-23).
     KeepOpen("Mute: ${c.mute}") { runCatching { a.nextMute(c.index) }; m.changed() }
+    item("Icon") { m.picking = Place.Chat(c.index) }
     item(if (c.pinned) "Unpin" else "Pin") { runCatching { a.setPinned(c.index, !c.pinned) }; m.changed() }
     item(if (c.archived) "Unarchive" else "Archive") { runCatching { a.setArchived(c.index, !c.archived) }; m.changed() }
     item(if (c.blocked) "Unblock" else "Block") { runCatching { a.setBlocked(c.index, !c.blocked) }; m.changed() }
@@ -480,6 +481,7 @@ internal fun NotesMenu(m: Model, c: ContactView, item: @Composable (String, () -
     item("Export") { ask("export") }
     item("Disappearing: ${span(c.expiresIn)}") { runCatching { a.nextTimer(c.index) }; m.changed() }
     item("Clear history") { ask("clear") }
+    item("Icon") { m.picking = Place.Chat(c.index) }
 }
 
 @Composable
@@ -488,7 +490,7 @@ private fun Header(m: Model, c: ContactView, ask: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         IconTap("back", "Back to chats") { m.screen = Screen.Chats }
-        Avatar(c.name)
+        Avatar(c.name, icon = c.icon)
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Text(c.name, style = Tc.name)
             val (state, ok) = when {

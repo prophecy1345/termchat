@@ -259,7 +259,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         IconTap("back", "Back to chats") { m.screen = Screen.Chats }
-        Avatar("# ${g.name}")
+        Avatar("# ${g.name}", icon = g.icon)
         Column(Modifier.weight(1f).padding(start = 12.dp).clickable { ask("members") }) {
             Text(g.name, style = Tc.name)
             Text(groupState(g) + if (g.mainAdmin) " · MAIN ADMIN" else if (g.admin) " · ADMIN" else "", style = Tc.caps.copy(color = if (g.left) Tc.dim else Tc.lime))
@@ -283,6 +283,7 @@ private fun GroupHeader(m: Model, g: GroupView, ask: (String) -> Unit) {
                     }
                 }
                 KeepOpen("Mute: ${g.mute}") { runCatching { a.nextGroupMute(g.index) }; m.changed() }
+                item("Icon") { m.picking = app.termchat.engine.Place.Group(g.index) }
                 if (!g.left) item("Leave") { ask("leave") }
             }
         }
@@ -300,6 +301,7 @@ fun groupState(g: GroupView): String = when {
 private fun Members(m: Model, g: GroupView, ask: (String) -> Unit, close: () -> Unit) {
     val a = m.account ?: return
     val members = runCatching { a.groupMembers(g.index) }.getOrDefault(emptyList())
+    val contacts = a.contacts()
     AlertDialog(
         onDismissRequest = close,
         containerColor = Tc.surface,
@@ -315,7 +317,7 @@ private fun Members(m: Model, g: GroupView, ask: (String) -> Unit, close: () -> 
                 members.forEach { p ->
                     var actions by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().border(1.dp, Tc.line, corner).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(p.name, 32.dp)
+                        Avatar(p.name, 32.dp, contacts.firstOrNull { it.fingerprint == p.fingerprint }?.icon)
                         Column(Modifier.weight(1f).padding(start = 10.dp)) {
                             Text(p.name + if (p.me) " (you)" else "", style = Tc.mono)
                             Text(p.fingerprint.take(11) + if (p.mainAdmin) " · MAIN ADMIN" else if (p.admin) " · ADMIN" else "", style = Tc.small)
@@ -351,6 +353,7 @@ private fun Members(m: Model, g: GroupView, ask: (String) -> Unit, close: () -> 
 @Composable
 private fun InviteToGroup(m: Model, g: GroupView, close: () -> Unit) {
     val a = m.account ?: return
+    val contacts = a.contacts()
     @Suppress("UNUSED_EXPRESSION") m.version
     var error by remember { mutableStateOf("") }
     val rows = runCatching { a.invitable(g.index) }.getOrDefault(emptyList())
@@ -365,7 +368,7 @@ private fun InviteToGroup(m: Model, g: GroupView, close: () -> Unit) {
                 if (rows.isEmpty()) Text("No contact to invite.", style = Tc.mono.copy(color = Tc.dim))
                 rows.forEach { c ->
                     Row(Modifier.fillMaxWidth().border(1.dp, Tc.line, corner).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(c.name, 32.dp)
+                        Avatar(c.name, 32.dp, contacts.firstOrNull { it.index == c.index }?.icon)
                         Text(c.name, style = Tc.mono, modifier = Modifier.weight(1f).padding(start = 10.dp))
                         if (c.invited) {
                             IconText("check", "Invited", Tc.small, Tc.lime, Modifier.padding(6.dp))

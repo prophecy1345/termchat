@@ -732,7 +732,7 @@ impl Chat {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    avatar(ui, p, &name, 32.0);
+                    avatar(ui, p, &name, c.icon.as_deref(), 32.0);
                     ui.vertical(|ui| {
                         let colour = if c.blocked || c.left || c.archived {
                             p.dim
@@ -787,7 +787,7 @@ impl Chat {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
-                    avatar(ui, p, &format!("# {name}"), 32.0);
+                    avatar(ui, p, &format!("# {name}"), group.icon.as_deref(), 32.0);
                     ui.vertical(|ui| {
                         let colour = if group.left { p.dim } else { p.text };
                         ui.horizontal(|ui| {
@@ -863,7 +863,7 @@ impl Chat {
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    avatar(ui, p, &format!("# {name}"), 40.0);
+                    avatar(ui, p, &format!("# {name}"), group.icon.as_deref(), 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&name).strong().size(16.0));
                         let (mut state, ok) = group_state(group);
@@ -891,6 +891,9 @@ impl Chat {
                         }
                         if ui.button("Members").clicked() {
                             next = Some(Dialog::Members);
+                        }
+                        if ui.button("Icon").clicked() {
+                            next = Some(Dialog::Icon);
                         }
                         if ui.button("Clear history").clicked() {
                             next = Some(Dialog::ClearHistory);
@@ -1199,7 +1202,7 @@ impl Chat {
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    avatar(ui, p, &name, 40.0);
+                    avatar(ui, p, &name, c.icon.as_deref(), 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&name).strong().size(16.0));
                         let (state, ok) = match self.engine.needs_invite(c) {
@@ -1706,6 +1709,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         _ if c.notes && pick(ui, "Search") => Menu::Search,
         _ if c.notes && pick(ui, "Export") => Menu::Open(Dialog::Export),
         _ if c.notes && pick(ui, "Clear history") => Menu::Open(Dialog::ClearHistory),
+        _ if c.notes && pick(ui, "Icon") => Menu::Open(Dialog::Icon),
         _ if c.notes => return None,
         _ if pick(ui, "Search") => Menu::Search,
         _ if pick(
@@ -1727,6 +1731,7 @@ fn chat_menu(ui: &mut egui::Ui, c: &Contact, request: bool) -> Option<Menu> {
         _ if pick(ui, "Rename") => {
             Menu::Open(Dialog::Rename(c.petname.clone().unwrap_or_default()))
         }
+        _ if pick(ui, "Icon") => Menu::Open(Dialog::Icon),
         _ if pick(
             ui,
             if c.no_history {
@@ -2112,7 +2117,16 @@ fn heading(ui: &mut egui::Ui, p: &Pal, title: &str, n: usize, folded: bool) -> b
 
 /// A square with initials, like the Android app; the "·fingerprint" a
 /// name may carry (ADR-007) is not part of them.
-fn avatar(ui: &mut egui::Ui, p: &Pal, name: &str, size: f32) {
+/// The chat's square: its local icon if one was chosen, else its initials.
+fn avatar(ui: &mut egui::Ui, p: &Pal, name: &str, icon: Option<&str>, size: f32) {
+    let icon = icon.and_then(termchat_engine::contact_icons::ContactIcon::from_name);
+    if let Some(icon) = icon {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 4, p.surface);
+        let glyph = egui::Rect::from_center_size(rect.center(), egui::vec2(size, size) * 0.45);
+        sprites::contact_icon(ui.painter(), glyph, icon, p.text);
+        return;
+    }
     let initials: String = name
         .split('·')
         .next()
@@ -2396,6 +2410,7 @@ mod tests {
         let dialogs = [
             (Dialog::Verify, "Safety number"),
             (Dialog::Rename(String::new()), "Rename"),
+            (Dialog::Icon, "Icon"),
             (Dialog::Delete, "Delete the contact"),
             (Dialog::DeleteMessage(1), "Delete the message"),
             (Dialog::Forward(0), "Forward to"),

@@ -2,6 +2,7 @@
 //! app data and its file, password rules (ADR-011). The TUI and the Android
 //! app are shells over this crate.
 
+pub mod contact_icons;
 pub mod data;
 pub mod engine;
 pub mod icons;

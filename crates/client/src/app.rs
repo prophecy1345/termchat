@@ -1244,6 +1244,12 @@ impl Main {
         if self.current().is_some() || self.group_index().is_some() {
             rows.push(('e', "export this chat to a text file".into()));
             rows.push(('w', "clear this chat's history here".into()));
+            let icon = match self.group_index() {
+                Some(g) => self.engine.data.groups[g].icon.clone(),
+                None => self.current().and_then(|c| c.icon.clone()),
+            };
+            let icon = icon.unwrap_or_else(|| "letter".into());
+            rows.push(('c', format!("icon: {icon} (next one)")));
             let waiting = self.later_list().len();
             rows.push(match waiting {
                 0 => ('u', "send later".into()),
@@ -1251,6 +1257,30 @@ impl Main {
             });
         }
         rows
+    }
+
+    /// The open chat's or group's local icon, the next one in turn; the
+    /// letter after the last.
+    fn next_icon(&mut self) {
+        let next = |now: Option<&str>| {
+            termchat_engine::contact_icons::ContactIcon::after(now).map(|i| i.name().to_string())
+        };
+        let icon = match (self.group_index(), self.current().is_some()) {
+            (Some(g), _) => {
+                let group = &mut self.engine.data.groups[g];
+                group.icon = next(group.icon.as_deref());
+                let icon = group.icon.clone();
+                self.engine.persist();
+                icon
+            }
+            (None, true) => {
+                let i = self.selected;
+                self.engine.edit(i, |c| c.icon = next(c.icon.as_deref()));
+                self.current().and_then(|c| c.icon.clone())
+            }
+            (None, false) => return,
+        };
+        self.status = format!("icon: {}", icon.as_deref().unwrap_or("letter"));
     }
 
     /// PLAN Q4: what waits to go later in the open chat or group.
@@ -1725,6 +1755,10 @@ impl Main {
                 }
                 Ok(Some('e')) => Some(Popup::Form(Form::new(Kind::Export))),
                 Ok(Some('w')) => Some(Popup::ClearHistory),
+                Ok(Some('c')) => {
+                    self.next_icon();
+                    None
+                }
                 Ok(Some('u')) => Some(Popup::Later(0)),
                 // Invite and add: the same as Ctrl+O and Ctrl+A.
                 Ok(Some(c)) => {

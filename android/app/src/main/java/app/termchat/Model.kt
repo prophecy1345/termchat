@@ -53,6 +53,8 @@ class Model(private val context: Context) : Listener {
     var note by mutableStateOf("")
     /** Text or a file shared from another app, waiting for the user to pick a chat. */
     var share by mutableStateOf<Share?>(null)
+    /** The chat or group whose local icon is being chosen. */
+    var picking by mutableStateOf<app.termchat.engine.Place?>(null)
     var notice by mutableStateOf<String?>(null)
     var wipeAnyway by mutableStateOf<String?>(null)
     var leaving by mutableStateOf(false)
