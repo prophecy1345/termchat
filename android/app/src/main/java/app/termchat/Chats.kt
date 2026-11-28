@@ -125,7 +125,7 @@ fun Chats(m: Model) {
                             Text(state, style = Tc.caps.copy(color = if (c.notes || (c.verified && !c.left && c.index !in invitedBy)) Tc.lime else Tc.warn))
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text(age(c.lastAt), style = Tc.small)
+                            if (c.lastAt > 0u) Text(age(c.lastAt), style = Tc.small)
                             if (c.unread > 0u) {
                                 Box(Modifier.padding(top = 4.dp).background(Tc.lime, CircleShape).padding(horizontal = 7.dp, vertical = 1.dp)) {
                                     Text("${c.unread}", style = Tc.small.copy(color = Tc.bg))

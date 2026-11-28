@@ -13,7 +13,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -270,17 +269,20 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
     // Tabs: the page grew too long to scroll (owner, 2026-11-28).
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf("Appearance", "Notifications", "Security", "About").forEachIndexed { i, name ->
-            val on = i == tab
-            Row(
-                Modifier.border(1.dp, if (on) Tc.lime else Tc.line, corner)
-                    .clickable { tab = i }.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(name, style = Tc.mono.copy(color = if (on) Tc.lime else Tc.text))
-                if (i == 2 && !a.backedUp()) PixelIcon("dot", Tc.lime, 10.dp)
+    // Two rows of two: four tabs in a row do not fit a phone in monospace.
+    listOf("Appearance", "Notifications", "Security", "About").withIndex().chunked(2).forEach { pair ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            pair.forEach { (i, name) ->
+                val on = i == tab
+                Row(
+                    Modifier.weight(1f).border(1.dp, if (on) Tc.lime else Tc.line, corner)
+                        .clickable { tab = i }.padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                ) {
+                    Text(name, style = Tc.mono.copy(color = if (on) Tc.lime else Tc.text), maxLines = 1)
+                    if (i == 2 && !a.backedUp()) PixelIcon("dot", Tc.lime, 10.dp)
+                }
             }
         }
     }
