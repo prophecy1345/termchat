@@ -12,6 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -255,7 +258,33 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     }
 
     val allow = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> m.notifyOn(ok) }
-    Text("APPEARANCE", style = Tc.caps)
+    val activity = LocalContext.current as android.app.Activity
+    val startPush = {
+        UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
+            if (ok) { UnifiedPush.register(context); m.syncPush() }
+            else m.note = "Install a UnifiedPush distributor first, for example ntfy."
+        }
+    }
+    val allowThenPush = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) startPush() else m.note = "Without notifications a wake-up cannot show anything."
+    }
+    // Tabs: the page grew too long to scroll (owner, 2026-11-28).
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("Appearance", "Notifications", "Security", "About").forEachIndexed { i, name ->
+            val on = i == tab
+            Row(
+                Modifier.border(1.dp, if (on) Tc.lime else Tc.line, corner)
+                    .clickable { tab = i }.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(name, style = Tc.mono.copy(color = if (on) Tc.lime else Tc.text))
+                if (i == 2 && !a.backedUp()) PixelIcon("dot", Tc.lime, 10.dp)
+            }
+        }
+    }
+    if (tab == 0) {
     var showThemes by remember { mutableStateOf(false) }
     MenuRow("Colours: ${Tc.theme}", "The same themes as in the terminal") { showThemes = !showThemes }
     if (showThemes) {
@@ -280,8 +309,8 @@ fun Settings(m: Model) = Panel(m, "Settings") {
     MenuRow("Show formatting: ${if (m.showFormatting) "on" else "off"}", "Display Markdown in messages") {
         m.toggleFormatting()
     }
-    Line()
-    Text("NOTIFICATIONS", style = Tc.caps)
+    }
+    if (tab == 1) {
     MenuRow(
         "New messages: ${if (m.notify) "on" else "off"}",
         "\"termchat.app: New message\", with no name and no text",
@@ -311,16 +340,6 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         "Tap to change: 1, 5, 15 or 30 minutes. A longer time gives whoever " +
             "picks up the unlocked phone more time to read.",
     ) { m.nextLock() }
-    val activity = LocalContext.current as android.app.Activity
-    val startPush = {
-        UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
-            if (ok) { UnifiedPush.register(context); m.syncPush() }
-            else m.note = "Install a UnifiedPush distributor first, for example ntfy."
-        }
-    }
-    val allowThenPush = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) startPush() else m.note = "Without notifications a wake-up cannot show anything."
-    }
     MenuRow(
         "Wake-ups through UnifiedPush: ${if (m.push != null) "on" else "off"}",
         "Needs a distributor app such as ntfy, with battery optimisation off for it. " +
@@ -337,8 +356,8 @@ fun Settings(m: Model) = Panel(m, "Settings") {
             startPush()
         }
     }
-    Line()
-    Text("SECURITY", style = Tc.caps)
+    }
+    if (tab == 2) {
     MenuRow("Back up your identity", "Identity and contacts, no messages. Keep it off this phone.", dot = !a.backedUp()) { open("backup") }
     MenuRow("Change password") { open("password") }
     MenuRow("Duress password", "Typing it at unlock erases everything") { open("duress") }
@@ -361,10 +380,11 @@ fun Settings(m: Model) = Panel(m, "Settings") {
         "With Tor, chats connect over 30 s after unlock so the relay cannot tie them together. " +
             "On: the chat you open skips that wait, and the relay may see which chat you opened.",
     ) { a.setHurryOpen(!a.hurryOpen()); m.changed() }
-    Line()
-    Text("ABOUT", style = Tc.caps)
+    }
+    if (tab == 3) {
     MenuRow("What's new") { m.screen = Screen.News }
     MenuRow("termchat.app ${app.termchat.engine.version()}", "Your fingerprint ${a.fingerprint()}") {}
+    }
 
     if (result.isNotEmpty() && form == null) Text(result, style = Tc.small.copy(color = Tc.lime))
     val which = form ?: return@Panel

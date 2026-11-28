@@ -705,7 +705,7 @@ impl Chat {
                     }
                 }
                 if ui.button("Settings").clicked() {
-                    self.dialog = Some(Dialog::Settings);
+                    self.dialog = Some(Dialog::Settings(0));
                 }
                 ui.button("Lock")
                     .on_hover_text("Ask for the password again")
@@ -2416,7 +2416,8 @@ mod tests {
             (Dialog::Forward(0), "Forward to"),
             (Dialog::Export, "Export this chat"),
             (Dialog::Report("x".into()), "Report to the relay operator"),
-            (Dialog::Settings, "Settings"),
+            (Dialog::Settings(0), "Settings"),
+            (Dialog::Settings(3), "Wipe everything"),
             (Dialog::backup(), "Back up your identity"),
             (Dialog::add(), "Add a contact"),
             (

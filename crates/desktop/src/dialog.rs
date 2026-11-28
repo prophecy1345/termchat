@@ -61,7 +61,8 @@ pub enum Dialog {
     Export,
     /// The exact text that would be disclosed to the relay operator.
     Report(String),
-    Settings,
+    /// Settings, on tab `SETTINGS_TABS[n]`.
+    Settings(u8),
     Backup {
         path: String,
         password: Zeroizing<String>,
@@ -1246,178 +1247,204 @@ impl Chat {
                 }
                 stay
             }
-            Dialog::Settings => {
+            Dialog::Settings(tab) => {
                 ui.set_width(600.0);
                 ui.heading("Settings");
-                section(ui, p, "Appearance");
-                egui::Grid::new("settings")
-                    .num_columns(2)
-                    .spacing([24.0, 10.0])
-                    .show(ui, |ui| {
-                        ui.label("Theme");
-                        egui::ComboBox::from_id_salt("theme")
-                            .width(220.0)
-                            .selected_text(s.desktop_theme.as_str())
-                            .show_ui(ui, |ui| {
-                                for (name, _) in themes::THEMES {
-                                    ui.selectable_value(
-                                        &mut s.desktop_theme,
-                                        (*name).into(),
-                                        *name,
-                                    );
-                                }
-                            });
-                        ui.end_row();
-                        ui.label("");
-                        ui.checkbox(&mut s.show_formatting, "Show formatting");
-                        ui.end_row();
-                        ui.label("New messages");
-                        ui.checkbox(&mut s.sound, "Play the system sound");
-                        ui.end_row();
-                        if !cfg!(windows) {
-                            ui.label("");
-                            ui.checkbox(
-                                &mut s.notify,
-                                "Show a system notification: \"New message\", no name or text",
-                            );
-                            ui.end_row();
+                ui.add_space(8.0);
+                // Tabs: the page grew too long to scroll (owner, 2026-11-28).
+                ui.horizontal(|ui| {
+                    for (i, name) in (0u8..).zip(SETTINGS_TABS) {
+                        let name = match i == 3 && self.engine.needs_backup() {
+                            true => format!("{name} ●"),
+                            false => name.to_string(),
+                        };
+                        if ui.selectable_label(*tab == i, name).clicked() {
+                            *tab = i;
                         }
-                        // ADR-041.
-                        ui.label("Receipts");
-                        ui.checkbox(&mut s.receipts, "Tell contacts their messages arrived")
-                            .on_hover_text("The relay can link your queues by the timing.");
-                        ui.end_row();
-                        ui.label("");
-                        ui.checkbox(
-                            &mut s.read_receipts,
-                            "Read receipts: send yours and see theirs (off: neither)",
-                        );
-                        ui.end_row();
-                        ui.label("Lock after");
-                        egui::ComboBox::from_id_salt("lock")
-                            .width(220.0)
-                            .selected_text(format!("{} min idle", s.lock_minutes.clamp(1, 30)))
-                            .show_ui(ui, |ui| {
-                                for m in LOCK_CHOICES {
-                                    ui.selectable_value(
-                                        &mut s.lock_minutes,
-                                        m,
-                                        format!("{m} min idle"),
-                                    );
-                                }
-                            });
-                        ui.end_row();
-                    });
-                hint(
-                    ui,
-                    p,
-                    "A longer time gives whoever finds this computer unlocked more time to read.",
-                );
-                section(ui, p, "Contacts");
-                let mut shared = self.engine.data.shared_link;
-                if ui
-                    .checkbox(&mut shared, "One connection for all contacts")
-                    .changed()
-                {
-                    self.status = match self.engine.set_shared_link(shared) {
-                        Ok(done) | Err(done) => done,
-                    };
-                }
-                hint(
-                    ui,
-                    p,
-                    "Uses less battery and network, but the relay then sees which queues are yours. \
-                     Off: a connection per contact (ADR-023).",
-                );
-                let mut hurry = self.engine.data.hurry_open;
-                if ui
-                    .checkbox(&mut hurry, "Connect the open chat at once")
-                    .changed()
-                {
-                    self.engine.set_hurry_open(hurry);
-                }
-                hint(
-                    ui,
-                    p,
-                    "With Tor, chats connect over 30 seconds after unlock so the relay cannot tie \
-                     them together. On: the chat you open skips that wait, and the relay may see \
-                     which chat you opened (ADR-038).",
-                );
-                section(ui, p, "Devices");
-                let e = &self.engine;
-                let linkable = e.is_primary() && e.data.devices.is_none() && e.data.people() == 0;
-                let mut device = None;
-                ui.columns(2, |cols| {
-                    if (e.is_primary() || e.data.devices.is_some())
-                        && wide(&mut cols[0], p, "Devices")
-                    {
-                        device = Some(Dialog::Devices);
-                    }
-                    if linkable && wide(&mut cols[1], p, "Link to my main device") {
-                        device = Some(Dialog::LinkCode(String::new()));
                     }
                 });
-                if !e.is_primary() {
-                    hint(
-                        ui,
-                        p,
-                        "This device is linked to your main one, which adds and removes devices and creates groups.",
-                    );
-                }
-                if let Some(d) = device {
-                    self.dialog = Some(match d {
-                        Dialog::LinkCode(_) => match self.engine.link_code() {
-                            Ok(code) => Dialog::LinkCode(code),
-                            Err(e) => Dialog::Notice(e),
-                        },
-                        d => d,
-                    });
-                    return false;
-                }
-                section(ui, p, "Account and security");
-                let tor = match self.engine.data.tor {
-                    true => "Turn Tor off",
-                    false => "Turn Tor on",
-                };
+                ui.separator();
                 let mut next = None;
-                ui.columns(2, |cols| {
-                    if wide(&mut cols[0], p, "Back up your identity") {
-                        next = Some(Dialog::backup());
+                match *tab {
+                    0 => {
+                        egui::Grid::new("settings-look")
+                            .num_columns(2)
+                            .spacing([24.0, 10.0])
+                            .show(ui, |ui| {
+                                ui.label("Theme");
+                                egui::ComboBox::from_id_salt("theme")
+                                    .width(220.0)
+                                    .selected_text(s.desktop_theme.as_str())
+                                    .show_ui(ui, |ui| {
+                                        for (name, _) in themes::THEMES {
+                                            ui.selectable_value(
+                                                &mut s.desktop_theme,
+                                                (*name).into(),
+                                                *name,
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+                                ui.label("");
+                                ui.checkbox(&mut s.show_formatting, "Show formatting");
+                                ui.end_row();
+                            });
                     }
-                    if wide(&mut cols[1], p, "Change password") {
-                        next = Some(Dialog::Password(Passwords::default()));
+                    1 => {
+                        egui::Grid::new("settings-notify")
+                            .num_columns(2)
+                            .spacing([24.0, 10.0])
+                            .show(ui, |ui| {
+                                ui.label("New messages");
+                                ui.checkbox(&mut s.sound, "Play the system sound");
+                                ui.end_row();
+                                if !cfg!(windows) {
+                                    ui.label("");
+                                    ui.checkbox(
+                                        &mut s.notify,
+                                        "Show a system notification: \"New message\", no name or text",
+                                    );
+                                    ui.end_row();
+                                }
+                                // ADR-041.
+                                ui.label("Receipts");
+                                ui.checkbox(&mut s.receipts, "Tell contacts their messages arrived")
+                                    .on_hover_text("The relay can link your queues by the timing.");
+                                ui.end_row();
+                                ui.label("");
+                                ui.checkbox(
+                                    &mut s.read_receipts,
+                                    "Read receipts: send yours and see theirs (off: neither)",
+                                );
+                                ui.end_row();
+                            });
                     }
-                    if wide(&mut cols[0], p, "Set a duress password") {
-                        next = Some(Dialog::Duress(Passwords::default()));
-                    }
-                    if wide(&mut cols[1], p, tor) {
-                        next = Some(Dialog::Notice(self.engine.toggle_tor()));
-                    }
-                    if wide(&mut cols[0], p, "Tor bridges") {
-                        next = Some(Dialog::Bridges {
-                            text: Zeroizing::default(),
-                            error: String::new(),
+                    2 => {
+                        let mut shared = self.engine.data.shared_link;
+                        if ui
+                            .checkbox(&mut shared, "One connection for all contacts")
+                            .changed()
+                        {
+                            self.status = match self.engine.set_shared_link(shared) {
+                                Ok(done) | Err(done) => done,
+                            };
+                        }
+                        hint(
+                            ui,
+                            p,
+                            "Uses less battery and network, but the relay then sees which queues are yours. \
+                             Off: a connection per contact (ADR-023).",
+                        );
+                        let mut hurry = self.engine.data.hurry_open;
+                        if ui
+                            .checkbox(&mut hurry, "Connect the open chat at once")
+                            .changed()
+                        {
+                            self.engine.set_hurry_open(hurry);
+                        }
+                        hint(
+                            ui,
+                            p,
+                            "With Tor, chats connect over 30 seconds after unlock so the relay cannot tie \
+                             them together. On: the chat you open skips that wait, and the relay may see \
+                             which chat you opened (ADR-038).",
+                        );
+                        section(ui, p, "Devices");
+                        let e = &self.engine;
+                        let linkable =
+                            e.is_primary() && e.data.devices.is_none() && e.data.people() == 0;
+                        ui.columns(2, |cols| {
+                            if (e.is_primary() || e.data.devices.is_some())
+                                && wide(&mut cols[0], p, "Devices")
+                            {
+                                next = Some(Dialog::Devices);
+                            }
+                            if linkable && wide(&mut cols[1], p, "Link to my main device") {
+                                next = Some(Dialog::LinkCode(String::new()));
+                            }
                         });
+                        if !e.is_primary() {
+                            hint(
+                                ui,
+                                p,
+                                "This device is linked to your main one, which adds and removes devices and creates groups.",
+                            );
+                        }
                     }
-                    if wide(&mut cols[1], p, "What's new in this version") {
-                        next = Some(Dialog::News);
+                    _ => {
+                        egui::Grid::new("settings-lock")
+                            .num_columns(2)
+                            .spacing([24.0, 10.0])
+                            .show(ui, |ui| {
+                                ui.label("Lock after");
+                                egui::ComboBox::from_id_salt("lock")
+                                    .width(220.0)
+                                    .selected_text(format!(
+                                        "{} min idle",
+                                        s.lock_minutes.clamp(1, 30)
+                                    ))
+                                    .show_ui(ui, |ui| {
+                                        for m in LOCK_CHOICES {
+                                            ui.selectable_value(
+                                                &mut s.lock_minutes,
+                                                m,
+                                                format!("{m} min idle"),
+                                            );
+                                        }
+                                    });
+                                ui.end_row();
+                            });
+                        hint(
+                            ui,
+                            p,
+                            "A longer time gives whoever finds this computer unlocked more time to read.",
+                        );
+                        ui.add_space(8.0);
+                        let tor = match self.engine.data.tor {
+                            true => "Turn Tor off",
+                            false => "Turn Tor on",
+                        };
+                        ui.columns(2, |cols| {
+                            if wide(&mut cols[0], p, "Back up your identity") {
+                                next = Some(Dialog::backup());
+                            }
+                            if wide(&mut cols[1], p, "Change password") {
+                                next = Some(Dialog::Password(Passwords::default()));
+                            }
+                            if wide(&mut cols[0], p, "Set a duress password") {
+                                next = Some(Dialog::Duress(Passwords::default()));
+                            }
+                            if wide(&mut cols[1], p, tor) {
+                                next = Some(Dialog::Notice(self.engine.toggle_tor()));
+                            }
+                            if wide(&mut cols[0], p, "Tor bridges") {
+                                next = Some(Dialog::Bridges {
+                                    text: Zeroizing::default(),
+                                    error: String::new(),
+                                });
+                            }
+                            if wide(&mut cols[1], p, "What's new in this version") {
+                                next = Some(Dialog::News);
+                            }
+                        });
+                        section(ui, p, "Danger zone");
+                        let wipe =
+                            egui::Button::new(RichText::new("Wipe everything").color(p.danger))
+                                .stroke(egui::Stroke::new(1.0, p.danger))
+                                .fill(p.surface)
+                                .corner_radius(4);
+                        if ui.add_sized([ui.available_width(), 36.0], wipe).clicked() {
+                            next = Some(Dialog::Wipe {
+                                typed: String::new(),
+                            });
+                        }
+                        hint(
+                            ui,
+                            p,
+                            "Erases keys, contacts and history from this device. No undo.",
+                        );
                     }
-                });
-                section(ui, p, "Danger zone");
-                let wipe = egui::Button::new(RichText::new("Wipe everything").color(p.danger))
-                    .stroke(egui::Stroke::new(1.0, p.danger))
-                    .fill(p.surface)
-                    .corner_radius(4);
-                if ui.add_sized([ui.available_width(), 36.0], wipe).clicked() {
-                    next = Some(Dialog::Wipe {
-                        typed: String::new(),
-                    });
                 }
-                hint(
-                    ui,
-                    p,
-                    "Erases keys, contacts and history from this device. No undo.",
-                );
                 ui.add_space(14.0);
                 let close = ui
                     .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1425,6 +1452,13 @@ impl Chat {
                             .clicked()
                     })
                     .inner;
+                // The link code is made when asked for, not on every frame.
+                if let Some(Dialog::LinkCode(_)) = next {
+                    next = Some(match self.engine.link_code() {
+                        Ok(code) => Dialog::LinkCode(code),
+                        Err(e) => Dialog::Notice(e),
+                    });
+                }
                 if next.is_some() {
                     self.dialog = next;
                 }
@@ -1797,6 +1831,14 @@ fn password_fields(ui: &mut egui::Ui, p: &Pal, pw: &mut Passwords, new: &str) ->
     error_line(ui, p, &pw.error);
     buttons(ui, p, "Save")
 }
+
+/// The tabs of the settings, in order.
+const SETTINGS_TABS: [&str; 4] = [
+    "Appearance",
+    "Notifications",
+    "Contacts and devices",
+    "Security",
+];
 
 /// A section title in small capitals, like the Android app, and a rule.
 fn section(ui: &mut egui::Ui, p: &Pal, title: &str) {
