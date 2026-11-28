@@ -14,7 +14,7 @@ English version: [desktop.md](desktop.md).
 ## Окно
 
 - **Слева:** архивные чаты, контакты и группы, каждый раздел под своим заголовком, который сворачивается щелчком (**+** рядом с Groups создаёт группу), под ними **Add**, **Invite**, **Settings** и **Lock**.
-- **Справа:** чат. В меню ⋮ сверху — **Search**, **Safety number**, **Rename**, **No history**, **Block**, **Report** и **Delete** (у запроса — **Reject request**).
+- **Справа:** чат. В меню ⋮ сверху — **Search**, **Safety number**, **Rename**, **Icon**, **No history**, **Block**, **Report** и **Delete** (у запроса — **Reject request**).
 - **Внизу:** поле ввода, **SEND**, **File** и таймер исчезающих сообщений (**timer off**, затем 5m, 1h, 1d, 1w по каждому щелчку). **Enter** отправляет, **Shift+Enter** начинает новую строку.
 - **Строка состояния:** в сети или подключается, ваш ник, предупреждения.
 - **Клавиши:** **Cmd+K** (Ctrl+K на Linux и Windows) переходит в чат или группу по части названия; **F1** показывает все сочетания.
@@ -44,11 +44,10 @@ English version: [desktop.md](desktop.md).
 
 **Settings** под списком контактов:
 
-- **Appearance:** тема (те же, что в терминале и на Android), системный звук новых сообщений и **Lock after** 1, 5, 15 или 30 минут.
-- **Contacts:** **One connection for all contacts** и **Connect the open chat at once** (см. [Tor и мосты](tor.ru.md)).
-- **Devices:** **Devices** — список ваших устройств; **Link to my main device** — на новом устройстве. См. [Устройства](devices.ru.md).
-- **Account and security:** **Turn Tor on/off**, **Back up your identity**, **Change password**, **Set a duress password**, **Tor bridges**, **What's new in this version**.
-- **Danger zone:** **Wipe everything**. См. [Копии, блокировка, стирание](safety.ru.md).
+- **Appearance:** тема (те же, что в терминале и на Android) и **Show formatting**.
+- **Notifications:** системный звук и уведомление о новых сообщениях, отметки о доставке и прочтении.
+- **Contacts and devices:** **One connection for all contacts** и **Connect the open chat at once** (см. [Tor и мосты](tor.ru.md)); **Devices** — список ваших устройств, **Link to my main device** — на новом устройстве (см. [Устройства](devices.ru.md)).
+- **Security:** **Lock after** 1, 5, 15 или 30 минут, **Back up your identity**, **Change password**, **Set a duress password**, **Turn Tor on/off**, **Tor bridges**, **What's new in this version** и **Wipe everything** (см. [Копии, блокировка, стирание](safety.ru.md)). Точка на вкладке значит, что резервной копии ещё нет.
 
 ## Что показывает окно
 

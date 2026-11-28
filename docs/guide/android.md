@@ -12,9 +12,9 @@ The Android app needs Android 8.0 or newer and no Google services. [Install](ins
 ## The screens
 
 - **Chats:** archived chats first, then your contacts (pinned on top, then the newest), then your groups; tap a heading to fold its section. ⋮ holds **Your invite**, **Add contact**, **New group**, **Devices** (see [Devices](devices.md)), **Settings**, **What's new** and **Lock**, and on a new device **Link to my main device**; **+** also adds a contact.
-- **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the disappearing timer (a crumbling envelope: a tap moves to the next time and says it), the paperclip for a file, the field and **Send**.
+- **A chat:** ⋮ holds **Search**, **Safety number**, **Rename**, **Icon**, **Disappearing**, **No history**, **Block**, **Report to the relay operator** and **Delete**. Below are the disappearing timer (a crumbling envelope: a tap moves to the next time and says it), the paperclip for a file, the field and **Send**.
 - **Share from another app:** pick termchat.app in the system's share sheet, then a chat or group. Text goes into the message field for you to send; a file (up to 25 MiB in a chat, 1 MiB in a group) is sent as soon as you pick the chat. termchat.app never opens files.
-- **Long press** a chat or group in the list for its menu without opening it: **Rename**, **Mute**, **Pin**, **Archive**, **Block** and **Delete** for a contact, **Mute** and **Leave** for a group.
+- **Long press** a chat or group in the list for its menu without opening it: **Rename**, **Mute**, **Icon**, **Pin**, **Archive**, **Block** and **Delete** for a contact, **Mute**, **Icon** and **Leave** for a group.
 - **Long press** a message to answer, react, copy it, and edit or delete your own; see [Messages](messages.md).
 - **Your invite** shows a QR code for another phone or the desktop app to scan; **Add contact** has **Scan QR code**. See [Contacts](contacts.md).
 
@@ -44,7 +44,7 @@ Messages arrive while the app is open. For new messages while it is closed, pick
 ## Privacy on the phone
 
 - The app's screen cannot be captured: screenshots and the recent-apps preview stay blank.
-- It locks after 1, 5, 15 or 30 minutes without a touch (**Settings → Lock after**), and at once with ⋮ → **Lock**.
+- It locks after 1, 5, 15 or 30 minutes without a touch (**Settings → Security → Lock after**), and at once with ⋮ → **Lock**.
 - Messages stay in the app. Copy (from the long press) marks the clip as sensitive, so keyboards and the clipboard preview keep it out of sight.
 
 ## Updates

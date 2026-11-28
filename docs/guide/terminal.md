@@ -65,7 +65,7 @@ description: "The termchat.app terminal client: what is on the screen, what the 
 | **Ctrl+B** | block / unblock |
 | **Ctrl+D** | delete the contact, or reject a request |
 | **Ctrl+X** | report to the relay operator |
-| **Ctrl+P** | menu: **s** settings, **k** keys, **m** manual, **n** what's new, **o** invite, **a** add, **b** backup, **g** new group, **v** devices, **l** link to my main device (a new device) |
+| **Ctrl+P** | menu: **s** settings, **k** keys, **m** manual, **n** what's new, **o** invite, **a** add, **b** backup, **g** new group, **v** devices, **l** link to my main device (a new device); with a chat open, **c** its icon (the next one each time) |
 | **Ctrl+K** | lock now |
 | **Ctrl+Q** or **Ctrl+C** | quit |
 | **?** or **F1** | the list of keys |

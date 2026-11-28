@@ -68,6 +68,10 @@ If the numbers differ, do not trust the contact. Delete it and exchange invites 
 
 Until a contact is verified, its name shows the start of its fingerprint, like `alice·36335`. Names are chosen by people themselves; the digits are what tells two "alice"s apart. They also show whenever two names look the same.
 
+## Icons
+
+Each contact, group and Notes shows its first letter. **Icon** in its menu (⋮ of the chat or the group header, a long press in the Android list; **Ctrl+P**, **c** in the terminal, which shows two characters such as `<>`) puts one of 15 drawings in its place: a person, code, a branch, a server, a heart, a key and others. **Letter** brings the letter back. The icon stays on this device: the contact never learns it, and your other devices keep their own.
+
 ## Rename, block, report, delete
 
 These act on one contact. In the terminal use the keys below or right-click the contact; in the desktop app and on Android, the ⋮ menu of the chat.

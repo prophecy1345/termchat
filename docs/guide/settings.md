@@ -10,8 +10,8 @@ description: "termchat.app settings in the terminal, desktop and Android apps: c
 ## Opening settings
 
 - **Terminal:** **Ctrl+P**, then **s**. **Tab** or a click switches tabs (theme, notifications, interface, security), **↑/↓** move, **Enter** or a click changes the value.
-- **Desktop:** **Settings** under the contact list.
-- **Android:** ⋮ → **Settings**.
+- **Desktop:** **Settings** under the contact list, in tabs: **Appearance**, **Notifications**, **Contacts and devices**, **Security**.
+- **Android:** ⋮ → **Settings**, in tabs: **Appearance**, **Notifications**, **Security**, **About**.
 
 The security settings (backup, passwords, Tor, bridges, connections, lock time, wipe) are described in [Backups, locking, wiping](safety.md) and [Tor and bridges](tor.md).
 
@@ -28,14 +28,14 @@ The security settings (backup, passwords, Tor, bridges, connections, lock time, 
 termchat.app never puts a name or a text where the operating system keeps them.
 
 - **Terminal:** a card with the sender's name (never the text) shows in the corner for 5 seconds when a message arrives in a chat you are not looking at; click it to open the chat. **sound for new messages** plays the system sound (macOS: Glass; Linux: `canberra-gtk-play` or `paplay`; otherwise the terminal bell). **system notification** (off by default) asks the terminal for a desktop notification that always says just "termchat: new message". The window title shows only the unread count: `termchat (3)`.
-- **Desktop:** the system sound for new messages and, on macOS and Linux, a system notification that only says "New message" while the window is not in front, both in **Appearance**. Linux needs `notify-send` (package `libnotify-bin` or `libnotify`). Windows has no notification yet.
+- **Desktop:** the system sound for new messages and, on macOS and Linux, a system notification that only says "New message" while the window is not in front, both in **Notifications**. Linux needs `notify-send` (package `libnotify-bin` or `libnotify`). Windows has no notification yet.
 - **Android:** see [Android](android.md): "termchat.app: New message", with no name and no text.
 
 ## Receipts
 
 - **Delivery receipts** (on by default) tell a contact that their message is on your device: they see two checks. Off: you send none, and still see theirs.
 - **Read receipts** (off by default) tell them you read it while the chat was open, and show you when they read yours. It is mutual: off, you neither send nor see them.
-- **Terminal:** the notifications tab (**Ctrl+P**, **s**). **Desktop:** **Receipts** in Settings. **Android:** Settings → Notifications.
+- **Terminal:** the notifications tab (**Ctrl+P**, **s**). **Desktop:** Settings → **Notifications**. **Android:** Settings → Notifications.
 
 A receipt is encrypted like a message, but its timing is visible: a small message goes back soon after one arrives, so over time the relay can tell which two queues talk and when the device is online ([threat model](../threat-model.md)). Turn delivery receipts off if that matters more than the checks.
 

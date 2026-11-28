@@ -22,7 +22,7 @@ The first connection takes 10 to 30 seconds; later ones are quicker. Tor needs t
 ## Turning it on or off
 
 - At [first run](first-run.md): the "Use Tor" choice.
-- Later: settings → security → **Tor** in the terminal, **Turn Tor on/off** in the desktop app, **Settings → Tor** on Android.
+- Later: settings → security → **Tor** in the terminal, **Turn Tor on/off** in the desktop app, **Settings → Security → Tor** on Android.
 - Command line: `termchat init --tor` for a new identity.
 
 ## Connections: one per contact, or one for all
@@ -46,7 +46,7 @@ Some countries and networks block Tor. Bridges are unlisted entry points behind 
 - **snowflake** goes through volunteers' browsers and looks like a video call.
 
 1. Get bridge lines at [bridges.torproject.org](https://bridges.torproject.org) or from @GetBridgesBot in Telegram.
-2. Open **Tor bridges** in settings (security tab in the terminal, **Tor bridges** in the desktop app, **Settings → Tor bridges** on Android).
+2. Open **Tor bridges** in settings (security tab in the terminal, **Tor bridges** in the desktop app, **Settings → Security → Tor bridges** on Android).
 3. Paste them, one per line. In the terminal, paste or type one and press **Enter**, then **Ctrl+S** saves; **Ctrl+X** clears.
 
 With bridges set, Tor enters the network only through them, by way of lyrebird, the Tor Project's transport program, which ships next to `termchat` and in the Android app. The network sees the disguise, not Tor. The bridge sees your IP address, as any first Tor hop does.
