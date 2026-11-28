@@ -3,6 +3,19 @@
 Shown inside termchat.app: Ctrl+P, n in the terminal, Settings → What's new in
 the desktop app.
 
+## 0.39.0
+
+- Contact icons: mark a contact, a group or Notes with one of 15 line
+  drawings instead of its letter: a person, code, a branch, a server,
+  a heart, a key and others. Icon in its menu on desktop and Android,
+  Ctrl+P, c in the terminal (two characters there). The icon stays on
+  this device: the contact never learns it, and your other devices
+  keep their own.
+- Settings in tabs: Appearance, Notifications, Contacts and devices,
+  Security on desktop; Appearance, Notifications, Security, About on
+  Android. A dot on the tab says there is no backup yet.
+- Android: Notes with no messages no longer shows "20785d" beside it.
+
 ## 0.38.0
 
 - Markdown in messages, groups and Notes: **bold**, *italic*,
